@@ -331,3 +331,18 @@ test('a throwing or rejecting onDraft never breaks the fuse; the return value is
     assert.ok(Object.keys(store.read(id).nodes).length > 100);
   }
 });
+
+test('a fused map starts with an empty chat, even when a source map has one (planted: copied chat)', async () => {
+  const chatty = [...fixtureEvents('manga'),
+    { t: 'chat.asked', at: 1, chatId: 'main', msgId: 'm1', text: 'What is shonen?', images: [] },
+    { t: 'chat.answered', at: 2, chatId: 'main', msgId: 'm2', replyTo: 'm1', text: 'A demographic.', citations: [], sources: [], suggestions: [], usedWeb: false }];
+  const store = fakeStore({ manga: chatty, 'plastic-modeling': fixtureEvents('plastic-modeling') });
+  assert.equal(store.read('manga').chat.length, 2, 'the source really has a chat');
+  const ctx = makeCtx({ store, client: fakeClient(() => '{"hybrid":"Gunpla","summary":"s","hook":"h"}') });
+  const id = await fuse(ctx, 'manga', 'plastic-modeling', { into: 'gunpla' });
+  const chatOf = (/** @type {object[]} */ events) => foldAll(events).chat;
+  assert.deepEqual(chatOf(store.logs.get(id)), []);
+  // planted fault: a fuse that also copied the source's chat events must be caught
+  assert.notDeepEqual(chatOf([...store.logs.get(id), ...chatty.filter((e) => e.t.startsWith('chat.'))]), []);
+  assert.equal(store.read('manga').chat.length, 2, 'the source chat is untouched');
+});
