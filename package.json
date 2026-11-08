@@ -33,12 +33,15 @@
     "!web/shell/API.md",
     "fixtures",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+    "TRADEMARKS.md"
   ],
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "publishConfig": {
     "access": "public",
     "provenance": true
