@@ -3,10 +3,14 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-// Required in the published tarball. `src/cli/index.js` (Epic B) and
-// `fixtures/demo.events.jsonl` (Epic H recording) are added by the lead when each one lands on main.
+// Required in the published tarball. `fixtures/demo.events.jsonl` is added in the same commit as the recording.
 // No "skip if missing" logic on purpose: a skip would hide a missing file at publish time.
-export const REQUIRED = ['web/shared/importmap.json', 'web/index.html'];
+export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json'];
+
+// Everything packed must be one of these files or live under one of these folders.
+// Keeps stray folders (.playwright-mcp/, docs/, .claude/) out even if `files` grows by mistake.
+export const ALLOWED_FILES = ['package.json', 'README.md', 'LICENSE'];
+export const ALLOWED_DIRS = ['src/', 'web/', 'fixtures/'];
 
 /** @param {string} dir @returns {string[]} relative paths `npm pack` would ship */
 export function packedFiles(dir) {
@@ -27,6 +31,7 @@ export function auditPack(dir, files, required) {
     const base = basename(f);
     if (base === '.env' || base.startsWith('.env.')) problems.push(`env file packed: ${f}`);
     if (f.startsWith('test/')) problems.push(`test file packed: ${f}`);
+    if (!ALLOWED_FILES.includes(f) && !ALLOWED_DIRS.some((d) => f.startsWith(d))) problems.push(`unexpected file packed: ${f}`);
     if (KEY_SHAPE.test(readFileSync(join(dir, f), 'utf8'))) problems.push(`API key pattern (sk-ant-) found in: ${f}`);
   }
   return problems;

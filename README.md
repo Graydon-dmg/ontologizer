@@ -21,23 +21,23 @@ ontologizer load demo --replay --speed 1
 
 ## Commands
 
-<!-- Commands: replace with the real ontologizer --help output once Epic B's CLI lands -->
-
 | Command | What it does |
 |---|---|
-| `ontologizer` | Interactive start menu: New, Load (recent five), Fuse, Quit |
-| `ontologizer new [--context "..."] [--yes]` | Check the context, build the map, serve it and open the browser |
-| `ontologizer load <name> [--replay] [--speed <n>]` | Open a saved map; `--replay` streams its saved events with their original timing |
-| `ontologizer save [name]` | Promote the current draft to a named map |
-| `ontologizer list [--drafts]` | List saved maps, or drafts |
-| `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into one |
-| `ontologizer rosetta <name> --as "<persona>" [--name <lens>]` | Add a lens that explains a map through a field you already know |
-| `ontologizer explain <name> <node>` | Explain one node |
-| `ontologizer research <name> <node> [--general]` | Research one node further |
-| `ontologizer key [set\|clear]` | Show where your API key comes from; set a new one; or delete it from the keychain |
-| `ontologizer doctor` | Check Node, API key, network, storage, completion and version, with a fix for each problem |
-| `ontologizer completion [zsh\|bash\|fish]` | Print the shell completion script |
-| `ontologizer update` | Update to the latest version |
+| `ontologizer` | Interactive start menu |
+| `ontologizer new [--context "..."] [--yes]` | Build a new topic map |
+| `ontologizer load <name> [--replay] [--speed <n>]` | Open a saved map (add `--replay` to watch it build again) |
+| `ontologizer save [name]` | Save the current draft |
+| `ontologizer list [--drafts]` | List saved maps |
+| `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into a new draft |
+| `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona |
+| `ontologizer explain <name> <node>` | Write an article for one node |
+| `ontologizer research <name> <node> [--general]` | Grow the map under one node |
+| `ontologizer key [set\|clear]` | Show, set or clear the Anthropic API key |
+| `ontologizer doctor` | Check that everything ontologizer needs is in place |
+| `ontologizer completion [zsh\|bash\|fish]` | Print a shell completion script |
+| `ontologizer update` | Update ontologizer to the latest version |
+
+Map names accept a prefix. `ontologizer <command> --help` shows every option.
 
 ## How it works
 
