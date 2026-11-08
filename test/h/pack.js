@@ -5,7 +5,8 @@ import { basename, join } from 'node:path';
 
 // Required in the published tarball.
 // No "skip if missing" logic on purpose: a skip would hide a missing file at publish time.
-export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json', 'fixtures/demo.events.jsonl'];
+export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json', 'fixtures/demo.events.jsonl',
+  'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md'];
 
 // Everything packed must be one of these files or live under one of these folders.
 // Keeps stray folders (.playwright-mcp/, docs/, .claude/) out even if `files` grows by mistake.
@@ -46,4 +47,13 @@ export function auditPack(dir, files, required, requiredDirs = []) {
 /** @param {string} text @returns {string | null} problem, or null if OK */
 export function checkShebang(text) {
   return text.startsWith('#!/usr/bin/env node') ? null : 'missing "#!/usr/bin/env node" shebang';
+}
+
+/** The package is Apache-2.0: the license field and the LICENSE text must agree. @param {any} pkg @param {string} licenseText @returns {string[]} */
+export function checkLicense(pkg, licenseText) {
+  const problems = [];
+  if (pkg.license !== 'Apache-2.0') problems.push(`package.json license is ${JSON.stringify(pkg.license)}, not "Apache-2.0"`);
+  // The canonical Apache text starts with a blank line and indentation.
+  if (!licenseText.trimStart().startsWith('Apache License')) problems.push('LICENSE does not start with "Apache License"');
+  return problems;
 }
