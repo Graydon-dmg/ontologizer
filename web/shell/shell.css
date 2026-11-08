@@ -27,14 +27,12 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
   #map-name { max-width: 8rem; }
   .view-toggle button, .seg button { padding: 3px 9px; }
 }
-/* The tightest one-row band (1280-1366): "Ask" instead of "Ask the map" and no ⓘ beside the theme
-   switch, so a long map name still gets ~7rem (the full name is its tooltip). Below 1280 the bar
-   wraps anyway, so the name gets its 8rem back. */
+/* The tightest one-row band (1280-1366). "Ask the map" never gives way here; what does, in order:
+   the search box (to 9rem), the map name (to ~8 characters, full name in its tooltip), the ⓘ beside
+   the theme switch. Below 1280 the bar wraps instead, and the name gets its 8rem back. */
 @media (min-width: 1280px) and (max-width: 1366px) {
-  #map-name { max-width: 7rem; }
-  .chat-btn { padding: 0 9px; gap: 4px; }
-  .chat-btn-long { display: none; }
-  .chat-btn-short { display: inline; }
+  #search { flex-basis: 9rem; min-width: 9rem; }
+  #map-name { max-width: 5.5rem; }
   #theme-switcher .info { display: none; }
 }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
