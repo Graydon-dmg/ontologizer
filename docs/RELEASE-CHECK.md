@@ -83,7 +83,17 @@ ontologizer fuse a b --into c                      # the browser opens and the s
 - [ ] **Fuse refuses a third map:** `ontologizer fuse a b c` (three names) is refused before any model call, with a message naming the extra argument, and no new map appears in `ontologizer list`.
 - [ ] Ctrl-C saves `c` (or it is already saved under `c`), and `ontologizer load c` reopens it with the legend groups and bridges intact.
 
-## 5. Sign-off
+## 5. Brand
+
+- [ ] **Favicon:** with the OS in light mode, `ontologizer load demo` opens a tab that shows the Ontologizer favicon, not a blank page icon. Switch the OS to dark mode and reload: the favicon is still visible against the dark tab strip. `http://127.0.0.1:<port>/favicon.ico` answers 200.
+- [ ] **Top-bar symbol:** the symbol shows at the left of the top bar in both Light and Dark, crisp and not stretched.
+- [ ] **CLI banner, wide:** in a 120-column terminal, `ontologizer` (the start menu) shows the animated ASCII banner, aligned, with no wrapped lines, and it settles before the menu appears.
+- [ ] **CLI banner, medium and narrow:** at 60 columns, then at 30 columns (resize the window, then run it again), the banner switches to a smaller form or leaves itself out. No line wraps or breaks into garbage.
+- [ ] **CLI banner, piped:** `ontologizer --help | cat` and `ontologizer list | cat` print no ANSI escape codes (no `\x1b[`) and no animation frames.
+- [ ] **README on GitHub:** the repository page renders the logo lockup (light and dark GitHub themes), and the ASCII art sits in a code block with its columns aligned.
+- [ ] **Package contents:** `npm pack --dry-run` lists the files under `web/shared/brand/` and nothing under `docs/brand/` (`npm run check:h` enforces both).
+
+## 6. Sign-off
 
 - [ ] `npm run check` passes on this commit.
 - [ ] Every box above is ticked. Write any bug found here, with the step number, and don't publish until it's fixed and this check has been re-run from the step it affects.
