@@ -47,7 +47,7 @@ function readSse(base, p, n, timeoutMs = 15000, onFirstBatch = null) {
       });
     });
     req.on('error', (e) => { if (events.length < n) reject(e); });
-    setTimeout(() => { req.destroy(); resolve({ events, ms: Date.now() - t0 }); }, timeoutMs);
+    setTimeout(() => { req.destroy(); resolve({ events, ms: Date.now() - t0 }); }, timeoutMs).unref();
   });
 }
 
