@@ -31,6 +31,12 @@ async function loadCommands() {
  */
 export async function main(argv, over = {}) {
   const deps = makeDeps(over);
+  // `--version` on a TTY shows the mark; piped, yargs prints the bare version as before.
+  if (argv.length === 1 && argv[0] === '--version' && /** @type {any} */ (deps.stdout).isTTY === true) {
+    const { showBanner, packageVersion } = await import('./banner.js');
+    await showBanner(/** @type {any} */ (deps), { version: await packageVersion() });
+    return 0;
+  }
   const { default: yargs } = await import('yargs');
   let code = 0;
   let failed = false;

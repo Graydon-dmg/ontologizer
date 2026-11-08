@@ -346,6 +346,8 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
         return plain(res, 404, 'not found');
       }
     }
+    // The tab icon, even before the page's <link> loads.
+    if (rawPath === '/favicon.ico') return sendFile(res, path.join(webRoot, 'shared', 'brand', 'favicon-32.png'));
     if (rawPath === '/api/snapshot') return json(res, 200, store.read(id));
     if (rawPath === '/api/events') {
       const from = Math.max(0, Number.parseInt(query.get('from') || '0', 10) || 0);

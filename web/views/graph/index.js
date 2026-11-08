@@ -5,7 +5,7 @@ import { select } from 'd3-selection';
 import { zoom, zoomIdentity, zoomTransform } from 'd3-zoom';
 import { drag } from 'd3-drag';
 import 'd3-transition';
-import { easeBackOut } from 'd3-ease';
+import { easeBackOut, easeCubicInOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
@@ -25,6 +25,8 @@ const FIT_EVERY_MS = 500;
 const FIT_MARGIN = 0.88;
 /** Pointer travel (px) still treated as a click rather than a drag or pan: real clicks jitter. */
 const CLICK_DISTANCE = 4;
+/** After the focus animation, keep following the focused node while the layout re-settles. */
+const FOCUS_FOLLOW_MS = 2000;
 /** Label box estimate in screen px (11.5px system-ui): width per character, height. */
 const LABEL_CHAR_W = 6.2;
 const LABEL_H = 14;
@@ -102,6 +104,7 @@ class OntoGraph extends Base {
   /** @type {any} */ fitTimer = 0;
   /** last snapshot view values seen (see syncFromSnapshot) */ seen = { filter: '', collapsed: '' };
   box = { width: 0, height: 0 };
+  /** @type {{ id: string, t0: number, until: number, from: {x:number,y:number,k:number} }|null} */ focusAnim = null;
   insets = { top: 0, right: 0, bottom: 0, left: 0 };
   /** @type {HTMLElement|null} */ el = null;
   /** @type {(() => void)|null} */ insetsFn = null;
@@ -159,6 +162,7 @@ class OntoGraph extends Base {
       .on('start', (/** @type {any} */ ev) => {
         if (!ev.sourceEvent) return;
         this.svg.interrupt('fit'); // a user gesture always wins over a running auto-fit
+        this.focusAnim = null;
         this.gestureStart = { x: ev.transform.x, y: ev.transform.y, k: ev.transform.k };
       })
       .on('zoom', (/** @type {any} */ ev) => {
@@ -209,6 +213,25 @@ class OntoGraph extends Base {
       this.lastFit = performance.now();
     }
     this.minimap?.update();
+    this.schedule();
+  }
+
+  /**
+   * Keep the focused node at the centre of the free area: ease there over MOTION.focusMs, then
+   * follow it while the layout re-settles. A user gesture cancels it.
+   * @param {Map<string,{x:number,y:number}>} cur
+   * @param {number} now
+   */
+  followFocus(cur, now) {
+    const f = this.focusAnim;
+    if (!f) return;
+    const p = cur.get(f.id);
+    if (!p || now > f.until) { this.focusAnim = null; return; }
+    const r = this.viewRect();
+    const e = easeCubicInOut(Math.min(1, (now - f.t0) / MOTION.focusMs));
+    const tx = r.x + r.width / 2 - f.from.k * p.x, ty = r.y + r.height / 2 - f.from.k * p.y;
+    this.svg.call(this.zoomBehavior.transform, zoomIdentity
+      .translate(f.from.x + (tx - f.from.x) * e, f.from.y + (ty - f.from.y) * e).scale(f.from.k));
     this.schedule();
   }
 
@@ -655,6 +678,7 @@ class OntoGraph extends Base {
       if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75}) scale(${inv})`).style('display', hid ? 'none' : null);
     }
     this.placeLabelsNow(cur);
+    this.followFocus(cur, now);
     this.renderHalos(cur);
     this.autoFit(cur);
     const fp = cur.get(this.ctx.snapshot().view.focus);
@@ -771,7 +795,12 @@ class OntoGraph extends Base {
     } else {
       this.userMoved = true;
       const p = this.currentPos(nodeId, this.ctx.layout.positions());
-      if (p) this.svg.interrupt('fit').transition().duration(MOTION.focusMs).call(this.zoomBehavior.translateTo, p.x, p.y);
+      // centre inside the free area (the shell may have just opened a panel, so read the insets now)
+      if (this.el) this.insets = readInsets((n) => getComputedStyle(/** @type {HTMLElement} */ (this.el)).getPropertyValue(n));
+      // Ease to the node, then keep it centred while the layout re-settles around the new focus.
+      this.svg.interrupt('fit');
+      const t0 = performance.now();
+      this.focusAnim = { id: nodeId, t0, until: t0 + MOTION.focusMs + FOCUS_FOLLOW_MS, from: zoomTransform(this.svg.node()) };
     }
     this.schedule();
   }

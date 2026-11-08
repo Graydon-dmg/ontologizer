@@ -1,5 +1,6 @@
 // @ts-check
 import { handler as newHandler } from './new.js';
+import { showBanner, packageVersion } from '../banner.js';
 
 export default {
   command: '$0',
@@ -11,6 +12,7 @@ export default {
       deps.stdout.write('Run ontologizer --help\n');
       return;
     }
+    await showBanner(deps, { version: await packageVersion() });
     const p = await deps.prompts();
     const recent = deps.store().list().slice(0, 5);
     const choice = await p.select({
@@ -24,7 +26,7 @@ export default {
     });
     if (choice.a === 'new') {
       // deps is non-enumerable on argv, so a spread would drop it: re-attach it explicitly.
-      const args = { ...argv, open: true, yes: false, exitAfterBuild: false, context: undefined };
+      const args = { ...argv, open: true, yes: false, exitAfterBuild: false, context: undefined, bannerShown: true };
       Object.defineProperty(args, 'deps', { value: deps, enumerable: false });
       await newHandler(args);
     } else if (choice.a === 'load') {
