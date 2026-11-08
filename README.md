@@ -1,6 +1,26 @@
-# Ontologizer
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/web/shared/brand/lockup-dark.svg">
+  <img alt="ontologizer" src="https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/web/shared/brand/lockup-light.svg" width="408">
+</picture>
 
 Ontologizer is an open-source command-line tool: give it a topic and Claude builds a live, color-coded map of everything inside it, streaming into a local web page as it goes.
+
+```text
+           manga chess jazz
+          *--o     o     o--*
+              \    |    /
+        *      \   |   /      *
+         \      \  |  /      /
+ espresso O-----( you )-----O rust
+         /      /  |  \      \
+        *      /   |   \      *
+              /    |    \
+          *--o     o     o--*
+      sourdough gunpla orbits
+
+         every topic is a map.
+         ontologizer draws it.
+```
 
 ![Ontologizer's 2D graph mid-build](https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/docs/screenshot.png)
 
