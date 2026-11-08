@@ -21,7 +21,10 @@
 //   setFocus(nodeId: string): void
 //   setLens(lensId: string|null): void
 //   setFilter(filter: { categories: string[]|null, maxDepth: number|null }): void
-//   highlight(nodeIds: string[]): void  [] clears
+//   highlight(nodeIds: string[] | null): void
+//                                      emphasise these nodes and the links between them, dim the
+//                                      rest; [] or null clears. (null added in 1.2.0 for the chat
+//                                      panel; a shell must not call a view that lacks the method.)
 //   mountMinimap?(el: HTMLElement): void  optional
 //   unmount(): void
 

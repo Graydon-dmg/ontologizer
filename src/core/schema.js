@@ -30,5 +30,14 @@
  *              lenses: Record<string, Lens>, view: ViewState,
  *              jobs: Record<string, { id: string, kind: string, nodeId?: string,
  *                                     state: 'queued'|'running'|'done'|'failed', error?: string }>,
- *              insights: { at: number, text: string, nodeId?: string }[] }} Ontology */
+ *              insights: { at: number, text: string, nodeId?: string }[],
+ *              chat: ChatMessage[] }} Ontology
+ *   chat: the side chatbot's conversation, in order. Defaults to [] (maps saved before 1.2.0 fold fine). */
+/** @typedef {{ hash: string, mime: string, w: number, h: number }} ChatImage
+ *   An image attached to a question, stored by content hash; the bytes live outside the event log. */
+/** @typedef {{ kind: 'research', nodeId: string, mode: 'context'|'general', label: string }} ChatSuggestion */
+/** @typedef {{ role: 'user'|'assistant'|'error', chatId: string, msgId: string, replyTo?: string,
+ *              text: string, images?: ChatImage[], citations?: { nodeId: string, label: string }[],
+ *              sources?: Source[], suggestions?: ChatSuggestion[], usedWeb?: boolean, at: number }} ChatMessage
+ *   v1 has one chat per map, chatId 'main'. role 'error' carries the error text in `text`. */
 export {};
