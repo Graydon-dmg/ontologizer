@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveVendorPath } from '../core/vendor.js';
-import { MAX_BODY as MAX_CHAT_BODY, ChatError, readCappedBody, validateChat, storeAttachment, findAttachment, imageSize, relayAsk } from './chat.js';
+import { MAX_BODY as MAX_CHAT_BODY, TOO_LARGE, ChatError, readCappedBody, drainCapped, validateChat, storeAttachment, findAttachment, imageSize, relayAsk } from './chat.js';
 
 const PKG_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -34,12 +34,13 @@ function sleep(ms, c) {
 /**
  * @param {{ store: any, engine: any, id: string, port?: number,
  *   replay?: null | { speed: number }, webDir?: string,
- *   makeEngine?: null | ((id: string) => Promise<any>) }} opts
+ *   makeEngine?: null | ((id: string) => Promise<any>), chatTimeouts?: { idleMs?: number, totalMs?: number } }} opts
+ * chatTimeouts is for tests only.
  * makeEngine builds the engine for another map (a fused draft); without it, fuse is refused.
  * `webDir` is for tests only.
  * @returns {Promise<{ url: string, close: () => Promise<void> }>}
  */
-export function startServer({ store, engine, id, port = 0, replay = null, webDir, makeEngine = null }) {
+export function startServer({ store, engine, id, port = 0, replay = null, webDir, makeEngine = null, chatTimeouts = {} }) {
   const webRoot = path.resolve(webDir ?? fileURLToPath(new URL('../../web/', import.meta.url)));
   const fixturesRoot = path.join(PKG_ROOT, 'fixtures');
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
@@ -412,23 +413,28 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
 
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
   async function chat(req, res) {
-    /** @param {number} status @param {string} error */
-    const fail = (status, error) => {
-      res.writeHead(status, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', Connection: 'close' });
+    /** @param {number} status @param {string} error @param {boolean} [drop] close the socket (body past the cap) */
+    const fail = (status, error, drop = false) => {
+      res.writeHead(status, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', ...(drop ? { Connection: 'close' } : {}) });
       res.end(JSON.stringify({ ok: false, error }));
-      // Refused before the body was read: drop the connection instead of reading the rest.
-      res.on('finish', () => req.destroy());
+      if (drop) res.on('finish', () => req.destroy());
+    };
+    /** Refuse before reading: drain the body (up to the cap) first, so fetch gets the message. */
+    const refuse = async (/** @type {number} */ status, /** @type {string} */ error) => {
+      const within = await drainCapped(req, MAX_CHAT_BODY);
+      fail(within ? status : 413, within ? error : TOO_LARGE, !within);
     };
     const ctype = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
-    if (ctype !== 'application/json') return fail(415, 'Content-Type must be application/json.');
-    if (chatBusy) return fail(409, 'A chat answer is already being written for this map: wait for it to finish.');
+    if (ctype !== 'application/json') return refuse(415, 'Content-Type must be application/json.');
+    if (chatBusy) return refuse(409, 'A chat answer is already being written for this map: wait for it to finish.');
     chatBusy = true;
     try {
       let raw;
       try {
         raw = await readCappedBody(req, MAX_CHAT_BODY);
       } catch (/** @type {any} */ err) {
-        return fail(err instanceof ChatError ? err.status : 400, err instanceof ChatError ? err.message : 'Could not read the message.');
+        if (err instanceof ChatError) return fail(err.status, err.message, err.status === 413);
+        return fail(400, 'Could not read the message.', true);
       }
       let input;
       try {
@@ -443,9 +449,10 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
         });
         input = { text: v.text, images, lens: v.lens ?? null };
       } catch (/** @type {any} */ err) {
-        return fail(err instanceof ChatError ? err.status : 400, err instanceof ChatError ? err.message : 'Invalid message.');
+        if (err instanceof ChatError) return fail(err.status, err.message);
+        return fail(500, 'Could not save the image.'); // e.g. a disk error; never a 400
       }
-      await relayAsk({ engine, req, res, input });
+      await relayAsk({ engine, req, res, input, ...chatTimeouts });
     } finally {
       chatBusy = false;
     }
@@ -499,7 +506,12 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
       if (!found) return plain(res, 404, 'not found');
       try {
         const data = await fs.promises.readFile(found.file);
-        res.writeHead(200, { 'Content-Type': found.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=31536000, immutable' });
+        res.writeHead(200, {
+          'Content-Type': found.mime,
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "sandbox; default-src 'none'",
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        });
         return res.end(data);
       } catch {
         return plain(res, 404, 'not found');

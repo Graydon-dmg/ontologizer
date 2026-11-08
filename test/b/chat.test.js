@@ -230,3 +230,96 @@ test('closing the page aborts the answer (the engine gets an aborted signal)', a
   assert.equal(/** @type {any} */ (seen)?.aborted, true);
   await srv.close();
 });
+
+// ---- review fixes ----
+import { MAX_IMAGE, MAX_IMAGES, MAX_TEXT } from '../../src/server/chat.js';
+
+test('the limits agree: four max-size images plus the longest text fit under the body cap', async () => {
+  const { srv, asked } = await boot();
+  const big = Buffer.concat([PNG(2, 2), Buffer.alloc(MAX_IMAGE - 33)]); // exactly 5 MB
+  assert.equal(big.length, MAX_IMAGE);
+  const body = JSON.stringify({ text: 'é'.repeat(MAX_TEXT), images: Array(MAX_IMAGES).fill({ mime: 'image/png', data: big.toString('base64') }) });
+  assert.ok(body.length <= MAX_BODY, `${body.length} > ${MAX_BODY}`);
+  const r = await chat(srv.url, body);
+  assert.equal(r.status, 200, r.text.slice(0, 200));
+  assert.equal(asked[0].images.length, 4);
+  // Planted fault: the old 25 MB cap was smaller than this body.
+  assert.ok(body.length > 25 * 1024 * 1024);
+  await srv.close();
+});
+
+test('409 and 415 drain the body first, so the browser gets the JSON message (not a dropped connection)', async () => {
+  /** @type {() => void} */ let release = () => {};
+  const gate = new Promise((r) => { release = () => r(undefined); });
+  const { srv } = await boot(async function* () { await gate; yield { type: 'done', msgId: 'm' }; });
+  const first = chat(srv.url, { text: 'one' });
+  await new Promise((r) => setTimeout(r, 100));
+  const img = Buffer.concat([PNG(1, 1), Buffer.alloc(2 * 1024 * 1024)]).toString('base64'); // a ~2.7 MB body
+  const busy = await chat(srv.url, { text: 'two', images: [{ mime: 'image/png', data: img }] });
+  assert.equal(busy.status, 409);
+  assert.match(JSON.parse(busy.text).error, /already being written/);
+  const wrongType = await chat(srv.url, JSON.stringify({ text: 'x', pad: 'y'.repeat(1024 * 1024) }), { 'content-type': 'text/plain' });
+  assert.equal(wrongType.status, 415);
+  assert.match(JSON.parse(wrongType.text).error, /application\/json/);
+  release();
+  await first;
+  await srv.close();
+});
+
+test('an engine that ends without done or error still ends the stream with an error item', async () => {
+  const { srv } = await boot(async function* () { yield { type: 'delta', text: 'half' }; });
+  const got = items((await chat(srv.url, { text: 'x' })).text);
+  assert.deepEqual(got, [{ type: 'delta', text: 'half' }, { type: 'error', error: 'No answer.' }]);
+  // Planted fault: without the guard, the stream would end on the delta with no final item.
+  assert.notEqual(['delta'].at(-1), 'error');
+  await srv.close();
+});
+
+test('an engine that stalls (ignoring the signal) is stopped by the idle and total timeouts, and the lock is freed', async () => {
+  const store = openStore(tempHome());
+  store.importEvents('plastic-modeling', fixtureEvents('plastic-modeling'));
+  // Stalls forever after one item, ignoring the abort signal.
+  const stall = { enqueue: () => 'j', ask: async function* () { yield { type: 'status', text: 'Thinking…' }; await new Promise(() => {}); } };
+  const srv = await startServer({ store, engine: stall, id: 'plastic-modeling', chatTimeouts: { idleMs: 200, totalMs: 10_000 } });
+  const t = Date.now();
+  const got = items((await chat(srv.url, { text: 'x' })).text);
+  assert.ok(Date.now() - t < 3000);
+  assert.deepEqual(got.map((i) => i.type), ['status', 'error']);
+  assert.match(got[1].error, /took too long/);
+  assert.equal((await chat(srv.url, { text: 'again' })).status, 200, 'the lock was released');
+  await srv.close();
+  // Total cap: an engine that trickles items forever is stopped at totalMs.
+  const trickle = { enqueue: () => 'j', ask: async function* () { for (;;) { await new Promise((r) => setTimeout(r, 50)); yield { type: 'delta', text: '.' }; } } };
+  const srv2 = await startServer({ store, engine: trickle, id: 'plastic-modeling', chatTimeouts: { idleMs: 1000, totalMs: 400 } });
+  const t2 = Date.now();
+  const got2 = items((await chat(srv2.url, { text: 'x' })).text);
+  assert.ok(Date.now() - t2 < 3000);
+  assert.match(got2.at(-1).error, /took too long/);
+  await srv2.close();
+  // Planted fault: with no timeout, the stalled engine never finishes (checked over 300 ms).
+  const raw = stall.ask()[Symbol.asyncIterator]();
+  await raw.next();
+  assert.equal(await Promise.race([raw.next().then(() => 'done'), new Promise((r) => setTimeout(() => r('stuck'), 300))]), 'stuck');
+});
+
+test('a disk error saving an image is a 500 (not a 400), and leaves no temp file', async () => {
+  const { home, srv } = await boot();
+  fs.writeFileSync(path.join(home, 'plastic-modeling', 'attachments'), 'a file where the folder should be');
+  const r = await chat(srv.url, { text: 'x', images: [{ mime: 'image/png', data: PNG(1, 1).toString('base64') }] });
+  assert.equal(r.status, 500);
+  assert.equal(JSON.parse(r.text).error, 'Could not save the image.');
+  assert.ok(!fs.readdirSync(path.join(home, 'plastic-modeling')).some((f) => f.endsWith('.tmp')));
+  await srv.close();
+});
+
+test('text length counts characters, not UTF-16 units; attachments carry a sandboxing CSP', async () => {
+  const { srv } = await boot();
+  assert.equal((await chat(srv.url, { text: '😀'.repeat(MAX_TEXT) })).status, 200); // 8000 code units
+  assert.equal((await chat(srv.url, { text: '😀'.repeat(MAX_TEXT + 1) })).status, 400);
+  const gif = GIF(1, 1);
+  await chat(srv.url, { text: 'x', images: [{ mime: 'image/gif', data: gif.toString('base64') }] });
+  const hash = crypto.createHash('sha256').update(gif).digest('hex');
+  /** @type {any} */ const got = await rawGet(srv.url, `/api/attachments/${hash}`);
+  assert.equal(got.headers['content-security-policy'], "sandbox; default-src 'none'");
+  await srv.close();
+});
