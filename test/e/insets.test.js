@@ -30,7 +30,25 @@ test('fit and resize stay inside the shell insets; catches insets ignored', () =
   assert.throws(() => fitsInsideInsets((size) => ({ x: 0, y: 0, ...size })), 'planted fault: insets ignored');
 });
 
-test('readInsets defaults to 0; innerRect ignores insets that leave too little room', () => {
+/** 900 px wide, explain panel (right 411) and legend (left 235) both open: the map fits between them. */
+function explainWinsOverLegend(/** @type {typeof innerRect} */ inner) {
+  const r = inner({ width: 900, height: 700 }, { top: 89, right: 411, bottom: 0, left: 235 });
+  assert.equal(r.x + r.width, 900 - 411, 'nothing under the explain panel');
+  assert.equal(r.x, 235, 'nothing under the legend');
+  assert.ok(r.width >= 900 * 0.25, 'fit area is not absurdly small');
+  // a narrow screen where the panels leave too little room even after dropping the smaller one
+  assert.deepEqual(inner({ width: 600, height: 700 }, { top: 0, right: 411, bottom: 0, left: 100 }), { x: 0, y: 0, width: 600, height: 700 });
+  assert.deepEqual(inner({ width: 400, height: 300 }, { top: 0, right: 300, bottom: 0, left: 300 }), { x: 0, y: 0, width: 400, height: 300 }, 'impossible insets are ignored');
+}
+
+test('readInsets defaults to 0; legend + explain panel at 900 px both stay clear; catches dropping both', () => {
   assert.deepEqual(readInsets(() => ''), { top: 0, right: 0, bottom: 0, left: 0 });
-  assert.deepEqual(innerRect({ width: 400, height: 300 }, { top: 0, right: 200, bottom: 0, left: 150 }), { x: 0, y: 0, width: 400, height: 300 });
+  explainWinsOverLegend(innerRect);
+  /** planted fault: the old rule, which dropped both insets on a crowded axis */
+  const dropBoth = (/** @type {any} */ size, /** @type {any} */ ins) => {
+    const lr = size.width - ins.left - ins.right < size.width * 0.4, tb = size.height - ins.top - ins.bottom < size.height * 0.4;
+    const left = lr ? 0 : ins.left, right = lr ? 0 : ins.right, top = tb ? 0 : ins.top, bottom = tb ? 0 : ins.bottom;
+    return { x: left, y: top, width: size.width - left - right, height: size.height - top - bottom };
+  };
+  assert.throws(() => explainWinsOverLegend(dropBoth));
 });

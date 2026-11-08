@@ -298,15 +298,22 @@ export function resizeTransform(t, prev, box, userMoved, bounds, fitOpt) {
 
 /**
  * The free area of the view: its size minus the shell's chrome insets (--onto-inset-*, px).
- * Insets that would leave less than 40% of either side are ignored for that axis.
+ * Both panels on an axis are honoured while they leave at least 25% of it (e.g. 900 px with the
+ * legend and the explain panel open: the map fits in the column between them). Below that the
+ * smaller inset is dropped, and if that still leaves less than 40%, both are.
  * @param {Size} size
  * @param {{ top: number, right: number, bottom: number, left: number }} ins
  * @returns {{ x: number, y: number, width: number, height: number }}
  */
 export function innerRect(size, ins) {
-  let { top, right, bottom, left } = ins;
-  if (size.width - left - right < size.width * 0.4) left = right = 0;
-  if (size.height - top - bottom < size.height * 0.4) top = bottom = 0;
+  /** @param {number} len @param {number} a @param {number} b */
+  const axis = (len, a, b) => {
+    if (len - a - b >= len * 0.25) return [a, b];
+    const [a2, b2] = a >= b ? [a, 0] : [0, b];
+    return len - a2 - b2 >= len * 0.4 ? [a2, b2] : [0, 0];
+  };
+  const [left, right] = axis(size.width, ins.left, ins.right);
+  const [top, bottom] = axis(size.height, ins.top, ins.bottom);
   return { x: left, y: top, width: Math.max(0, size.width - left - right), height: Math.max(0, size.height - top - bottom) };
 }
 
