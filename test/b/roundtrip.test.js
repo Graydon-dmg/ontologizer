@@ -44,3 +44,57 @@ test('real store + server: build, collapse and focus via /api/action, save, read
   const lossy = foldAll(stored.filter((e) => e.t !== 'view.changed'));
   assert.notDeepEqual(lossy.view, back.view);
 });
+
+test('replay: view actions reach the live stream but never the store; jobs still enqueue', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const home = tempHome();
+  const store = openStore(home);
+  store.importEvents('demo', fixtureEvents('plastic-modeling'));
+  const file = path.join(home, 'demo', 'events.jsonl');
+  const before = fs.readFileSync(file);
+  const jobs = [];
+  const engine = { enqueue: (/** @type {any} */ j) => { jobs.push(j); return 'job-1'; } };
+  const cat = fixtureEvents('plastic-modeling').find((e) => e.t === 'category.added').category.id;
+
+  /** Open SSE and collect view.changed events. @param {string} url */
+  const watch = async (url) => {
+    const seen = [];
+    const ctl = new AbortController();
+    const r = await fetch(new URL('api/events?from=0', url), { signal: ctl.signal });
+    const reader = r.body.getReader();
+    (async () => {
+      let buf = '';
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += Buffer.from(value).toString();
+          const parts = buf.split('\n\n'); buf = parts.pop() ?? '';
+          for (const p of parts) if (p.startsWith('data: ')) { const e = JSON.parse(p.slice(6)); if (e.t === 'view.changed') seen.push(e); }
+        }
+      } catch { /* aborted */ }
+    })();
+    return { seen, stop: () => ctl.abort() };
+  };
+
+  const srv = await startServer({ store, engine, id: 'demo', replay: { speed: 1000 } });
+  const w = await watch(srv.url);
+  assert.equal(await post(srv.url, { type: 'filter', value: { maxDepth: 1 } }), 202);
+  assert.equal(await post(srv.url, { type: 'collapse', nodeId: cat }), 202);
+  assert.equal(await post(srv.url, { type: 'expand', nodeId: cat }), 202);
+  assert.equal(await post(srv.url, { type: 'explain', nodeId: cat }), 202);
+  await new Promise((r) => setTimeout(r, 300));
+  w.stop();
+  await srv.close();
+  store.flush('demo');
+  assert.ok(fs.readFileSync(file).equals(before), 'replay changed events.jsonl');
+  assert.deepEqual(w.seen.map((e) => e.patch), [{ filter: { maxDepth: 1 } }, { collapsed: [cat] }, { collapsed: [] }]);
+  assert.equal(jobs.length, 1);
+
+  // Planted fault: the same view action on a plain (non-replay) session is persisted.
+  const plain = await startServer({ store, engine, id: 'demo' });
+  assert.equal(await post(plain.url, { type: 'filter', value: { maxDepth: 1 } }), 202);
+  await plain.close();
+  assert.ok(!fs.readFileSync(file).equals(before), 'plain load should persist view actions');
+});
