@@ -52,6 +52,9 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
   const liveSenders = new Set();
   /** @type {any} */
   let replayView = null;
+  /** Running rosetta runs on this map, by normalized persona. @type {Map<string, { jobId: string, lensId: string|null }>} */
+  const rosettaRuns = new Map();
+  let rosettaSeq = 0;
   const currentView = () => (replay ? (replayView ??= structuredClone(store.read(id).view)) : store.read(id).view);
 
   /** @param {http.ServerResponse} res @param {number} code @param {any} obj */
@@ -248,9 +251,67 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
         const jobId = typeof r === 'string' ? r : (r?.jobId ?? r?.id);
         return json(res, 202, jobId === undefined ? { ok: true } : { ok: true, jobId });
       }
+      case 'rosetta': {
+        const persona = typeof body.persona === 'string' ? body.persona.trim() : '';
+        if (!persona || persona.length > 120) return bad('persona must be a non-empty string of at most 120 characters');
+        if (body.name !== undefined && body.name !== null &&
+            (typeof body.name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(body.name))) {
+          return bad('name must be lowercase letters, digits and hyphens, at most 40 characters');
+        }
+        const name = typeof body.name === 'string' ? body.name : undefined;
+        const key = persona.toLowerCase();
+        const running = rosettaRuns.get(key);
+        if (running) return json(res, 202, { ok: true, jobId: running.jobId, ...(running.lensId ? { lensId: running.lensId } : {}) });
+        return json(res, 202, await startRosetta(persona, name, key));
+      }
       default:
         return bad(`unknown action type: ${String(body.type)}`);
     }
+  }
+
+  /**
+   * Start engine.rosetta without waiting for it to finish (it runs batch after batch). It is wrapped
+   * in job events so the shell's jobs tray shows it and its errors. Answers with the lensId as soon as
+   * the lens.added event appears (at most 3 s), which engine.rosetta emits first.
+   * @param {string} persona @param {string|undefined} name @param {string} key
+   */
+  async function startRosetta(persona, name, key) {
+    const jobId = `rosetta-${process.pid}-${++rosettaSeq}`;
+    const job = { id: jobId, kind: 'rosetta' };
+    const run = { jobId, lensId: /** @type {string|null} */ (null) };
+    rosettaRuns.set(key, run);
+    /** @type {(v: any) => void} */
+    let gotLens = () => {};
+    const lensSeen = new Promise((r) => { gotLens = r; });
+    const off = store.subscribe(id, (/** @type {any} */ ev) => {
+      if (ev.t === 'lens.added' && ev.lens?.id && !run.lensId && ev.lens.persona?.trim().toLowerCase() === key) {
+        run.lensId = ev.lens.id;
+        gotLens(ev.lens.id);
+      }
+    });
+    store.append(id, { t: 'job.queued', at: store.now(id), job });
+    store.append(id, { t: 'job.started', at: store.now(id), job });
+    const finished = Promise.resolve()
+      .then(() => engine.rosetta(id, persona, { name }))
+      .then(
+        (lensId) => {
+          if (!run.lensId && typeof lensId === 'string') run.lensId = lensId;
+          try { store.append(id, { t: 'job.done', at: store.now(id), job }); } catch { /* store gone */ }
+        },
+        (/** @type {any} */ err) => {
+          const error = err && (err.status === 401 || err.name === 'AuthenticationError')
+            ? 'Your Anthropic API key was rejected: run ontologizer key set'
+            : String(err?.message ?? err);
+          try { store.append(id, { t: 'job.failed', at: store.now(id), job: { ...job, error } }); } catch { /* store gone */ }
+        },
+      )
+      .finally(() => { off(); rosettaRuns.delete(key); gotLens(null); })
+      .catch(() => {}); // never an unhandled rejection: errors are already job.failed events
+    /** @type {any} */
+    let t;
+    await Promise.race([lensSeen, finished, new Promise((r) => { t = setTimeout(r, 3000); })]);
+    clearTimeout(t);
+    return { ok: true, jobId, ...(run.lensId ? { lensId: run.lensId } : {}) };
   }
 
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
