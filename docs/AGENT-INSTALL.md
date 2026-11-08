@@ -30,7 +30,7 @@ Follow these steps in order. Do not skip ahead.
    ok   Store /Users/you/.ontologizer is writable
    warn Completion not installed
         fix: add to ~/.zshrc: eval "$(ontologizer completion zsh)"
-   warn Version 0.1.0 (could not check for updates)
+   warn Version 1.0.0 (could not check for updates)
    ```
 
    "API key not set" is expected to fail until step 4. Anything else that fails: see Troubleshooting.
