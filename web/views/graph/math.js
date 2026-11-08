@@ -203,24 +203,33 @@ export function hiddenIds(ontology, collapsed, filter) {
  * @param {Array<{ id: string, forced: boolean, must?: boolean, fallback?: number, priority?: number, depth: number, r: number,
  *                 box?: { x: number, y: number, w: number, h: number },
  *                 boxes?: Array<{ x: number, y: number, w: number, h: number }> }>} items
+ * @param {{ x: number, y: number, width: number, height: number }} [area]  screen area labels must stay
+ *   inside (the free area: off-screen and under-panel spots count as taken); forced labels with no free
+ *   spot take their first spot inside it, else their fallback
  * @returns {Map<string, number>} drawn label id -> index of the spot it took
  */
-export function placeLabels(items) {
+export function placeLabels(items, area) {
   const order = [...items].sort((a, b) =>
     (Number(b.forced) - Number(a.forced)) || ((b.priority ?? 0) - (a.priority ?? 0)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
   /** @type {Array<{ x: number, y: number, w: number, h: number }>} */
   const placed = [];
   /** @type {Map<string, number>} */
   const shown = new Map();
-  const free = (/** @type {{ x: number, y: number, w: number, h: number }} */ a) =>
-    !placed.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
+  const inside = (/** @type {{ x: number, y: number, w: number, h: number }} */ a) => !area
+    || (a.x >= area.x && a.y >= area.y && a.x + a.w <= area.x + area.width && a.y + a.h <= area.y + area.height);
+  const free = (/** @type {{ x: number, y: number, w: number, h: number }} */ a) => inside(a)
+    && !placed.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
   for (const it of order) {
     const boxes = it.boxes ?? (it.box ? [it.box] : []);
     // forced labels keep their first spot; the rest take the first spot that is free
     // every label takes its first free spot; forced and `must` labels (hybrids) that find none
     // take their fallback spot anyway
     let i = boxes.findIndex(free);
-    if (i < 0 && (it.forced || it.must)) i = it.fallback ?? 0;
+    if (i < 0 && (it.forced || it.must)) {
+      const fb = it.fallback ?? 0;
+      i = area && boxes[fb] && !inside(boxes[fb]) ? boxes.findIndex(inside) : -1;
+      if (i < 0) i = fb;
+    }
     if (i < 0 || !boxes[i]) continue;
     placed.push(boxes[i]);
     shown.set(it.id, i);
@@ -366,9 +375,10 @@ export function spotBoxes(e, withAnalog) {
  * when every spot is taken); a hovered or focused one (`full`) keeps its analog even then.
  * @param {LabelEntry[]} entries
  * @param {typeof spotBoxes} [boxesOf]
+ * @param {{ x: number, y: number, width: number, height: number }} [area]  the free area, screen px
  * @returns {Map<string, { spot: number, analog: boolean }>} drawn labels only
  */
-export function planLabels(entries, boxesOf = spotBoxes) {
+export function planLabels(entries, boxesOf = spotBoxes, area = undefined) {
   const items = entries.map((e) => {
     const prev = e.prev ?? 0;
     const spots = [prev, ...[0, 1, 2, 3].filter((i) => i !== prev)];
@@ -380,7 +390,7 @@ export function planLabels(entries, boxesOf = spotBoxes) {
     const fallback = e.aw > 0 && !e.full ? spots.length : 0;
     return { id: e.id, forced: e.forced, must: e.must, priority: e.priority, depth: e.depth, r: e.r, boxes: cands.map((c) => c.box), cands, fallback };
   });
-  const placed = placeLabels(items);
+  const placed = placeLabels(items, area);
   /** @type {Map<string, { spot: number, analog: boolean }>} */
   const out = new Map();
   for (const it of items) {
@@ -414,4 +424,16 @@ export function emphasis(base, cite) {
  */
 export function isBackgroundClick(target, nodesLayer) {
   return !!target && !nodesLayer.contains(target);
+}
+
+/**
+ * The box the auto-fit frames node dots into: the free area shrunk on each side by the screen
+ * width of the longest label (labels are drawn at a constant screen size, so this is in px, not
+ * world units), capped at 22% of the width per side; a little room above and below.
+ * @param {{ x: number, y: number, width: number, height: number }} rect  the free area
+ * @param {number} labelPx  widest wanted label, px
+ */
+export function fitBox(rect, labelPx) {
+  const px = Math.max(0, Math.min(labelPx, rect.width * 0.22)), py = Math.min(16, rect.height * 0.1);
+  return { x: rect.x + px, y: rect.y + py, width: rect.width - 2 * px, height: rect.height - 2 * py };
 }

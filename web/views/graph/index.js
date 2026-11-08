@@ -9,7 +9,7 @@ import { easeBackOut, easeCubicInOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, emphasis, isBackgroundClick, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, emphasis, isBackgroundClick, fitBox, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -217,8 +217,8 @@ class OntoGraph extends Base {
     const pos = this.ctx.layout.positions();
     const vis = [...this.nodes.keys()].filter((id) => !this.hidden.has(id) && pos.has(id)).map((id) => /** @type {{x:number,y:number}} */ (pos.get(id)));
     const b = worldBounds(vis);
-    const pad = { minX: b.minX - 30, minY: b.minY - 30, maxX: b.maxX + 90, maxY: b.maxY + 30 }; // nodes + labels
-    const t = resizeTransform(zoomTransform(this.svg.node()), prev, rect, this.userMoved, pad,
+    const pad = { minX: b.minX - 12, minY: b.minY - 12, maxX: b.maxX + 12, maxY: b.maxY + 12 }; // node dots; labels via fitBox
+    const t = resizeTransform(zoomTransform(this.svg.node()), prev, this.userMoved ? rect : fitBox(rect, this.labelPx()), this.userMoved, pad,
       { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
     if (t) {
       this.svg.interrupt('fit');
@@ -252,6 +252,14 @@ class OntoGraph extends Base {
   /** The free area of the view: inside the shell's chrome insets (--onto-inset-*). */
   viewRect() {
     return innerRect(this.box, this.insets);
+  }
+
+  /** Screen width of the widest label that wants drawing (px), plus the gap to its dot. */
+  labelPx() {
+    const ont = this.ctx?.snapshot();
+    let w = 0;
+    for (const id of this.labelWanted.keys()) w = Math.max(w, LABEL_GEOM.charW * (ont?.nodes[id]?.label.length ?? 0));
+    return w ? w + 10 : 0;
   }
 
   /** Theme switched (System / Light / Dark): repaint colors that come from THEME. */
@@ -300,11 +308,12 @@ class OntoGraph extends Base {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [id, p] of cur) {
       if (this.hidden.has(id)) continue;
-      const r = (this.nodes.get(id)?.r ?? 0) + 8;
-      minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r + 60); // room for the label
+      const r = (this.nodes.get(id)?.r ?? 0) + 4;
+      minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r);
       minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
     }
-    const f = fitTransform({ minX, minY, maxX, maxY }, this.viewRect(), { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
+    // labels keep a constant screen size, so their room is taken off the box in px (both sides)
+    const f = fitTransform({ minX, minY, maxX, maxY }, fitBox(this.viewRect(), this.labelPx()), { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
     if (!f) return; // 0x0 mount: the ResizeObserver refits once the element has a size
     const t = zoomTransform(this.svg.node());
     if (Math.abs(t.k - f.k) / f.k < 0.03 && Math.abs(t.x - f.x) < 15 && Math.abs(t.y - f.y) < 15) return;
@@ -571,7 +580,7 @@ class OntoGraph extends Base {
         cx: p.x * t.k + t.x, cy: p.y * t.k + t.y, R: nv.r * t.k,
         w: LABEL_GEOM.charW * n.label.length, aw: a ? LABEL_GEOM.analogCharW * truncateAnalog(a.label).length : 0 });
     }
-    const plan = planLabels(entries);
+    const plan = planLabels(entries, undefined, this.viewRect()); // labels stay on screen and off the panels
     const inv = 1 / t.k;
     for (const [id, nv] of this.nodes) {
       const at = plan.get(id);
