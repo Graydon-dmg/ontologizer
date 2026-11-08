@@ -405,3 +405,13 @@ export function emphasis(base, cite) {
     (!!cite && cite.has(a) && cite.has(b)) || (!!base && base.has(a) && base.has(b));
   return { nodes, link };
 }
+
+/**
+ * A click counts as "on the background" (deselect, clear a citation) unless it hit a node:
+ * links, cross-link edges, rings and empty layers all count as background.
+ * @param {any} target  the click's event target
+ * @param {{ contains(n: any): boolean }} nodesLayer  the layer holding every node's <g>
+ */
+export function isBackgroundClick(target, nodesLayer) {
+  return !!target && !nodesLayer.contains(target);
+}

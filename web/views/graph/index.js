@@ -9,7 +9,7 @@ import { easeBackOut, easeCubicInOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, emphasis, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, emphasis, isBackgroundClick, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -185,7 +185,7 @@ class OntoGraph extends Base {
       });
     svg.call(this.zoomBehavior).on('dblclick.zoom', null);
     svg.on('click', (/** @type {MouseEvent} */ ev) => {
-      if (ev.target !== svg.node()) return;
+      if (!isBackgroundClick(ev.target, this.layers.nodes.node())) return;
       this.selected = null;
       this.refreshLabels();
       this.ctx?.emit('select', { nodeId: null });
