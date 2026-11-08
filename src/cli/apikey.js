@@ -86,22 +86,60 @@ function storedKey(kr) {
   }
 }
 
+export const DEFAULT_BASE_URL = 'https://api.anthropic.com';
+const NOTICE = { shown: false };
+
+/**
+ * The API base URL for every client this CLI builds (the model client, the no-key client, the key
+ * check). Passed explicitly, so no SDK config can redirect the key. ANTHROPIC_BASE_URL is honoured
+ * only when it is https://, or http:// to localhost / 127.0.0.1; then one notice line names the host.
+ * The error names the variable, never the key.
+ * @param {{ env?: NodeJS.ProcessEnv, stderr?: { write(s: string): any }, state?: { shown: boolean } }} [opts]
+ * @returns {string}
+ */
+export function resolveBaseURL({ env = process.env, stderr = process.stderr, state = NOTICE } = {}) {
+  const raw = typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL.trim() : '';
+  if (!raw) return DEFAULT_BASE_URL;
+  /** @param {string} m */
+  const refuse = (m) => Object.assign(new Error(m), { code: 'ONTOLOGIZER_BASE_URL' });
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw refuse('ANTHROPIC_BASE_URL is not a valid URL: unset it, or set it to an https:// address.');
+  }
+  const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+  if (u.protocol !== 'https:' && !local) {
+    throw refuse('ANTHROPIC_BASE_URL must be https:// (or http:// to localhost or 127.0.0.1): unset it or fix it.');
+  }
+  if (u.username || u.password) throw refuse('ANTHROPIC_BASE_URL must not contain a user name or password.');
+  if (!state.shown) {
+    state.shown = true;
+    stderr.write(`Using Anthropic API at ${u.host} (from ANTHROPIC_BASE_URL)\n`);
+  }
+  return `${u.origin}${u.pathname}`.replace(/\/+$/, '');
+}
+
 /**
  * Check a key with a free call (models.list) before it is stored.
- * 'ok': accepted. 'rejected': a 401 (or 403). 'unverified': anything else (no network, timeout,
+ * 'ok': accepted. 'rejected': a 401. 'unverified': anything else (no network, timeout, a 403,
  * server error): the caller saves it with a warning. The error itself is never surfaced, so no
  * message built from the request can carry the key.
  * @param {string} key
+ * @param {{ env?: NodeJS.ProcessEnv, stderr?: { write(s: string): any }, timeoutMs?: number }} [opts]
  * @returns {Promise<'ok'|'rejected'|'unverified'>}
  */
-export async function checkKey(key) {
+export async function checkKey(key, { env = process.env, stderr = process.stderr, timeoutMs = 10_000 } = {}) {
+  const baseURL = resolveBaseURL({ env, stderr }); // a refused base URL throws: never sent, never saved
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: key, maxRetries: 1, timeout: 10_000 });
-    await client.models.list({ limit: 1 });
+    const client = new Anthropic({ apiKey: key, baseURL, maxRetries: 0, timeout: timeoutMs });
+    // The signal caps the whole call (the SDK timeout covers only the response headers).
+    await client.models.list({ limit: 1 }, { signal: AbortSignal.timeout(timeoutMs) });
     return 'ok';
   } catch (/** @type {any} */ err) {
-    return err && (err.status === 401 || err.status === 403 || err.name === 'AuthenticationError') ? 'rejected' : 'unverified';
+    // Only a 401 means "this key is wrong". A 403 is often a proxy or firewall: save with a warning.
+    return err && (err.status === 401 || err.name === 'AuthenticationError') ? 'rejected' : 'unverified';
   }
 }
 
@@ -129,10 +167,12 @@ export async function promptAndStoreKey({ keyring, ask = null, stderr = process.
       stderr.write('That does not look like an Anthropic API key (it starts with "sk-ant-").\n');
       continue;
     }
+    stderr.write('Checking the key with Anthropic…\n');
     let verdict;
     try {
       verdict = await validate(key);
-    } catch {
+    } catch (/** @type {any} */ err) {
+      if (err?.code === 'ONTOLOGIZER_BASE_URL') throw err; // a refused ANTHROPIC_BASE_URL: stop, save nothing
       verdict = 'unverified';
     }
     if (verdict === 'rejected') {
@@ -228,9 +268,10 @@ export function isAuthError(err) {
 }
 
 /** Build the SDK client from a key. The key goes only into the client object. @param {string} apiKey */
-export async function makeClient(apiKey) {
+export async function makeClient(apiKey, { env = process.env, stderr = process.stderr } = {}) {
+  const baseURL = resolveBaseURL({ env, stderr });
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  return new Anthropic({ apiKey });
+  return new Anthropic({ apiKey, baseURL });
 }
 
 /**
@@ -238,16 +279,17 @@ export async function makeClient(apiKey) {
  * the keychain (never prompting): once `ontologizer key set` has stored a key in another terminal,
  * it builds the real client and delegates to it. Until then every model call fails with the
  * contract's job message, so a clicked job ends as job.failed instead of hanging or crashing.
- * @param {{ keyring: Keyring }} opts
+ * @param {{ keyring: Keyring, env?: NodeJS.ProcessEnv, stderr?: { write(s: string): any } }} opts
  */
-export async function noKeyClient({ keyring }) {
+export async function noKeyClient({ keyring, env = process.env, stderr = process.stderr }) {
+  const baseURL = resolveBaseURL({ env, stderr });
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   /** @type {any} */
   let real = null;
   const current = () => {
     if (!real) {
       const key = storedKey(keyring);
-      if (key) real = new Anthropic({ apiKey: key });
+      if (key) real = new Anthropic({ apiKey: key, baseURL });
     }
     return real;
   };

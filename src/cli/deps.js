@@ -80,7 +80,7 @@ export function makeDeps(over = {}) {
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     keyring: over.keyring ?? defaultKeyring(env),
     ask: null,
-    validateKey: checkKey,
+    validateKey: (key) => checkKey(key, { env, stderr: process.stderr }),
     prompts: async () => /** @type {any} */ (await import('@inquirer/prompts')),
     openBrowser: async (url) => {
       if (env.ONTOLOGIZER_NO_OPEN === '1') return;

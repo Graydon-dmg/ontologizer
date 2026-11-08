@@ -135,7 +135,7 @@ test('fuse with a third map is refused with the contract message, before any key
   let asked = 0;
   const ask = async () => { asked++; return 'sk-ant-test-0000'; };
   const r = await run(home, ['fuse', 'plastic-modeling', 'manga', 'plastic-modeling', '--no-open', '--exit-after', '50'],
-    { interactive: true, ask });
+    { interactive: true, ask, validateKey: async () => 'ok' });
   assert.equal(r.code, 1);
   assert.equal(r.stderr, 'fuse takes two maps; fuse the result again to add a third\n');
   assert.equal(asked, 0, 'asked for a key before refusing');

@@ -25,11 +25,15 @@ export async function engineFor({ deps, store, id, needKey }) {
       stderr: deps.stderr,
       validate: deps.validateKey,
     });
-    client = await makeClient(key);
+    client = await makeClient(key, { env: deps.env, stderr: deps.stderr });
   } catch (err) {
     if (/** @type {any} */ (err)?.name === 'ExitPromptError') throw err; // Ctrl-C at the prompt: exit 130 quietly
-    if (needKey) throw new CliError(/** @type {Error} */ (err).message, 1);
-    client = await noKeyClient({ keyring: deps.keyring });
+    if (needKey || /** @type {any} */ (err)?.code === 'ONTOLOGIZER_BASE_URL') throw new CliError(/** @type {Error} */ (err).message, 1);
+    try {
+      client = await noKeyClient({ keyring: deps.keyring, env: deps.env, stderr: deps.stderr });
+    } catch (e) {
+      throw new CliError(/** @type {Error} */ (e).message, 1); // a refused ANTHROPIC_BASE_URL
+    }
   }
   return loadEngine({ store, id, client, env: deps.env });
 }

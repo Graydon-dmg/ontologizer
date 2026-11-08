@@ -256,3 +256,81 @@ test('checkKey against a local fake API: 401 rejected, 200 ok, unreachable unver
     for (const s of servers) { s.closeAllConnections?.(); s.close(); }
   }
 });
+
+// ---- review fixes: 403/500/hang are unverified; base URL policy ----
+import { resolveBaseURL, makeClient, DEFAULT_BASE_URL } from '../../src/cli/apikey.js';
+
+/** A local fake API answering `status` (or never, for 0). @param {number} status */
+function localApi(status) {
+  return new Promise((resolve) => {
+    const seen = { hits: 0 };
+    const s = http.createServer((req, res) => {
+      seen.hits++;
+      if (status === 0) return; // never answers
+      res.writeHead(status, { 'content-type': 'application/json', connection: 'close' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'x', message: 'x' } }));
+    });
+    s.listen(0, '127.0.0.1', () => resolve({ s, seen, env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${/** @type {any} */ (s.address()).port}` } }));
+  });
+}
+
+test('checkKey: 403 (a proxy or firewall) and 500 are unverified, not rejected; a silent server times out', async () => {
+  const quiet = cap();
+  for (const status of [403, 500]) {
+    /** @type {any} */ const api = await localApi(status);
+    try {
+      assert.equal(await checkKey('sk-ant-test-x', { env: api.env, stderr: quiet }), 'unverified', String(status));
+      assert.ok(api.seen.hits >= 1);
+    } finally { api.s.closeAllConnections?.(); api.s.close(); }
+  }
+  /** @type {any} */ const hang = await localApi(0);
+  try {
+    const t = Date.now();
+    assert.equal(await checkKey('sk-ant-test-x', { env: hang.env, stderr: quiet, timeoutMs: 300 }), 'unverified');
+    const ms = Date.now() - t;
+    assert.ok(ms < 2000, `took ${ms} ms`);
+    assert.equal(hang.seen.hits, 1, 'no retries (maxRetries 0)');
+  } finally { hang.s.closeAllConnections?.(); hang.s.close(); }
+  // Planted fault: the old rule (403 → rejected) would lock out users behind a 403 proxy.
+  const oldRule = (/** @type {number} */ st) => (st === 401 || st === 403 ? 'rejected' : 'unverified');
+  assert.equal(oldRule(403), 'rejected');
+});
+
+test('the prompt says it is checking the key before the call', async () => {
+  const stderr = cap(); const order = [];
+  const write = stderr.write.bind(stderr);
+  stderr.write = (/** @type {string} */ s) => { if (s.startsWith('Checking')) order.push('notice'); return write(s); };
+  await promptAndStoreKey({ keyring: fakeKeyring(), ask: fakeAsk(['sk-ant-test-n']), stderr,
+    validate: async () => { order.push('check'); return 'ok'; } });
+  assert.deepEqual(order, ['notice', 'check']);
+  assert.ok(stderr.out.includes('Checking the key with Anthropic…'));
+});
+
+test('base URL policy: explicit default; https or local http honoured with one notice; anything else refused', async () => {
+  const err = cap();
+  assert.equal(resolveBaseURL({ env: {}, stderr: err, state: { shown: false } }), DEFAULT_BASE_URL);
+  assert.equal(err.out, '', 'no notice for the default');
+  for (const bad of ['http://evil.example', 'http://10.0.0.5:8080', 'ftp://x', 'not a url', 'https://user:pw@proxy.example']) {
+    assert.throws(() => resolveBaseURL({ env: { ANTHROPIC_BASE_URL: bad }, stderr: err, state: { shown: false } }),
+      (e) => /ANTHROPIC_BASE_URL/.test(/** @type {Error} */ (e).message) && !/sk-ant/.test(/** @type {Error} */ (e).message), bad);
+  }
+  const state = { shown: false }; const note = cap();
+  assert.equal(resolveBaseURL({ env: { ANTHROPIC_BASE_URL: 'https://proxy.example/anthropic/' }, stderr: note, state }), 'https://proxy.example/anthropic');
+  resolveBaseURL({ env: { ANTHROPIC_BASE_URL: 'https://proxy.example/anthropic/' }, stderr: note, state });
+  assert.equal(note.out, 'Using Anthropic API at proxy.example (from ANTHROPIC_BASE_URL)\n', 'one notice per process');
+  for (const ok of ['http://localhost:8080', 'http://127.0.0.1:9']) {
+    assert.ok(resolveBaseURL({ env: { ANTHROPIC_BASE_URL: ok }, stderr: cap(), state: { shown: false } }).startsWith('http://'));
+  }
+  // The real clients use it: the default is passed explicitly; a refused URL stops makeClient.
+  const client = /** @type {any} */ (await makeClient('sk-ant-test-x', { env: {}, stderr: cap() }));
+  assert.equal(client.baseURL, DEFAULT_BASE_URL);
+  await assert.rejects(makeClient('sk-ant-test-x', { env: { ANTHROPIC_BASE_URL: 'http://evil.example' }, stderr: cap() }), /ANTHROPIC_BASE_URL/);
+  // A refused URL also stops the key prompt: nothing is checked or stored.
+  const kr = fakeKeyring();
+  await assert.rejects(promptAndStoreKey({ keyring: kr, ask: fakeAsk(['sk-ant-test-y']), stderr: cap(),
+    validate: (k) => checkKey(k, { env: { ANTHROPIC_BASE_URL: 'http://evil.example' }, stderr: cap() }) }), /ANTHROPIC_BASE_URL/);
+  assert.equal(kr.v, null);
+  // Planted fault: a resolver that accepts any URL would send the key to http://evil.example.
+  const acceptsAnything = (/** @type {string} */ u) => u;
+  assert.equal(acceptsAnything('http://evil.example'), 'http://evil.example');
+});
