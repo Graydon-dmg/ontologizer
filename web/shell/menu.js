@@ -22,3 +22,19 @@ export function menuItems(node, ontology) {
   items.push({ id: 'sources', label: 'Sources', action: { type: 'sources', nodeId } });
   return items;
 }
+
+/**
+ * What clicking a menu item does: send its action through the shell (Explain also opens the
+ * panel, so the "Researching…" state is visible at once), or open the panel.
+ * @param {MenuItem} item @param {string} nodeId
+ * @param {{ act: (a: any) => any, openExplain: (id: string) => void }} shell
+ */
+export function runMenuItem(item, nodeId, shell) {
+  if (item.action) {
+    const r = shell.act(item.action);
+    if (item.action.type === 'explain') shell.openExplain(nodeId);
+    return r;
+  }
+  if (item.open === 'explain') shell.openExplain(nodeId);
+  return undefined;
+}

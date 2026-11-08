@@ -21,6 +21,7 @@ export function mountTicker(el, shell) {
     const v = shell.activeView();
     if (v && v.setFocus) v.setFocus(current);
   });
+  shell.on('notice', (/** @type {any} */ d) => { if (d && d.text) ticker.push({ text: d.text }); });
   shell.on('event', (/** @type {any} */ d) => {
     const item = d && tickerItem(d.event, d.ontology);
     if (item) ticker.push(item);
