@@ -187,7 +187,8 @@ function publishInsets() {
   const slot = $('view');
   const shown = (/** @type {Element|null} */ el) => !!el && !(/** @type {HTMLElement} */ (el)).hidden
     && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
-  const panels = ['topbar', 'legend', 'minimap'].map((id) => $(id));
+  // The ticker is left out on purpose: it changes every few seconds and would make the map re-fit.
+  const panels = ['topbar', 'legend', 'minimap', 'jobs'].map((id) => $(id));
   const ex = $('explain');
   panels.push(/** @type {HTMLElement} */ (ex.querySelector('.onto-explain') || ex));
   const rects = panels.filter(shown).map((el) => el.getBoundingClientRect());
@@ -200,7 +201,7 @@ function publishInsets() {
 {
   let queued = false;
   const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; publishInsets(); }); } };
-  const watched = ['topbar', 'legend', 'minimap', 'explain'].map((id) => $(id));
+  const watched = ['topbar', 'legend', 'minimap', 'explain', 'jobs'].map((id) => $(id));
   if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(schedule); for (const el of watched) ro.observe(el); }
   const mo = new MutationObserver(schedule);
   for (const el of watched) mo.observe(el, { attributes: true, subtree: true, attributeFilter: ['hidden', 'class', 'style'] });

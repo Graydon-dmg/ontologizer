@@ -36,3 +36,13 @@ test('planted fault: insets that ignore the side panels (top bar only) are caugh
   const barOnly = (/** @type {any} */ vp, /** @type {any[]} */ rects) => ({ top: rects.length ? 88 : 0, right: 0, bottom: 0, left: 0 });
   assert.throws(() => check(/** @type {any} */ (barOnly)));
 });
+
+test('the jobs tray counts too: bottom or right, whichever costs less', () => {
+  const tray = { left: 640, top: 760, right: 890, bottom: 890 };
+  const vp = { w: 900, h: 900 };
+  const ins = computeInsets(vp, [{ left: 10, top: 10, right: 680, bottom: 80 }, tray]);
+  assert.ok(ins.bottom >= 148 || ins.right >= 268, JSON.stringify(ins));
+  // planted fault: ignoring the tray leaves a node under it
+  const bad = computeInsets(vp, [{ left: 10, top: 10, right: 680, bottom: 80 }]);
+  assert.throws(() => assert.ok(bad.bottom >= 148 || bad.right >= 268));
+});
