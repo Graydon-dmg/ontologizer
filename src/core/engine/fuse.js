@@ -22,7 +22,9 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
  * @param {{ store: any, models: { fast: string, strong: string }, getClient: () => any, jsonLines: (c: AsyncIterable<string>) => AsyncIterable<any> }} ctx
  * @param {string} a  ontology id
  * @param {string} b  ontology id
- * @param {{ into?: string }} [opts]
+ * @param {{ into?: string, onDraft?: (draftId: string) => void }} [opts]
+ *   onDraft: called once, synchronously, right after the draft exists and before any event is
+ *   appended (so a caller can open the new map and watch it fill). A throw is ignored.
  * @returns {Promise<string>} the new draft's id
  */
 export async function fuse(ctx, a, b, opts) {
@@ -99,6 +101,13 @@ export async function fuse(ctx, a, b, opts) {
     level: oa.brief.level,
   };
   const draftId = ctx.store.createDraft(brief, root);
+  const onDraft = opts && typeof opts === 'object' && typeof opts.onDraft === 'function' ? opts.onDraft : null;
+  if (onDraft) {
+    try {
+      const r = /** @type {any} */ (onDraft(draftId));
+      if (r && typeof r.catch === 'function') r.catch(() => {}); // an async callback must not reject unhandled
+    } catch { /* a throwing callback never breaks the fuse */ }
+  }
   /** @param {string} t @param {Record<string, any>} f */
   const emit = (t, f) => ctx.store.append(draftId, makeEvent(t, f, startedAt));
 

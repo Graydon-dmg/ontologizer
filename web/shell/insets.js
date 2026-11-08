@@ -52,3 +52,16 @@ export function computeInsets(vp, rects, gap = INSET_GAP) {
 export function sameInsets(a, b) {
   return !!a && a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left;
 }
+
+/** Height reserved for the one-line ticker at the bottom (px), and its share of the width. */
+export const TICKER_STRIP = { height: 40, widthShare: 0.4, margin: 10 };
+
+/**
+ * The fixed strip the ticker may occupy: bottom left, one line, up to 40% of the width.
+ * @param {number} w @param {number} h
+ * @returns {Rect}
+ */
+export function tickerStrip(w, h) {
+  const { height, widthShare, margin } = TICKER_STRIP;
+  return { left: margin, top: h - margin - height + 10, right: margin + Math.round(w * widthShare), bottom: h - margin };
+}

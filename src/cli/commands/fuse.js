@@ -1,6 +1,6 @@
 // @ts-check
 import { CliError } from '../deps.js';
-import { engineFor, rethrowAuth, serveSession } from '../serve.js';
+import { engineFor, rethrowAuth, serveSession, checkPort } from '../serve.js';
 import { resolveName, waitForExit } from '../resolve-name.js';
 
 export default {
@@ -11,6 +11,7 @@ export default {
     .positional('b', { type: 'string' })
     .positional('more', { type: 'string', array: true, hidden: true })
     .option('into', { type: 'string', describe: 'Name for the fused map' })
+    .option('port', { type: 'number', default: 0, describe: 'Port to serve on (default: a free one)' })
     .option('open', { type: 'boolean', default: true, hidden: true })
     .option('exit-after', { type: 'number', hidden: true }),
   handler: async (/** @type {any} */ argv) => {
@@ -32,7 +33,7 @@ export default {
     }
     deps.stdout.write(`Fused into ${draftId}\n`);
     const eng2 = await engineFor({ deps, store, id: draftId, needKey: true });
-    const srv = await serveSession({ deps, store, engine: eng2, id: draftId, open: argv.open });
+    const srv = await serveSession({ deps, store, engine: eng2, id: draftId, open: argv.open, port: checkPort(argv.port) });
     try {
       await waitForExit(deps, argv.exitAfter);
     } finally {

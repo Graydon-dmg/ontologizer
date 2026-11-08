@@ -145,6 +145,7 @@ test('rosetta action: validation, 202 with lensId, dedupe, job events, errors su
   await new Promise((r) => setTimeout(r, 50));
   const jobs = store.read('plastic-modeling').jobs;
   assert.equal(jobs[first.body.jobId].state, 'done');
+  assert.equal(jobs[first.body.jobId].persona, 'a home chef'); // D's tray shows the persona after a reload
 
   // An engine error (401) ends the job as job.failed with the contract message.
   fail = Object.assign(new Error('401'), { status: 401 });
