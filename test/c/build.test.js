@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../../src/core/engine/index.js';
+import { rootLabel } from '../../src/core/engine/build.js';
+import { slug } from '../../src/core/engine/ids.js';
 import { KEY_REJECTED } from '../../src/core/engine/call.js';
 import { createFakeClient, createMemoryStore, lines } from './fake.js';
 
@@ -152,7 +154,7 @@ test('event order and node shape', async () => {
   assert.equal(ev[0].root, 'plastic-modeling');
   assert.equal(ev[1].t, 'node.added');
   assert.equal(ev[1].node.id, 'plastic-modeling');
-  assert.equal(ev[1].node.label, 'Plastic modeling');
+  assert.equal(ev[1].node.label, 'Plastic Modeling');
   assert.equal(ev[1].node.summary, 'kits and tools');
   for (const c of CATS) {
     const id = `plastic-modeling/${c.toLowerCase()}`;
@@ -219,4 +221,27 @@ test('check: questions are capped and cleaned; a fenced, prose-wrapped answer st
   assert.deepEqual(await none.engine.check('x'), { ready: false, questions: [{ id: 'subject', text: 'What exactly do you want to explore?', options: [] }] });
   const nothing = setup({ check: { text: 'no json here\n' } });
   await assert.rejects(nothing.engine.check('x'), /returned no answer/);
+});
+
+test('the root label is short Title Case; the root id is still slug(subject)', async () => {
+  const long = 'Scale plastic modeling (building and finishing scale model kits)';
+  const t = setup();
+  await t.engine.build({ ...BRIEF, subject: long });
+  const o = t.store.read('t');
+  assert.equal(o.root, slug(long));
+  assert.equal(o.nodes[o.root].label, 'Scale Plastic Modeling');
+  // Planted fault: the old label (the subject with its first letter raised) is too long.
+  const old = long.charAt(0).toUpperCase() + long.slice(1);
+  assert.ok(old.split(/\s+/).length > 4);
+  for (const [subject, want] of /** @type {[string, string][]} */ ([
+    ['Japanese manga: history, genres and artists', 'Japanese Manga'],
+    ['the history of the roman empire and its fall', 'The History'],
+    ['3D printing - a guide for makers', '3D Printing'],
+    ['DNA', 'DNA'],
+    ['coffee', 'Coffee'],
+  ])) {
+    const label = rootLabel(subject);
+    assert.equal(label, want, subject);
+    assert.ok(label.split(' ').length <= 4);
+  }
 });
