@@ -10,7 +10,17 @@
 .filter label { color: var(--muted); display: inline-flex; gap: 3px; align-items: center; }
 .filter select, .lens-switcher select { background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px; padding: 2px 4px; }
 .lens-switcher { color: var(--muted); font-size: 12px; }
-.lens-switcher[hidden] { display: none; }
+.lens-switcher { position: relative; }
+.lens-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: 260px; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+.lens-pop[hidden] { display: none; }
+.lens-pop label { display: flex; flex-direction: column; gap: 4px; color: var(--fg); font-size: 12px; }
+.lens-pop input { background: var(--bg); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px; padding: 4px 8px; font: inherit; }
+.lens-msg { color: var(--muted); font-size: 12px; }
+.lens-msg:empty { display: none; }
+.lens-row { display: flex; gap: 6px; justify-content: flex-end; }
+.lens-row button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 4px; cursor: pointer; border: 1px solid var(--muted); background: var(--panel); color: var(--fg); }
+.lens-row button[type=submit] { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
 .minimap-frame { position: relative; background: var(--panel); border: 1px solid var(--muted); border-radius: 4px; }
 .minimap-frame > :not(.minimap-toggle) { display: block; }
 #minimap.minimap-frame.collapsed { width: 24px; height: 24px; }

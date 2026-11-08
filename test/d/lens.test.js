@@ -42,8 +42,8 @@ test('lensSelection normalizes none', () => {
 });
 
 test('lensOptions lists none plus every lens', () => {
-  assert.deepEqual(lensOptions(foldAll(events.slice(0, 2))), [{ value: null, label: 'none' }]);
-  assert.deepEqual(lensOptions(foldAll(events)), [{ value: null, label: 'none' }, { value: 'cook', label: 'Chef' }]);
+  assert.deepEqual(lensOptions(foldAll(events.slice(0, 2))), [{ value: null, label: 'None' }]);
+  assert.deepEqual(lensOptions(foldAll(events)), [{ value: null, label: 'None' }, { value: 'cook', label: 'Chef' }]);
 });
 
 test('analogFor returns label and breaks with lens active, null after lens cleared', () => {
@@ -52,4 +52,46 @@ test('analogFor returns label and breaks with lens active, null after lens clear
   assert.equal(analogFor(on, 'x/zzz'), null);
   const off = foldAll([...events, { t: 'view.changed', at: 5, patch: { lens: null } }]);
   assert.equal(analogFor(off, 'x/a'), null);
+});
+
+import { newLensAction, createLensRequests } from '../../web/shell/lens.js';
+
+/** @param {(persona: string, deps: any) => Promise<any>} submit */
+async function checkNewLens(submit) {
+  /** @type {any[]} */ const acts = [];
+  /** @type {string[]} */ const selected = [];
+  let lenses = /** @type {Record<string, any>} */ ({});
+  const deps = {
+    act: async (/** @type {any} */ a) => { acts.push(a); return { ok: true, jobId: 'rosetta-1-1' }; },
+    snapshot: () => ({ lenses }),
+    select: (/** @type {string} */ id) => selected.push(id),
+  };
+  const req = createLensRequests(deps);
+  await submit('   ', { req, deps });
+  assert.deepEqual(acts, [], 'empty input posts nothing');
+  await submit('  a home  chef ', { req, deps });
+  assert.deepEqual(acts, [{ type: 'rosetta', persona: 'a home chef' }]);
+  assert.equal(req.personaForJob('rosetta-1-1'), 'a home chef');
+  // The lens is selected as soon as lens.added arrives, so its labels fill in live.
+  lenses = { 'home-chef': { id: 'home-chef', persona: 'a home chef', analogs: {} } };
+  req.onEvent({ t: 'lens.added', lens: lenses['home-chef'] });
+  assert.deepEqual(selected, ['home-chef']);
+}
+
+test('New lens: submit posts { type: rosetta, persona }, empty input posts nothing, the new lens gets selected', async () => {
+  await checkNewLens((p, { req }) => req.create(p));
+});
+
+test('planted fault: a form that posts whatever is typed (even empty) is caught', async () => {
+  await assert.rejects(() => checkNewLens(async (p, { req, deps }) => { await deps.act({ type: 'rosetta', persona: p }); return req.create(p); }));
+});
+
+test('planted fault: a form that never posts is caught', async () => {
+  await assert.rejects(() => checkNewLens(async () => ({ sent: false })));
+});
+
+test('newLensAction trims, collapses spaces and refuses empty input', () => {
+  assert.equal(newLensAction(''), null);
+  assert.equal(newLensAction('   '), null);
+  assert.deepEqual(newLensAction(' a  home chef '), { type: 'rosetta', persona: 'a home chef' });
 });

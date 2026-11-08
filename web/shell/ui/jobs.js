@@ -6,7 +6,8 @@ export function mountJobs(el, shell) {
   el.classList.add('onto-jobs');
   el.hidden = true;
   function render() {
-    const rows = visibleJobRows(jobRows(shell.snapshot()));
+    const rows = visibleJobRows(jobRows(shell.snapshot())).map((r) => (r.kind === 'rosetta' && shell.lensRequests
+      ? { ...r, label: shell.lensRequests.personaForJob(r.id) || r.label } : r));
     el.textContent = '';
     el.hidden = rows.length === 0;
     for (const r of rows) {

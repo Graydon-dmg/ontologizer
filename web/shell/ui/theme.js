@@ -1,9 +1,9 @@
 // @ts-check
-import { THEME_CHOICES, loadChoice, saveChoice, applyTheme } from '../theme.js';
+import { loadChoice, saveChoice, applyTheme, resolveTheme } from '../theme.js';
 
-const LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
+const LABELS = { light: 'Light', dark: 'Dark' };
 
-/** Three-way System / Light / Dark toggle. @param {HTMLElement} el @param {any} shell */
+/** Light | Dark toggle. Until the user picks, it follows the OS (and shows which one is active). @param {HTMLElement} el @param {any} shell */
 export function mountTheme(el, shell) {
   /** @type {Storage|null} */
   let storage = null;
@@ -17,10 +17,10 @@ export function mountTheme(el, shell) {
   const apply = () => {
     applyTheme(document, choice, mq.matches, shell.tokens, (t, init) => new CustomEvent(t, init));
     for (const b of group.querySelectorAll('button')) {
-      b.setAttribute('aria-pressed', String(/** @type {HTMLElement} */ (b).dataset.choice === choice));
+      b.setAttribute('aria-pressed', String(/** @type {HTMLElement} */ (b).dataset.choice === resolveTheme(choice, mq.matches)));
     }
   };
-  for (const c of THEME_CHOICES) {
+  for (const c of /** @type {const} */ (['light', 'dark'])) {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.choice = c;

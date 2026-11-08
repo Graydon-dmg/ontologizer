@@ -24,13 +24,14 @@ export function jobRows(ontology) {
     .map((x) => x.row);
 }
 
-const VERB = { build: 'Building', explain: 'Explaining', research: 'Researching', sources: 'Finding sources for' };
+const VERB = { build: 'Building', explain: 'Explaining', research: 'Researching', sources: 'Finding sources for', rosetta: 'Building lens' };
 
 /**
  * One line of the jobs tray: "Building Tools", "Researching Plastic cement", or "<kind> <label>".
  * @param {{ kind: string, label: string, error?: string }} row
  */
 export function jobText(row) {
+  if (row.kind === 'rosetta') return `Building lens${row.label ? ': ' + row.label : ''}${row.error ? ' (' + row.error + ')' : ''}`;
   const verb = Object.prototype.hasOwnProperty.call(VERB, row.kind) ? VERB[/** @type {keyof typeof VERB} */ (row.kind)] : row.kind;
   return `${verb}${row.label ? ' ' + row.label : ''}${row.error ? ' (' + row.error + ')' : ''}`;
 }
