@@ -68,8 +68,14 @@ export async function handler(argv) {
   const off = store.subscribe(id, (/** @type {any} */ ev) => {
     if (ev.t === 'category.added') deps.stdout.write(`  + ${ev.category.label}\n`);
   });
+  // Listen for Ctrl-C from the start, so stopping mid-build still offers to save.
+  const interrupted = argv.exitAfterBuild ? null : untilInterrupt(deps).then(() => 'interrupted');
+  /** @type {any} */
+  let first;
   try {
-    await engine.build(brief);
+    const built = engine.build(brief).then(() => 'built');
+    first = interrupted ? await Promise.race([built, interrupted]) : await built;
+    if (first === 'interrupted') built.catch(() => {}); // the build may still fail after we stop
   } catch (err) {
     off();
     await srv.close();
@@ -77,14 +83,18 @@ export async function handler(argv) {
     rethrowAuth(err);
   }
   off();
-  deps.stdout.write(`Built ${Object.keys(store.read(id).nodes).length} nodes. Ctrl-C to stop.\n`);
+  if (first === 'built') {
+    deps.stdout.write(`Built ${Object.keys(store.read(id).nodes).length} nodes. Ctrl-C to stop.\n`);
+  } else {
+    deps.stdout.write('\nStopped during the build.\n');
+  }
 
   if (argv.exitAfterBuild) {
     await srv.close();
     store.flush(id);
     return;
   }
-  await untilInterrupt(deps);
+  if (first === 'built') await interrupted;
 
   const row = store.list({ drafts: true }).find((/** @type {any} */ r) => r.id === id);
   if (row?.draft === true) {
