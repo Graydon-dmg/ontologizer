@@ -121,6 +121,7 @@ export function starterQuestions(ontology) {
 
 export const MAX_IMAGES = 4;
 export const MAX_EDGE = 1568;
+export const MAX_TEXT = 4000;
 
 /** Downscaled size: the long edge at most `max`, aspect kept, never upscaled. */
 export function scaleSize(/** @type {number} */ w, /** @type {number} */ h, max = MAX_EDGE) {
@@ -136,14 +137,19 @@ export function pickEncoding(/** @type {string} */ mime) {
 }
 
 /**
- * The POST /api/chat body, or null when there is nothing to send.
- * @param {string} text @param {{ mime: string, data: string }[]} images
+ * The POST /api/chat body, or null when there is nothing to send. The active Rosetta lens goes
+ * along so answers can speak through it.
+ * @param {string} text @param {{ mime: string, data: string }[]} images @param {string|null} [lens]
  */
-export function chatBody(text, images = []) {
-  const t = String(text ?? '').trim();
+export function chatBody(text, images = [], lens = null) {
+  const t = String(text ?? '').trim().slice(0, MAX_TEXT);
   const imgs = images.slice(0, MAX_IMAGES).map((x) => ({ mime: x.mime, data: x.data }));
   if (!t && !imgs.length) return null;
-  return imgs.length ? { text: t, images: imgs } : { text: t };
+  /** @type {{ text: string, images?: { mime: string, data: string }[], lens?: string }} */
+  const body = { text: t };
+  if (imgs.length) body.images = imgs;
+  if (lens) body.lens = lens;
+  return body;
 }
 
 /**
@@ -206,7 +212,7 @@ export function applyChatItem(s, item) {
       if (!item.nodeId || s.suggestions.some((x) => x.nodeId === item.nodeId)) return s;
       return { ...s, suggestions: [...s.suggestions, { nodeId: item.nodeId, mode: item.mode === 'general' ? 'general' : 'context', label: item.label }] };
     case 'status': return { ...s, status: String(item.text ?? item.status ?? '') };
-    case 'done': return { ...s, done: true, status: '', id: String(item.id ?? s.id) };
+    case 'done': return { ...s, done: true, status: '', id: String(item.msgId ?? item.id ?? s.id) };
     case 'error': return { ...s, done: true, status: '', error: String(item.error ?? item.message ?? 'The answer failed.') };
     default: return s;
   }
@@ -215,4 +221,113 @@ export function applyChatItem(s, item) {
 /** The research action a suggestion button sends (never sent automatically). */
 export function suggestionAction(/** @type {{ nodeId: string, mode?: string }} */ s) {
   return { type: 'research', nodeId: s.nodeId, mode: s.mode === 'general' ? 'general' : 'context' };
+}
+
+/**
+ * The thread for display: each user message with its reply (assistant or error), paired by
+ * replyTo === msgId (ontology.chat holds one entry per event).
+ * @param {any} ontology
+ * @returns {{ question: any, reply: any|null }[]}
+ */
+export function chatThread(ontology) {
+  const msgs = (ontology && Array.isArray(ontology.chat) ? ontology.chat : []);
+  /** @type {Map<string, any>} */
+  const replies = new Map();
+  for (const m of msgs) if (m.role !== 'user' && m.replyTo) replies.set(m.replyTo, m);
+  return msgs.filter((m) => m.role === 'user').map((q) => ({ question: q, reply: replies.get(q.msgId) || null }));
+}
+
+/** The question still waiting for its reply, if any. @param {any} ontology */
+export function pendingQuestion(ontology) {
+  const t = chatThread(ontology);
+  for (let i = t.length - 1; i >= 0; i--) if (!t[i].reply) return t[i].question;
+  return null;
+}
+
+/** Every node an answer cites: its citations list plus any [[id]] in its text, existing nodes only. */
+export function answerCitations(/** @type {any} */ ontology, /** @type {{ text?: string, citations?: { nodeId: string }[] }} */ ans) {
+  const ids = [...(ans.citations || []).map((c) => c.nodeId), ...citationIds(ans.text || '')];
+  return [...new Set(ids)].filter((id) => ontology && ontology.nodes && ontology.nodes[id]);
+}
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+/**
+ * Which new files to take (paste, drop or the attach button): images only, at most MAX_IMAGES in
+ * total. Returns the accepted files and a short message for anything refused.
+ * @template {{ type: string, name?: string }} F
+ * @param {number} have @param {F[]} files
+ * @returns {{ accepted: F[], error: string }}
+ */
+export function acceptImages(have, files) {
+  /** @type {F[]} */
+  const accepted = [];
+  let notImage = 0, overLimit = 0;
+  for (const f of files) {
+    if (!f || !IMAGE_TYPES.includes(f.type)) { notImage++; continue; }
+    if (have + accepted.length >= MAX_IMAGES) { overLimit++; continue; }
+    accepted.push(f);
+  }
+  const errs = [];
+  if (notImage) errs.push('Only images can be added (PNG, JPEG, GIF or WebP).');
+  if (overLimit) errs.push(`Up to ${MAX_IMAGES} images per question.`);
+  return { accepted, error: errs.join(' ') };
+}
+
+/** A clear message for a refused chat request. @param {number} status @param {string} [error] */
+export function chatErrorText(status, error) {
+  if (status === 409) return error || 'Another answer is still being written. Wait for it, then ask again.';
+  if (status === 413) return error || 'Those images are too large together. Remove one and try again.';
+  if (status === 400) return error || 'That question could not be sent.';
+  if (status === 403) return error || 'This page is not allowed to talk to ontologizer. Open the map from the link ontologizer printed.';
+  if (status === 415) return error || 'The question was not sent as JSON.';
+  if (status === 401) return error || 'Your Anthropic API key was rejected: run ontologizer key set';
+  if (status === 0) return 'Cannot reach the server. Is ontologizer still running?';
+  return error || `The server answered HTTP ${status}.`;
+}
+
+/**
+ * Send a question: POST /api/chat with { text, images? } and stream the answer items to onItem.
+ * Resolves when the stream ends. Errors before the stream (400/409/413/…) resolve { ok: false }.
+ * @param {typeof fetch} fetchFn
+ * @param {{ text: string, images?: { mime: string, data: string }[] }} body
+ * @param {(item: any) => void} onItem
+ * @param {{ signal?: AbortSignal, base?: string }} [o]
+ * @returns {Promise<{ ok: boolean, status: number, error?: string }>}
+ */
+export async function postChat(fetchFn, body, onItem, o = {}) {
+  let res;
+  try {
+    res = await fetchFn(`${o.base || ''}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal: o.signal,
+    });
+  } catch (err) {
+    return { ok: false, status: 0, error: chatErrorText(0) };
+  }
+  if (!res.ok) {
+    let msg = '';
+    try { const j = await res.json(); msg = j && j.error ? String(j.error) : ''; } catch { /* not JSON */ }
+    return { ok: false, status: res.status, error: chatErrorText(res.status, msg) };
+  }
+  const parser = createSSEParser();
+  let sawEnd = false;
+  const emit = (/** @type {any[]} */ items) => { for (const it of items) { if (it.type === 'done' || it.type === 'error') sawEnd = true; onItem(it); } };
+  if (res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    for (;;) {
+      let chunk;
+      try { chunk = await reader.read(); } catch { break; }
+      if (chunk.done) break;
+      emit(parser.push(dec.decode(chunk.value, { stream: true })));
+    }
+    emit(parser.push('\n\n'));
+  } else {
+    emit(parser.push(await res.text() + '\n\n'));
+  }
+  if (!sawEnd) onItem({ type: 'error', error: 'The answer stopped before it finished. Is ontologizer still running?' });
+  return { ok: true, status: res.status };
 }

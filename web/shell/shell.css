@@ -19,7 +19,17 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
-#explain { position: fixed; right: 10px; top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); bottom: max(60px, var(--tray-space, 0px)); z-index: 11; }
+:root { --side-top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); }
+#side-tabs { position: fixed; right: 10px; top: var(--side-top); z-index: 42; width: min(360px, 90vw); box-sizing: border-box; display: flex; gap: 2px;
+  padding: 6px 8px 0; background: var(--panel); border-left: 1px solid var(--muted); border-top-left-radius: 8px; }
+#side-tabs[hidden] { display: none; }
+#side-tabs [role=tab] { all: unset; cursor: pointer; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; }
+#side-tabs [role=tab][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+#side-tabs [role=tab]:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+#side-tabs .side-close { all: unset; margin-left: auto; cursor: pointer; color: var(--muted); font-size: 18px; padding: 0 6px; }
+#side-tabs .side-close:hover, #side-tabs .side-close:focus-visible { color: var(--fg); }
+#explain, #chat { position: fixed; right: 10px; top: calc(var(--side-top) + 34px); bottom: max(60px, var(--tray-space, 0px)); z-index: 11; }
+#explain .close { display: none; }
 #ticker { position: fixed; left: 10px; bottom: 10px; z-index: 10; max-width: 40vw; color: var(--muted); }
 #jobs { position: fixed; right: 10px; bottom: 10px; z-index: 45; }
 #legend { position: fixed; left: 10px; top: calc(var(--topbar-bottom, 56px) + 8px); z-index: 10; background: var(--panel); max-height: 50vh; overflow: auto;
@@ -40,7 +50,7 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 @media (max-width: 760px) {
   #minimap { width: 140px; height: 105px; }
   body:has(#minimap:not([hidden])) #topbar { right: 160px; }
-  #explain { top: max(125px, calc(var(--topbar-bottom, 56px) + 10px)); }
+  :root { --side-top: max(125px, calc(var(--topbar-bottom, 56px) + 10px)); }
   .view-toggle button, .seg button { padding: 3px 8px; }
 }
 #conn { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60; padding: 8px 14px; border-radius: 8px;

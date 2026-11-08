@@ -19,6 +19,8 @@ import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
 import { mountFuse } from './ui/fuse.js';
 import { mountTips } from './ui/tips.js';
+import { mountSide } from './ui/side.js';
+import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests } from './explain.js';
 
@@ -147,7 +149,10 @@ function mountView(id) {
 }
 
 // Mount the chrome first so every module sees the stream from its first event.
+// The side panel (Explain | Chat) is set up first: both panes use it.
+try { mountSide(shell); } catch (err) { console.error('[shell] side panel failed', err); }
 const mounts = [
+  ['chat', mountChat], ['chat-btn', mountChatButton],
   ['theme-switcher', mountTheme],
   ['view-switcher', mountViewSwitcher], ['legend', mountLegend], ['menu', mountMenu],
   ['explain', mountExplain], ['jobs', mountJobs], ['ticker', mountTicker], ['search', mountSearch],
@@ -193,8 +198,7 @@ function publishInsets() {
     && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
   // The ticker is left out on purpose: it changes every few seconds and would make the map re-fit.
   const panels = ['topbar', 'legend', 'minimap', 'jobs'].map((id) => $(id));
-  const ex = $('explain');
-  panels.push(/** @type {HTMLElement} */ (ex.querySelector('.onto-explain') || ex));
+  panels.push($('explain'), $('chat'), $('side-tabs'));
   const rects = panels.filter(shown).map((el) => el.getBoundingClientRect());
   // The ticker gets a fixed strip at the bottom left, reserved even while it is empty, so the map
   // never jumps when a line comes and goes (the ticker itself is not watched).
@@ -212,13 +216,14 @@ function publishInsets() {
 {
   let queued = false;
   const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; publishInsets(); }); } };
-  const watched = ['topbar', 'legend', 'minimap', 'explain', 'jobs'].map((id) => $(id));
+  const watched = ['topbar', 'legend', 'minimap', 'explain', 'chat', 'side-tabs', 'jobs'].map((id) => $(id));
   if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(schedule); for (const el of watched) ro.observe(el); }
   const mo = new MutationObserver(schedule);
   for (const el of watched) mo.observe(el, { attributes: true, subtree: true, attributeFilter: ['hidden', 'class', 'style'] });
   addEventListener('resize', schedule);
   bus.on('view', () => { lastInsets = null; schedule(); });
   bus.on('explain', schedule);
+  bus.on('side', schedule);
 }
 
 // Subscribe before mounting the view, so the layout is always fed before any view sees an event.

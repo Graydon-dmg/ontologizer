@@ -16,7 +16,8 @@ export function mountExplain(el, shell) {
     if (cls) n.className = cls;
     return n;
   };
-  const close = () => { openId = null; el.hidden = true; el.textContent = ''; lastKey = ''; };
+  const close = () => { openId = null; el.hidden = true; el.textContent = ''; lastKey = ''; if (shell.side) shell.side.hide('explain'); };
+  if (shell.side) shell.side.explainOpen = () => !!openId;
   /** @param {string} id */
   const focus = (id) => { shell.act({ type: 'focus', nodeId: id }); const v = shell.activeView(); if (v && v.setFocus) v.setFocus(id); };
 
@@ -86,11 +87,12 @@ export function mountExplain(el, shell) {
       }
       el.appendChild(ul);
     }
-    el.hidden = false;
+    // The side panel decides which pane shows (Explain | Chat).
+    el.hidden = !!shell.side && shell.side.active !== 'explain';
   }
 
   /** @param {string} id */
-  function open(id) { openId = id; lastKey = ''; render(); lastKey = keyFor(); }
+  function open(id) { openId = id; lastKey = ''; if (shell.side) shell.side.show('explain'); render(); lastKey = keyFor(); }
   function keyFor() {
     if (!openId) return '';
     const o = shell.snapshot();
@@ -106,6 +108,7 @@ export function mountExplain(el, shell) {
     const n = shell.snapshot().nodes[d.nodeId];
     if (n && n.article) open(d.nodeId);
   });
+  shell.on('side', () => { if (openId && shell.side.active === 'explain') { render(); } });
   shell.on('explain-request', () => { if (openId) { lastKey = keyFor(); render(); } });
   shell.on('event', () => {
     if (!openId) return;
