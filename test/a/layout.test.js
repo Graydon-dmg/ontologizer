@@ -238,3 +238,34 @@ test('4 fault: child placed at missing parent (NaN) is detected', () => {
   };
   assert.ok(checkOrphanFinite(nanFactory).length > 0);
 });
+
+test('pin holds a node in place through settle; unpin releases it; unknown ids are no-ops', async () => {
+  const { createGraphLayout } = await import('../../web/shared/layout/graph.js');
+  const L = createGraphLayout({ seed: 3 });
+  const mk = (id, parent, depth) => ({ id, label: id, parent, category: depth ? 'r/a' : '', depth });
+  L.add(mk('r', null, 0)); L.add(mk('r/a', 'r', 1)); L.add(mk('r/a/b', 'r/a', 2));
+  L.settle(50);
+  L.pin('r/a/b', 777, 111);
+  L.settle(100);
+  const p = L.positions().get('r/a/b');
+  assert.equal(p?.x, 777); assert.equal(p?.y, 111);
+  L.unpin('r/a/b');
+  L.settle(200);
+  assert.notEqual(L.positions().get('r/a/b')?.x, 777, 'unpinned node is free to move');
+  L.pin('nope', 1, 2); L.unpin('nope');
+  assert.equal(L.positions().has('nope'), false);
+  L.stop();
+});
+
+test('planted fault: a pin that only sets x/y (no fx/fy) does not hold', async () => {
+  const { createGraphLayout } = await import('../../web/shared/layout/graph.js');
+  const L = createGraphLayout({ seed: 3 });
+  const mk = (id, parent, depth) => ({ id, label: id, parent, category: depth ? 'r/a' : '', depth });
+  L.add(mk('r', null, 0)); L.add(mk('r/a', 'r', 1)); L.add(mk('r/a/b', 'r/a', 2));
+  L.settle(50);
+  // Fake pin: move without fixing. The hold check must fail.
+  L.pin('r/a/b', 777, 111); L.unpin('r/a/b');
+  L.settle(100);
+  assert.notEqual(L.positions().get('r/a/b')?.x, 777);
+  L.stop();
+});
