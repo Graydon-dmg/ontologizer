@@ -161,3 +161,33 @@ export function panFromMinimap(point, wb, miniSize, viewSize, k) {
   const wy = (point.y - oy) / s + wb.minY;
   return { x: viewSize.width / 2 - k * wx, y: viewSize.height / 2 - k * wy, k };
 }
+
+/**
+ * Ids hidden by collapsed subtrees (strict descendants of a collapsed id) or by the filter
+ * (category not listed, depth beyond maxDepth). The root and collapsed nodes themselves are
+ * never hidden by this; the root is exempt from the filter.
+ * @param {Ontology} ontology
+ * @param {string[]|Set<string>|null|undefined} collapsed
+ * @param {{ categories: string[]|null, maxDepth: number|null }|null|undefined} filter
+ * @returns {Set<string>}
+ */
+export function hiddenIds(ontology, collapsed, filter) {
+  /** @type {Set<string>} */
+  const out = new Set();
+  const col = new Set(collapsed || []);
+  const cats = filter && Array.isArray(filter.categories) ? new Set(filter.categories) : null;
+  const maxDepth = filter && Number.isFinite(filter.maxDepth) ? /** @type {number} */ (filter.maxDepth) : null;
+  for (const n of Object.values(ontology.nodes)) {
+    if (n.parent == null) continue;
+    let hide = (cats && !cats.has(n.category)) || (maxDepth !== null && n.depth > maxDepth);
+    if (!hide && col.size) {
+      const seen = new Set([n.id]);
+      for (let p = n.parent; p != null && !seen.has(p); p = ontology.nodes[p]?.parent) {
+        if (col.has(p)) { hide = true; break; }
+        seen.add(p);
+      }
+    }
+    if (hide) out.add(n.id);
+  }
+  return out;
+}
