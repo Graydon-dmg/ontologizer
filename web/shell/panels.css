@@ -1,0 +1,26 @@
+.onto-menu { position: fixed; z-index: 50; min-width: 180px; padding: 4px; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.35); font: 13px system-ui, sans-serif; }
+.onto-menu[hidden] { display: none; }
+.onto-menu button { display: block; width: 100%; text-align: left; background: none; color: inherit; border: 0; padding: 6px 10px; border-radius: 4px; font: inherit; cursor: pointer; }
+.onto-menu button:hover, .onto-menu button:focus { background: var(--bg); outline: none; }
+
+.onto-explain { position: fixed; top: 0; right: 0; bottom: 0; z-index: 40; width: min(360px, 90vw); overflow-y: auto; padding: 16px; background: var(--panel); color: var(--fg); border-left: 1px solid var(--muted); font: 14px/1.45 system-ui, sans-serif; }
+.onto-explain[hidden] { display: none; }
+.onto-explain h2 { margin: 0 24px 8px 0; font-size: 18px; }
+.onto-explain h3 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.onto-explain ul { margin: 0; padding-left: 18px; }
+.onto-explain a, .onto-explain .see-also { color: inherit; text-decoration: underline; cursor: pointer; background: none; border: 0; font: inherit; padding: 0; }
+.onto-explain .close { position: absolute; top: 10px; right: 12px; background: none; border: 0; color: var(--muted); font-size: 20px; cursor: pointer; }
+.onto-explain .researching, .onto-explain .breaks { color: var(--muted); font-style: italic; }
+.onto-explain .analog { margin: 10px 0; padding: 8px; border: 1px dashed var(--muted); border-radius: 6px; }
+
+.onto-jobs { position: fixed; right: 12px; bottom: 12px; z-index: 30; max-width: 280px; max-height: 40vh; overflow-y: auto; padding: 6px; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; font: 12px system-ui, sans-serif; }
+.onto-jobs[hidden] { display: none; }
+.onto-jobs .row { display: flex; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 4px; cursor: default; }
+.onto-jobs .row[data-node] { cursor: pointer; }
+.onto-jobs .row:hover { background: var(--bg); }
+.onto-jobs .badge { flex: none; padding: 0 6px; border: 1px solid var(--muted); border-radius: 8px; color: var(--muted); font-size: 11px; }
+.onto-jobs .badge.running { color: var(--fg); border-color: var(--fg); }
+.onto-jobs .badge.failed { text-decoration: line-through; }
+
+.onto-ticker { position: fixed; left: 12px; bottom: 12px; z-index: 30; max-width: min(480px, 60vw); padding: 6px 12px; background: var(--panel); color: var(--fg); border-radius: 14px; font: 13px system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .4s; cursor: pointer; pointer-events: none; }
+.onto-ticker.on { opacity: 1; pointer-events: auto; }

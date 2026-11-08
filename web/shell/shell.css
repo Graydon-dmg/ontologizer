@@ -1,0 +1,29 @@
+:root { --bg: #0f1115; --fg: #e6e8ee; --muted: #8b92a3; --panel: #181b22; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+#view { position: fixed; inset: 0; }
+#view > * { display: block; width: 100%; height: 100%; }
+.no-view { display: flex !important; align-items: center; justify-content: center; color: var(--muted); font-size: 15px; }
+#topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10; display: flex; align-items: center;
+  gap: 10px; padding: 6px 10px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 8px; max-width: calc(100% - 240px); pointer-events: auto; }
+#map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; }
+#topbar > div { display: flex; align-items: center; gap: 6px; }
+#topbar > div:empty, #topbar > div[hidden] { display: none; }
+body:has(#minimap:not([hidden])) #topbar { right: 220px; }
+#search { flex: 1 1 160px; min-width: 100px; }
+#minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
+#minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
+#explain { position: fixed; right: 10px; top: 170px; bottom: 60px; z-index: 11; }
+#ticker { position: fixed; left: 10px; bottom: 10px; z-index: 10; max-width: 40vw; color: var(--muted); }
+#jobs { position: fixed; right: 10px; bottom: 10px; z-index: 10; }
+#legend { position: fixed; left: 10px; top: 64px; z-index: 10; background: var(--panel); max-height: 50vh; overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; padding: 4px 8px; min-width: 120px; }
+#menu { position: fixed; z-index: 30; }
+.legend-head { all: unset; cursor: pointer; font-weight: 600; color: var(--fg); display: block; padding: 2px 0; }
+.legend-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 6px 0 2px; }
+.legend-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+#view-switcher select { background: var(--bg); color: var(--fg); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
+  border-radius: 6px; padding: 3px 6px; font: inherit; }

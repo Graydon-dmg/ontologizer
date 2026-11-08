@@ -2,19 +2,30 @@
 // <onto-graph>: the 2D graph view. Draws, hit-tests and emits; the shell owns all chrome and
 // feeds the layout. See web/shared/view.js for the view standard.
 import { select } from 'd3-selection';
-import { zoom, zoomIdentity } from 'd3-zoom';
+import { zoom, zoomIdentity, zoomTransform } from 'd3-zoom';
 import { drag } from 'd3-drag';
+import 'd3-transition';
 import { easeBackOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { THEME, MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds } from './math.js';
+import { createMinimap } from './minimap.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FALLBACK_CENTER = { x: 500, y: 400 };
 const SCALE_EXTENT = /** @type {[number, number]} */ ([0.2, 4]);
 
-/** @typedef {{ g: any, circle: any, ring: any, label: any, r: number, spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
+const DIM_TRANSITION = 'opacity 150ms';
+const RING_STEP = 90;
+/** Auto-fit (follow the build until the user zooms or pans): largest zoom, refit interval, margin. */
+const FIT_MAX_K = 1.5;
+const FIT_EVERY_MS = 500;
+const FIT_MARGIN = 0.88;
+
+/** @typedef {{ g: any, circle: any, ring: any, label: any, core: any, glyph: any, r: number, fill: string, hasArticle?: boolean,
+ *   spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
+/** @typedef {{ el: any, circle: any, anim: any, fade: any, r: number, state: string }} Halo */
 
 /**
  * Fill color: category color lightened by depth; root / unknown category -> neutral.
@@ -62,6 +73,21 @@ class OntoGraph extends Base {
   /** @type {Map<string, any>} */ edges = new Map();
   /** @type {Map<string, number>} */ rings = new Map();
   /** @type {string|null} */ hovered = null;
+  /** @type {Set<string>} */ collapsed = new Set();
+  /** @type {{ categories: string[]|null, maxDepth: number|null }} */ filter = { categories: null, maxDepth: null };
+  /** @type {Set<string>} */ hidden = new Set();
+  /** @type {Set<string>|null} neighborhood union set by highlight() */ hl = null;
+  /** @type {string|null} */ lensId = null;
+  /** @type {Map<string, any>} ghost lens labels by node id */ ghosts = new Map();
+  /** @type {Map<string, any>} "+N" badges by node id */ badges = new Map();
+  /** @type {Map<string, { nodeId: string, state: string }>} */ jobs = new Map();
+  /** @type {Map<string, Halo>} */ halos = new Map();
+  maxRing = 0;
+  /** @type {any[]} */ ringEls = [];
+  userMoved = false;
+  lastFit = 0;
+  /** @type {any} */ fitTimer = 0;
+  /** @type {{ update(): void, unmount(): void }|null} */ minimap = null;
   /** @type {{ id: string, x: number, y: number }|null} */ dragging = null;
   k = 1;
   centered = false;
@@ -84,6 +110,11 @@ class OntoGraph extends Base {
     const ont = ctx.snapshot();
     for (const id of Object.keys(ont.nodes)) this.ensureNode(id, false);
     for (const e of ont.edges) this.ensureEdge(e);
+    this.collapsed = new Set(ont.view?.collapsed || []);
+    this.filter = { categories: null, maxDepth: null, ...(ont.view?.filter || {}) };
+    for (const j of Object.values(ont.jobs || {})) if (j.nodeId && (j.state === 'queued' || j.state === 'running')) this.jobs.set(j.id, { nodeId: j.nodeId, state: j.state });
+    this.updateVisibility();
+    this.setLens(ont.view?.lens ?? null);
     this.refreshRings();
     this.refreshLabels();
     this.centerWorld();
@@ -94,16 +125,21 @@ class OntoGraph extends Base {
   buildSvg(el) {
     const svg = select(el).append('svg').attr('width', '100%').attr('height', '100%').style('position', 'absolute').style('inset', '0').style('display', 'block').style('touch-action', 'none');
     if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    svg.append('style').text('path, circle { vector-effect: non-scaling-stroke; }');
     const root = svg.append('g');
     this.layers = {
       root,
+      rings: root.append('g').attr('class', 'rings').attr('fill', 'none').style('pointer-events', 'none'),
       links: root.append('g').attr('class', 'links').attr('fill', 'none'),
       nodes: root.append('g').attr('class', 'nodes'),
       halos: root.append('g').attr('class', 'halos'),
       labels: root.append('g').attr('class', 'labels').style('pointer-events', 'none'),
     };
     this.svg = svg;
-    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).on('zoom', (/** @type {any} */ ev) => this.onZoom(ev.transform));
+    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).on('zoom', (/** @type {any} */ ev) => {
+      if (ev.sourceEvent) this.userMoved = true;
+      this.onZoom(ev.transform);
+    });
     svg.call(this.zoomBehavior).on('dblclick.zoom', null);
     svg.on('click', (/** @type {MouseEvent} */ ev) => {
       if (ev.target === svg.node()) this.ctx?.emit('select', { nodeId: null });
@@ -128,6 +164,39 @@ class OntoGraph extends Base {
     this.k = t.k;
     this.layers.root.attr('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
     this.refreshLabels();
+    this.minimap?.update();
+    this.schedule();
+  }
+
+  /**
+   * Follow the build: while the user has not zoomed or panned, ease the view to fit every visible
+   * node (zoom capped at FIT_MAX_K so deeper labels stay hidden until the user zooms in).
+   * @param {Map<string,{x:number,y:number}>} cur
+   */
+  autoFit(cur) {
+    const now = performance.now();
+    if (this.userMoved || !cur.size) return;
+    if (now - this.lastFit < FIT_EVERY_MS) {
+      // re-check once the interval passes, so the final layout is always fitted
+      this.fitTimer ||= setTimeout(() => { this.fitTimer = 0; this.schedule(); }, FIT_EVERY_MS);
+      return;
+    }
+    this.lastFit = now;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [id, p] of cur) {
+      if (this.hidden.has(id)) continue;
+      const r = (this.nodes.get(id)?.r ?? 0) + 8;
+      minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r + 60); // room for the label
+      minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
+    }
+    const box = this.svg.node().getBoundingClientRect();
+    if (!box.width || !box.height || minX === Infinity) return;
+    const k = Math.max(SCALE_EXTENT[0], Math.min(FIT_MAX_K, FIT_MARGIN * Math.min(box.width / (maxX - minX), box.height / (maxY - minY))));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const t = zoomTransform(this.svg.node());
+    const sx = box.width / 2 - k * cx, sy = box.height / 2 - k * cy;
+    if (Math.abs(t.k - k) / k < 0.03 && Math.abs(t.x - sx) < 15 && Math.abs(t.y - sy) < 15) return;
+    this.svg.transition('fit').duration(FIT_EVERY_MS * 0.9).call(this.zoomBehavior.transform, zoomIdentity.translate(sx, sy).scale(k));
   }
 
   /** @param {import('../../../src/core/events.js').OntoEvent} event */
@@ -136,6 +205,10 @@ class OntoGraph extends Base {
       case 'node.added': this.onNodeAdded(event.node.id); break;
       case 'node.updated': this.restyle(event.id); break;
       case 'edge.added': this.ensureEdge(event.edge); break;
+      case 'view.changed': this.onViewChanged(event.patch || {}); break;
+      case 'job.queued': case 'job.started': case 'job.done': case 'job.failed': this.onJob(event); break;
+      case 'lens.added': if (event.lens?.id === this.lensId) this.syncGhosts(); break;
+      case 'lens.analog': if (event.lensId === this.lensId) this.syncGhost(event.nodeId); break;
       default: break;
     }
     this.schedule();
@@ -146,8 +219,69 @@ class OntoGraph extends Base {
     this.ensureNode(id, true);
     this.centerWorld();
     this.refreshRadii(id);
+    if (this.collapsed.size || this.filter.categories || this.filter.maxDepth != null) this.updateVisibility();
     this.refreshRings();
     this.refreshLabels();
+    if (this.lensId) this.syncGhost(id);
+    if (this.hl || this.hovered) this.applyDim();
+  }
+
+  /** @param {any} patch */
+  onViewChanged(patch) {
+    if (patch.collapsed) this.setCollapsed(patch.collapsed);
+    if (patch.filter) this.setFilter({ ...this.filter, ...patch.filter });
+    if ('lens' in patch) this.setLens(patch.lens ?? null);
+    if (patch.focus) this.setFocus(patch.focus);
+  }
+
+  /** @param {any} event */
+  onJob(event) {
+    const job = event.job;
+    if (!job) return;
+    if (event.t === 'job.queued' || event.t === 'job.started') {
+      if (job.nodeId) this.jobs.set(job.id, { nodeId: job.nodeId, state: event.t === 'job.queued' ? 'queued' : 'running' });
+    } else {
+      this.jobs.delete(job.id);
+      this.removeHalo(job.id);
+    }
+  }
+
+  /** @param {string} id @returns {boolean} */
+  isVisible(id) {
+    return this.nodes.has(id) && !this.hidden.has(id);
+  }
+
+  /** @param {string[]} ids */
+  setCollapsed(ids) {
+    this.collapsed = new Set(ids);
+    this.updateVisibility();
+  }
+
+  /** Recompute hidden set and the "+N" badges; only on events. */
+  updateVisibility() {
+    const ont = this.ctx.snapshot();
+    this.hidden = hiddenIds(ont, this.collapsed, this.filter);
+    for (const [id, b] of this.badges) if (!this.collapsed.has(id)) { b.g.remove(); this.badges.delete(id); }
+    for (const id of this.collapsed) {
+      if (!ont.nodes[id]) continue;
+      const n = descendants(id, ont);
+      let b = this.badges.get(id);
+      if (n === 0) { if (b) { b.g.remove(); this.badges.delete(id); } continue; }
+      if (!b) {
+        const g = this.layers.labels.append('g');
+        const rect = g.append('rect').attr('rx', 6).attr('height', 13).attr('y', -6.5).attr('fill', THEME.dark.panel).attr('stroke', THEME.dark.muted).attr('stroke-width', 0.5);
+        const text = g.append('text').attr('font-size', 10).attr('font-family', 'system-ui, sans-serif').attr('fill', THEME.dark.fg).attr('text-anchor', 'middle').attr('dy', '0.35em');
+        b = { g, rect, text };
+        this.badges.set(id, b);
+      }
+      const label = `+${n}`;
+      b.text.text(label);
+      const w = label.length * 6 + 8;
+      b.rect.attr('width', w).attr('x', -w / 2);
+    }
+    this.refreshRings();
+    this.refreshLabels();
+    this.schedule();
   }
 
   /**
@@ -162,10 +296,16 @@ class OntoGraph extends Base {
     const g = this.layers.nodes.append('g').attr('data-id', id).style('cursor', 'pointer');
     const ring = g.append('circle').attr('fill', 'none');
     const circle = g.append('circle');
-    const label = this.layers.labels.append('text').attr('font-size', 11).attr('font-family', 'system-ui, sans-serif')
+    const core = g.append('circle').attr('fill', THEME.dark.fg).attr('opacity', 0.9).style('pointer-events', 'none').style('display', 'none');
+    const glyph = g.append('g').style('pointer-events', 'none').style('display', 'none');
+    glyph.append('rect').attr('x', -3).attr('y', -4).attr('width', 6).attr('height', 8).attr('fill', 'none');
+    glyph.append('path').attr('d', 'M-3,-4 H1 L3,-2 V4 H-3 Z M1,-4 V-2 H3').attr('fill', 'none').attr('stroke', THEME.dark.bg).attr('stroke-width', 0.8).attr('stroke-linejoin', 'round');
+    g.style('transition', DIM_TRANSITION);
+    const label = this.layers.labels.append('text').attr('x', 5).attr('font-size', 11.5).attr('font-family', 'system-ui, sans-serif')
       .attr('fill', THEME.dark.fg).attr('stroke', THEME.dark.bg).attr('stroke-width', 3).attr('stroke-linejoin', 'round')
       .attr('paint-order', 'stroke').attr('dy', '0.35em').text(node.label);
-    const nv = { g, circle, ring, label, r: 0, spawn: null };
+    label.style('transition', DIM_TRANSITION);
+    const nv = { g, circle, ring, label, core, glyph, r: 0, fill: '', spawn: null };
     this.nodes.set(id, nv);
     this.bindNode(id, g);
     this.restyle(id);
@@ -205,7 +345,7 @@ class OntoGraph extends Base {
   ensureLink(id) {
     const node = this.ctx.snapshot().nodes[id];
     if (!node || !node.parent || this.links.has(id) || !this.nodes.has(node.parent) || !this.nodes.has(id)) return;
-    const path = this.layers.links.append('path').attr('stroke', THEME.dark.muted).attr('stroke-opacity', 0.55).attr('stroke-width', 1.2);
+    const path = this.layers.links.append('path').attr('stroke', THEME.dark.muted).attr('stroke-opacity', 0.55).attr('stroke-width', 1.2).style('transition', DIM_TRANSITION);
     this.links.set(id, path);
   }
 
@@ -213,7 +353,7 @@ class OntoGraph extends Base {
   ensureEdge(edge) {
     if (this.edges.has(edge.id)) return;
     const s = edgeStyle(edge.type);
-    const path = this.layers.links.append('path').attr('stroke', s.color).attr('stroke-width', s.width);
+    const path = this.layers.links.append('path').attr('stroke', s.color).attr('stroke-width', s.width).style('transition', DIM_TRANSITION);
     setDash(path, s.dash);
     this.edges.set(edge.id, { path, curve: s.curve, from: edge.from, to: edge.to });
   }
@@ -225,7 +365,9 @@ class OntoGraph extends Base {
     const node = ont.nodes[id];
     if (!nv || !node) return;
     const o = originOutline(node.origin, (node.sources?.length ?? 0) > 0);
-    nv.circle.attr('fill', fillFor(ont, node)).attr('stroke', o.stroke).attr('stroke-width', o.width ?? 1.5);
+    nv.fill = fillFor(ont, node);
+    nv.circle.attr('fill', nv.fill).attr('fill-opacity', node.status === 'pending' ? 0.45 : 1).attr('stroke', o.stroke).attr('stroke-width', o.width ?? 1.5);
+    nv.hasArticle = !!node.article;
     setDash(nv.circle, o.dash);
     nv.ring.attr('stroke', o.stroke).attr('stroke-width', 1).style('display', o.double ? null : 'none');
     nv.label.text(node.label);
@@ -245,6 +387,12 @@ class OntoGraph extends Base {
   refreshRings() {
     const ont = this.ctx.snapshot();
     this.rings = ringsFrom(ont.view.focus, ont);
+    let max = 0;
+    for (const [id, d] of this.rings) if (d > max && !this.hidden.has(id)) max = d;
+    this.maxRing = max;
+    const els = this.ringEls;
+    while (els.length < max) els.push(this.layers.rings.append('circle').attr('stroke', THEME.dark.muted).attr('stroke-opacity', 0.12).attr('r', RING_STEP * (els.length + 1)));
+    while (els.length > max) els.pop().remove();
   }
 
   /** Re-evaluate label visibility (zoom, hover, focus changes). */
@@ -253,7 +401,7 @@ class OntoGraph extends Base {
     for (const [id, nv] of this.nodes) {
       const node = ont.nodes[id];
       const on = labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE });
-      nv.label.style('display', on ? null : 'none');
+      nv.label.style('display', on && !this.hidden.has(id) ? null : 'none');
     }
   }
 
@@ -281,6 +429,7 @@ class OntoGraph extends Base {
   setHover(id) {
     this.hovered = id;
     this.refreshLabels();
+    this.applyDim();
     this.ctx?.emit('hover', { nodeId: id });
   }
 
@@ -334,6 +483,7 @@ class OntoGraph extends Base {
     if (!this.ctx) return;
     const pos = this.ctx.layout.positions();
     const now = performance.now();
+    const inv = 1 / this.k; // labels and badges keep a constant on-screen size
     let animating = false;
     /** @type {Map<string,{x:number,y:number}>} */
     const cur = new Map();
@@ -346,9 +496,23 @@ class OntoGraph extends Base {
       nv.g.attr('transform', `translate(${p.x},${p.y})`);
       nv.circle.attr('r', nv.r);
       nv.ring.attr('r', nv.r + 3);
-      nv.label.attr('x', p.x + nv.r + 4).attr('y', p.y);
+      nv.label.attr('transform', `translate(${p.x + nv.r},${p.y}) scale(${inv})`);
+      const hid = this.hidden.has(id);
+      nv.g.style('display', hid ? 'none' : null);
+      const showCore = nv.hasArticle && !hid;
+      nv.core.attr('r', nv.r * 0.45).style('display', showCore ? null : 'none');
+      nv.glyph.style('display', showCore && nv.r >= 8 ? null : 'none');
+      const gh = this.ghosts.get(id);
+      if (gh) gh.attr('transform', `translate(${p.x},${p.y + nv.r}) scale(${inv})`).style('display', hid ? 'none' : null);
+      const b = this.badges.get(id);
+      if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75}) scale(${inv})`).style('display', hid ? 'none' : null);
     }
+    this.renderHalos(cur);
+    this.autoFit(cur);
+    const fp = cur.get(this.ctx.snapshot().view.focus);
+    if (fp) for (const el of this.ringEls) el.attr('cx', fp.x).attr('cy', fp.y);
     this.renderLinks(cur);
+    this.minimap?.update();
     if (animating) this.schedule();
   }
 
@@ -358,23 +522,148 @@ class OntoGraph extends Base {
     for (const [id, path] of this.links) {
       const a = cur.get(nodes[id]?.parent), b = cur.get(id);
       if (a && b) path.attr('d', linkPath(a, b, 0));
+      path.style('display', this.hidden.has(id) || this.hidden.has(nodes[id]?.parent) ? 'none' : null);
     }
     for (const e of this.edges.values()) {
       const a = cur.get(e.from), b = cur.get(e.to);
       if (a && b) e.path.attr('d', linkPath(a, b, e.curve));
+      e.path.style('display', this.hidden.has(e.from) || this.hidden.has(e.to) ? 'none' : null);
     }
   }
 
-  /** @param {string} _nodeId */
-  setFocus(_nodeId) {}
-  /** @param {string|null} _lensId */
-  setLens(_lensId) {}
-  /** @param {{ categories: string[]|null, maxDepth: number|null }} _filter */
-  setFilter(_filter) {}
-  /** @param {string[]} _nodeIds */
-  highlight(_nodeIds) {}
-  /** @param {HTMLElement} _el */
-  mountMinimap(_el) {}
+  /** @param {Map<string,{x:number,y:number}>} cur */
+  renderHalos(cur) {
+    for (const [jid, job] of this.jobs) {
+      const nv = this.nodes.get(job.nodeId);
+      if (!nv) continue;
+      let h = this.halos.get(jid);
+      if (!h) {
+        const el = this.layers.halos.append('g').style('pointer-events', 'none');
+        const circle = el.append('circle').attr('fill', 'none').attr('stroke', THEME.dark.fg).attr('stroke-width', 1.5);
+        const anim = circle.append('animate').attr('attributeName', 'r').attr('dur', '1.2s').attr('repeatCount', 'indefinite');
+        const fade = circle.append('animate').attr('attributeName', 'opacity').attr('dur', '1.2s').attr('repeatCount', 'indefinite');
+        h = { el, circle, anim, fade, r: -1, state: '' };
+        this.halos.set(jid, h);
+      }
+      if (h.r !== nv.r || h.state !== job.state) {
+        h.r = nv.r;
+        h.state = job.state;
+        const r = nv.r + 6;
+        h.circle.attr('r', r);
+        h.anim.attr('values', `${r - 2};${r + 4};${r - 2}`);
+        h.fade.attr('values', job.state === 'queued' ? '0.15;0.4;0.15' : '0.35;1;0.35');
+      }
+      const p = cur.get(job.nodeId);
+      if (p) h.el.attr('transform', `translate(${p.x},${p.y})`);
+      h.el.style('display', this.hidden.has(job.nodeId) ? 'none' : null);
+    }
+  }
+
+  /** @param {string} jobId */
+  removeHalo(jobId) {
+    const h = this.halos.get(jobId);
+    if (h) h.el.remove();
+    this.halos.delete(jobId);
+  }
+
+  /** Apply highlight / hover dimming to nodes, labels, ghosts and links. */
+  applyDim() {
+    if (!this.ctx) return;
+    const ont = this.ctx.snapshot();
+    const s = this.hovered ? neighborhood(this.hovered, ont) : this.hl;
+    const dim = MOTION.hoverDim;
+    const op = (/** @type {boolean} */ on) => (s ? (on ? 1 : dim) : null);
+    for (const [id, nv] of this.nodes) {
+      const v = op(!!s?.has(id));
+      nv.g.style('opacity', v);
+      nv.label.style('opacity', v);
+      this.badges.get(id)?.g.style('opacity', v);
+      this.ghosts.get(id)?.style('opacity', s && !s.has(id) ? dim * 0.85 : null);
+    }
+    for (const [id, path] of this.links) path.style('opacity', op(!!s && s.has(id) && s.has(ont.nodes[id]?.parent)));
+    for (const e of this.edges.values()) e.path.style('opacity', op(!!s && s.has(e.from) && s.has(e.to)));
+  }
+
+  /** @param {string} id */
+  syncGhost(id) {
+    const old = this.ghosts.get(id);
+    const a = this.lensId ? this.ctx.snapshot().lenses?.[this.lensId]?.analogs?.[id] : null;
+    if (!a || !this.nodes.has(id)) {
+      if (old) { old.remove(); this.ghosts.delete(id); }
+      return;
+    }
+    const t = old || this.layers.labels.append('text').attr('y', 13).attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
+      .attr('fill', THEME.dark.muted).attr('opacity', 0.85).attr('text-anchor', 'middle').attr('stroke', THEME.dark.bg).attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round').attr('paint-order', 'stroke').style('transition', DIM_TRANSITION);
+    t.text(a.breaks ? `${a.label} \u26A0` : a.label);
+    t.select('title').remove();
+    if (a.breaks) t.style('pointer-events', 'auto').append('title').text(a.breaks);
+    else t.style('pointer-events', 'none');
+    if (!old) this.ghosts.set(id, t);
+    this.schedule();
+  }
+
+  syncGhosts() {
+    const ont = this.ctx.snapshot();
+    const analogs = (this.lensId && ont.lenses?.[this.lensId]?.analogs) || {};
+    for (const id of [...this.ghosts.keys()]) if (!analogs[id]) this.syncGhost(id);
+    for (const id of Object.keys(analogs)) this.syncGhost(id);
+  }
+
+  /** @param {string} nodeId */
+  setFocus(nodeId) {
+    if (!this.ctx || !this.nodes.has(nodeId)) return;
+    this.userMoved = true;
+    this.refreshRings();
+    this.refreshLabels();
+    const p = this.currentPos(nodeId, this.ctx.layout.positions());
+    if (p) this.svg.transition().duration(MOTION.focusMs).call(this.zoomBehavior.translateTo, p.x, p.y);
+    this.schedule();
+  }
+
+  /** @param {string|null} lensId */
+  setLens(lensId) {
+    this.lensId = lensId || null;
+    for (const t of this.ghosts.values()) t.remove();
+    this.ghosts.clear();
+    if (this.lensId) this.syncGhosts();
+  }
+
+  /** @param {{ categories: string[]|null, maxDepth: number|null }} filter */
+  setFilter(filter) {
+    this.filter = { categories: filter?.categories ?? null, maxDepth: filter?.maxDepth ?? null };
+    this.updateVisibility();
+  }
+
+  /** @param {string[]} nodeIds */
+  highlight(nodeIds) {
+    if (!this.ctx) return;
+    if (!nodeIds || !nodeIds.length) this.hl = null;
+    else {
+      const ont = this.ctx.snapshot();
+      this.hl = new Set();
+      for (const id of nodeIds) for (const n of neighborhood(id, ont)) this.hl.add(n);
+    }
+    this.applyDim();
+  }
+  /**
+   * Draw the minimap into the shell's top-right slot. Replaces any earlier minimap.
+   * @param {HTMLElement} el
+   */
+  mountMinimap(el) {
+    if (!this.ctx) return;
+    this.minimap?.unmount();
+    this.minimap = createMinimap(el, {
+      positions: () => this.ctx.layout.positions(),
+      nodes: () => [...this.nodes].map(([id, nv]) => ({ id, color: nv.fill, visible: !this.hidden.has(id) })),
+      transform: () => zoomTransform(this.svg.node()),
+      viewSize: () => {
+        const r = this.svg.node().getBoundingClientRect();
+        return { width: r.width, height: r.height };
+      },
+      panTo: (t) => (this.userMoved = true) && this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k)),
+    });
+  }
 
   unmount() {
     if (this.tickFn) this.ctx?.layout.off('tick', this.tickFn);
@@ -383,11 +672,19 @@ class OntoGraph extends Base {
     this.resizeObs = null;
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
+    clearTimeout(this.fitTimer);
+    this.minimap?.unmount();
+    this.minimap = null;
     this.svg?.remove();
     this.svg = null;
     this.nodes.clear();
     this.links.clear();
     this.edges.clear();
+    this.ghosts.clear();
+    this.badges.clear();
+    this.jobs.clear();
+    this.halos.clear();
+    this.ringEls = [];
     this.ctx = null;
   }
 }
