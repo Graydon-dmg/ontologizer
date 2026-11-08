@@ -3,8 +3,13 @@
 /** @param {HTMLElement} el @param {any} shell */
 export function mountFilter(el, shell) {
   el.classList.add('filter');
-  const cats = document.createElement('span');
+  const box = document.createElement('details');
+  box.className = 'filter-box';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Categories';
+  const cats = document.createElement('div');
   cats.className = 'filter-cats';
+  box.append(summary, cats);
   const depthLabel = document.createElement('label');
   depthLabel.textContent = 'Depth ';
   const depth = document.createElement('select');
@@ -15,7 +20,7 @@ export function mountFilter(el, shell) {
     depth.append(o);
   }
   depthLabel.append(depth);
-  el.append(cats, depthLabel);
+  el.append(box, depthLabel);
 
   /** @type {Set<string>|null} null = all */
   let selected = null;
@@ -27,6 +32,7 @@ export function mountFilter(el, shell) {
     const on = boxes.filter((b) => b.checked).map((b) => b.value);
     const categories = on.length === all.length ? null : on;
     selected = categories ? new Set(categories) : null;
+    summary.textContent = selected ? `Categories (${selected.size})` : 'Categories';
     const value = { categories, maxDepth: depth.value ? Number(depth.value) : null };
     shell.activeView()?.setFilter(value);
     shell.act({ type: 'filter', value });
@@ -46,6 +52,7 @@ export function mountFilter(el, shell) {
       return l;
     }));
     depth.value = f?.maxDepth ? String(f.maxDepth) : '';
+    summary.textContent = selected ? `Categories (${selected.size})` : 'Categories';
   };
   depth.addEventListener('change', () => { busy = true; send(); busy = false; });
   build();

@@ -94,7 +94,7 @@ function mountView(id) {
   activeView = null;
   activeId = null;
   slot.replaceChildren();
-  mini.replaceChildren();
+  for (const c of [...mini.children]) if (!c.classList.contains('minimap-toggle')) c.remove();
   mini.hidden = true;
   const entry = id ? getView(id) : null;
   if (!entry) {
@@ -138,8 +138,15 @@ source.subscribe((event, ontology) => {
   try { feedLayout(layout, event); } catch (err) { console.error('[shell] feedLayout failed', err); }
   try { activeView?.apply(event); } catch (err) { console.error('[shell] view.apply failed', err); }
   $('map-name').textContent = ontology?.name || source.snapshot().name || '';
-  if (event.t === 'view.changed' && event.patch) {
-    reapply();
+  if (event.t === 'view.changed' && event.patch && activeView) {
+    // Apply only what this event changed, so a filter tweak does not re-run the focus animation.
+    const st = viewStateToApply(source.snapshot().view);
+    const p = event.patch;
+    try {
+      if ('focus' in p && st.focus) activeView.setFocus?.(st.focus);
+      if ('filter' in p) activeView.setFilter?.(st.filter);
+      if ('lens' in p) activeView.setLens?.(st.lens);
+    } catch (err) { console.error('[shell] applying view state failed', err); }
     const want = event.patch.layout;
     if (want && want !== activeId && getView(want)) mountView(want);
   }

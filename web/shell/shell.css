@@ -9,7 +9,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
   border-radius: 8px; max-width: calc(100% - 240px); pointer-events: auto; }
 #map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; }
 #topbar > div { display: flex; align-items: center; gap: 6px; }
-#topbar > div:empty { display: none; }
+#topbar > div:empty, #topbar > div[hidden] { display: none; }
+body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 #search { flex: 1 1 160px; min-width: 100px; }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
