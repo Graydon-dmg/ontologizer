@@ -18,6 +18,7 @@ import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
 import { mountFuse } from './ui/fuse.js';
+import { mountTips } from './ui/tips.js';
 import { computeInsets, sameInsets } from './insets.js';
 import { createExplainRequests } from './explain.js';
 
@@ -117,7 +118,7 @@ function mountView(id) {
   activeView = null;
   activeId = null;
   slot.replaceChildren();
-  for (const c of [...mini.children]) if (!c.classList.contains('minimap-toggle')) c.remove();
+  for (const c of [...mini.children]) if (!c.classList.contains('minimap-toggle') && !c.classList.contains('info')) c.remove();
   mini.hidden = true;
   const entry = id ? getView(id) : null;
   if (!entry) {
@@ -156,6 +157,8 @@ for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
 }
+// The ⓘ tooltips go in once, after every control exists.
+try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }
 
 shell.explainRequests = createExplainRequests({
   act: (a) => shell.act(a),

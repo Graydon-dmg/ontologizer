@@ -30,12 +30,23 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
 
 **Manual:**
 
-```bash
-npm i -g ontologizer
-ontologizer          # start menu: pick New. The first time it needs Claude, it asks for your
-                     # Anthropic API key once and stores it in your system keychain
-ontologizer doctor   # checks that everything is in place
-```
+1. Install it:
+
+   ```bash
+   npm i -g ontologizer
+   ```
+
+2. Start it and pick **New**. The first time it needs Claude, it asks for your Anthropic API key once and stores it in your system keychain:
+
+   ```bash
+   ontologizer
+   ```
+
+3. Check that everything is in place:
+
+   ```bash
+   ontologizer doctor
+   ```
 
 ## Your first map in 30 seconds
 
@@ -45,11 +56,7 @@ ontologizer new
 
 You will see a few context check questions, then the map streams in live in your browser. When you like it, save it with `ontologizer save [name]`.
 
-No key or network yet? Watch the bundled demo build offline:
-
-```bash
-ontologizer load demo --replay
-```
+No key or network yet? Run `ontologizer load demo --replay` to watch the bundled demo build itself offline.
 
 ## Commands
 
@@ -86,4 +93,4 @@ See [SECURITY.md](https://github.com/Graydon-dmg/ontologizer/blob/main/SECURITY.
 
 ## Licence
 
-MIT, see [LICENSE](https://github.com/Graydon-dmg/ontologizer/blob/main/LICENSE). Contributions welcome: see [CONTRIBUTING.md](https://github.com/Graydon-dmg/ontologizer/blob/main/CONTRIBUTING.md).
+Apache-2.0: see [LICENSE](https://github.com/Graydon-dmg/ontologizer/blob/main/LICENSE) and [NOTICE](https://github.com/Graydon-dmg/ontologizer/blob/main/NOTICE). The Ontologizer name and logo are trademarks; see [TRADEMARKS.md](https://github.com/Graydon-dmg/ontologizer/blob/main/TRADEMARKS.md). Third-party licences are listed in [THIRD_PARTY_NOTICES.md](https://github.com/Graydon-dmg/ontologizer/blob/main/THIRD_PARTY_NOTICES.md). Contributions welcome: see [CONTRIBUTING.md](https://github.com/Graydon-dmg/ontologizer/blob/main/CONTRIBUTING.md).

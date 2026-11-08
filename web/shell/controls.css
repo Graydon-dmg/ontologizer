@@ -8,7 +8,6 @@
 .filter-box summary { cursor: pointer; color: var(--fg); list-style: none; border: 1px solid var(--muted); border-radius: 4px; padding: 2px 8px; }
 .filter-cats { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; display: flex; flex-direction: column; gap: 4px; min-width: 180px; padding: 8px; background: var(--panel); border: 1px solid var(--muted); border-radius: 4px; }
 .filter label { color: var(--muted); display: inline-flex; gap: 3px; align-items: center; }
-.filter select, .lens-switcher select { background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px; padding: 2px 4px; }
 .lens-switcher { color: var(--muted); font-size: 12px; }
 .lens-switcher { position: relative; }
 .lens-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: 260px; display: flex; flex-direction: column; gap: 8px;
@@ -24,7 +23,7 @@
 .minimap-frame { position: relative; background: var(--panel); border: 1px solid var(--muted); border-radius: 4px; }
 .minimap-frame > :not(.minimap-toggle) { display: block; }
 #minimap.minimap-frame.collapsed { width: 24px; height: 24px; }
-.minimap-frame.collapsed > :not(.minimap-toggle) { display: none !important; }
+.minimap-frame.collapsed > :not(.minimap-toggle):not(.info) { display: none !important; }
 .minimap-toggle { position: absolute; top: 2px; right: 2px; z-index: 2; width: 18px; height: 18px; line-height: 14px; padding: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 3px; cursor: pointer; }
 
 .fuse { position: relative; }
@@ -50,3 +49,31 @@
 .fuse-row button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 4px; cursor: pointer; border: 1px solid var(--muted); background: var(--panel); color: var(--fg); }
 .fuse-row button[type=submit] { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
 .fuse-row button[disabled] { opacity: .45; cursor: default; }
+/* In-page dropdown (replaces native <select>). */
+.dd { display: inline-flex; }
+.dd-label { color: var(--muted); font-size: 12px; }
+.dd-btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--muted); background: var(--panel); color: var(--fg); max-width: 14rem; }
+.dd-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-caret { font-size: 10px; opacity: .7; }
+.dd-btn[aria-expanded="true"] { border-color: var(--fg); }
+.dd-btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+.dd-list { position: fixed; z-index: 70; margin: 0; padding: 4px; list-style: none; max-height: 50vh; overflow-y: auto; box-sizing: border-box;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.3); font: 12px system-ui, sans-serif; }
+.dd-list[hidden] { display: none; }
+.dd-list:focus { outline: none; }
+.dd-opt { padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.dd-opt.active { background: var(--bg); }
+.dd-opt[aria-selected="true"] { font-weight: 600; }
+/* ⓘ info icons and their tooltips. */
+.info { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; cursor: help;
+  color: var(--muted); font-size: 13px; line-height: 1; border-radius: 50%; user-select: none; }
+.info:hover, .info:focus-visible { color: var(--fg); outline: none; }
+.info:focus-visible { box-shadow: 0 0 0 2px var(--fg); }
+.info-minimap { position: absolute; top: 3px; right: 24px; z-index: 2; }
+.info-legend { position: absolute; top: 6px; right: 6px; }
+#legend { position: fixed; }
+#legend .legend-head { padding-right: 18px; }
+.tip { position: fixed; z-index: 80; max-width: min(360px, calc(100vw - 8px)); padding: 4px 8px; border-radius: 4px; pointer-events: none;
+  background: var(--fg); color: var(--bg); font: 12px/1.35 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+.tip[hidden] { display: none; }

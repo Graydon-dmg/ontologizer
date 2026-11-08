@@ -8,13 +8,13 @@ Every publish waits for your approval in GitHub before it runs.
 
 Do these in order. Steps 2 to 4 only work once the package exists on npm.
 
-### 1. First publish (0.1.0), by hand
+### 1. First publish (1.0.0), by hand
 
 Trusted publishing can only be configured on a package that already exists, so the very first version goes out from your machine with your 2FA code.
 
 ```bash
 git clone https://github.com/Graydon-dmg/ontologizer.git && cd ontologizer
-git checkout v0.1.0            # or main, at the commit you are releasing
+git checkout v1.0.0            # or main, at the commit you are releasing
 npm ci && npm run check
 npm login                      # your npm account, with 2FA
 npm publish --access public --provenance=false --otp=<6-digit code>
