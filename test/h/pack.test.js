@@ -18,6 +18,7 @@ function audit(/** @type {string[]} */ files, /** @type {Record<string, string>}
       'src/cli/index.js': '#!/usr/bin/env node\n',
       'web/shared/importmap.json': '{}\n',
       'web/index.html': '<!doctype html>\n',
+      'fixtures/demo.events.jsonl': '{}\n',
       ...extra,
     };
     for (const [p, text] of Object.entries(layout)) {
@@ -35,13 +36,13 @@ test('real package ships the required files and nothing it should not', () => {
 });
 
 test('planted fault: files field leaves out web/ is reported', () => {
-  const problems = audit(['src']);
+  const problems = audit(['src', 'fixtures']);
   assert.ok(problems.some((p) => p.includes('web/shared/importmap.json')), problems.join('\n'));
-  assert.deepEqual(audit(['src', 'web']), []); // positive control
+  assert.deepEqual(audit(['src', 'web', 'fixtures']), []); // positive control
 });
 
 test('planted fault: test/.env with sk-ant-test is reported as env, test/ and key problems', () => {
-  const problems = audit(['src', 'web', 'test'], { 'test/.env': 'KEY=sk-ant-test\n' });
+  const problems = audit(['src', 'web', 'fixtures', 'test'], { 'test/.env': 'KEY=sk-ant-test\n' });
   assert.ok(problems.some((p) => p.includes('.env')), 'env file');
   assert.ok(problems.some((p) => p.includes('test/')), 'test/ file');
   assert.ok(problems.some((p) => p.includes('sk-ant-')), 'key content');
@@ -50,14 +51,14 @@ test('planted fault: test/.env with sk-ant-test is reported as env, test/ and ke
 });
 
 test('planted fault: sk-ant- in an ordinary src file is caught by content alone', () => {
-  const problems = audit(['src', 'web'], { 'src/x.js': "export const k = 'sk-ant-test';\n" });
+  const problems = audit(['src', 'web', 'fixtures'], { 'src/x.js': "export const k = 'sk-ant-test';\n" });
   assert.equal(problems.length, 1);
   assert.match(problems[0], /src\/x\.js/);
 });
 
 test('a bare "sk-ant-" prefix check (like src/cli/apikey.js) is not flagged', () => {
   const src = 'export const ok = (k) => { if (!k.startsWith("sk-ant-")) throw new Error("bad"); };\n';
-  assert.deepEqual(audit(['src', 'web'], { 'src/cli/apikey.js': src }), []);
+  assert.deepEqual(audit(['src', 'web', 'fixtures'], { 'src/cli/apikey.js': src }), []);
 });
 
 test('planted fault: shebang removed or wrong is reported', () => {
@@ -71,6 +72,6 @@ test('real src/cli/index.js starts with the node shebang', () => {
 });
 
 test('planted fault: a stray .playwright-mcp/ folder in files is reported', () => {
-  const problems = audit(['src', 'web', '.playwright-mcp'], { '.playwright-mcp/page.yml': 'x: 1\n' });
+  const problems = audit(['src', 'web', 'fixtures', '.playwright-mcp'], { '.playwright-mcp/page.yml': 'x: 1\n' });
   assert.deepEqual(problems, ['unexpected file packed: .playwright-mcp/page.yml']);
 });

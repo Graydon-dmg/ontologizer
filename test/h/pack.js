@@ -3,9 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-// Required in the published tarball. `fixtures/demo.events.jsonl` is added in the same commit as the recording.
+// Required in the published tarball.
 // No "skip if missing" logic on purpose: a skip would hide a missing file at publish time.
-export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json'];
+export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json', 'fixtures/demo.events.jsonl'];
 
 // Everything packed must be one of these files or live under one of these folders.
 // Keeps stray folders (.playwright-mcp/, docs/, .claude/) out even if `files` grows by mistake.

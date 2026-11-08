@@ -2,7 +2,7 @@
 
 Ontologizer is an open-source command-line tool: give it a topic and it builds a live, color-coded map of everything inside that topic, streaming it into a local web page as it goes.
 
-![Ontologizer's 2D graph mid-build](docs/screenshot.png)
+![Ontologizer's 2D graph mid-build](https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/docs/screenshot.png)
 
 ## Install and first run
 
