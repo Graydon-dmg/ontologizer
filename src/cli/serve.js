@@ -46,7 +46,9 @@ export function rethrowAuth(err) {
  * @returns {Promise<{ url: string, close: () => Promise<void> }>}
  */
 export async function serveSession({ deps, store, engine, id, replay = null, open = true }) {
-  const srv = await startServer({ store, engine, id, replay });
+  // Fused drafts started from the browser get their own server; their engine never prompts.
+  const makeEngine = (/** @type {string} */ draftId) => engineFor({ deps, store, id: draftId, needKey: false });
+  const srv = await startServer({ store, engine, id, replay, makeEngine });
   const name = store.read(id).name || id;
   deps.stdout.write(`Serving ${name} at ${srv.url}  (Ctrl-C to stop)\n`);
   if (open) await deps.openBrowser(srv.url);

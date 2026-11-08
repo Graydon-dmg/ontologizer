@@ -32,11 +32,13 @@ function sleep(ms, c) {
 
 /**
  * @param {{ store: any, engine: any, id: string, port?: number,
- *   replay?: null | { speed: number }, webDir?: string }} opts
+ *   replay?: null | { speed: number }, webDir?: string,
+ *   makeEngine?: null | ((id: string) => Promise<any>) }} opts
+ * makeEngine builds the engine for another map (a fused draft); without it, fuse is refused.
  * `webDir` is for tests only.
  * @returns {Promise<{ url: string, close: () => Promise<void> }>}
  */
-export function startServer({ store, engine, id, port = 0, replay = null, webDir }) {
+export function startServer({ store, engine, id, port = 0, replay = null, webDir, makeEngine = null }) {
   const webRoot = path.resolve(webDir ?? fileURLToPath(new URL('../../web/', import.meta.url)));
   const fixturesRoot = path.join(PKG_ROOT, 'fixtures');
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
@@ -55,6 +57,11 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
   /** Running rosetta runs on this map, by normalized persona. @type {Map<string, { jobId: string, lensId: string|null }>} */
   const rosettaRuns = new Map();
   let rosettaSeq = 0;
+  /** Running fuses, by "with|into". @type {Map<string, { jobId: string, draftId: string|null, url: string|null }>} */
+  const fuseRuns = new Map();
+  let fuseSeq = 0;
+  /** Servers started for fused drafts; they close with this one. @type {Set<{ url: string, close: () => Promise<void> }>} */
+  const children = new Set();
   const currentView = () => (replay ? (replayView ??= structuredClone(store.read(id).view)) : store.read(id).view);
 
   /** @param {http.ServerResponse} res @param {number} code @param {any} obj */
@@ -264,6 +271,23 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
         if (running) return json(res, 202, { ok: true, jobId: running.jobId, ...(running.lensId ? { lensId: running.lensId } : {}) });
         return json(res, 202, await startRosetta(persona, name, key));
       }
+      case 'fuse': {
+        if (typeof body.with !== 'string' || !body.with.trim()) return bad('with must be a map id or name');
+        const r = store.resolve(body.with.trim());
+        if (r === null) return bad(`no map named "${body.with}"`);
+        if (typeof r === 'object') return bad(`"${body.with}" is ambiguous: ${r.ambiguous.join(', ')}`);
+        if (r === id) return bad('fuse needs a different map than this one');
+        if (body.into !== undefined && body.into !== null &&
+            (typeof body.into !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(body.into))) {
+          return bad('into must be lowercase letters, digits and hyphens, at most 40 characters');
+        }
+        if (!makeEngine) return bad('fuse is not available in this session');
+        const into = typeof body.into === 'string' ? body.into : undefined;
+        const key = `${r}|${into ?? ''}`;
+        const running = fuseRuns.get(key);
+        if (running) return json(res, 202, fuseReply(running));
+        return json(res, 202, await startFuse(r, into, key));
+      }
       default:
         return bad(`unknown action type: ${String(body.type)}`);
     }
@@ -314,6 +338,65 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     return { ok: true, jobId, ...(run.lensId ? { lensId: run.lensId } : {}) };
   }
 
+  /** @param {{ jobId: string, draftId: string|null, url: string|null }} run */
+  function fuseReply(run) {
+    return { ok: true, jobId: run.jobId, ...(run.draftId ? { draftId: run.draftId } : {}), ...(run.url ? { url: run.url } : {}) };
+  }
+
+  /**
+   * Fuse this map with `withId` into a new draft, served by a second server in this process. The run
+   * is wrapped in job events on THIS map (kind 'fuse'); job.done carries draftId and url. Answers as
+   * soon as the draft's server is up (engine.fuse's onDraft), or after at most 5 s.
+   * @param {string} withId @param {string|undefined} into @param {string} key
+   */
+  async function startFuse(withId, into, key) {
+    const jobId = `fuse-${process.pid}-${++fuseSeq}`;
+    const job = { id: jobId, kind: 'fuse', with: withId, ...(into ? { into } : {}) };
+    const run = { jobId, draftId: /** @type {string|null} */ (null), url: /** @type {string|null} */ (null) };
+    fuseRuns.set(key, run);
+    /** @type {(v: any) => void} */
+    let ready = () => {};
+    const served = new Promise((r) => { ready = r; });
+    /** @type {Promise<void>|null} */
+    let serving = null;
+    /** Start the draft's server once. @param {string} draftId */
+    const serveDraft = (draftId) => {
+      if (serving || closed) return serving;
+      run.draftId = draftId;
+      serving = (async () => {
+        const child = await startServer({ store, engine: await makeEngine(draftId), id: draftId, webDir, makeEngine });
+        if (closed) { await child.close(); return; }
+        children.add(child);
+        run.url = child.url;
+        ready(child.url);
+      })().catch(() => { ready(null); });
+      return serving;
+    };
+    store.append(id, { t: 'job.queued', at: store.now(id), job });
+    store.append(id, { t: 'job.started', at: store.now(id), job });
+    const finished = Promise.resolve()
+      .then(() => engine.fuse(id, withId, { into, onDraft: (/** @type {string} */ d) => { serveDraft(d); } }))
+      .then(async (draftId) => {
+        if (typeof draftId === 'string') await serveDraft(draftId); // an engine without onDraft
+        try {
+          store.append(id, { t: 'job.done', at: store.now(id),
+            job: { ...job, ...(run.draftId ? { draftId: run.draftId } : {}), ...(run.url ? { url: run.url } : {}) } });
+        } catch { /* store gone */ }
+      }, (/** @type {any} */ err) => {
+        const error = err && (err.status === 401 || err.name === 'AuthenticationError')
+          ? 'Your Anthropic API key was rejected: run ontologizer key set'
+          : String(err?.message ?? err);
+        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { ...job, error } }); } catch { /* store gone */ }
+      })
+      .finally(() => { fuseRuns.delete(key); ready(null); })
+      .catch(() => {}); // never an unhandled rejection: errors are already job.failed events
+    /** @type {any} */
+    let t;
+    await Promise.race([served, finished, new Promise((r) => { t = setTimeout(r, 5000); })]);
+    clearTimeout(t);
+    return fuseReply(run);
+  }
+
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
   async function handle(req, res) {
     const hostOk = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`];
@@ -348,6 +431,14 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     }
     // The tab icon, even before the page's <link> loads.
     if (rawPath === '/favicon.ico') return sendFile(res, path.join(webRoot, 'shared', 'brand', 'favicon-32.png'));
+    if (rawPath === '/api/maps') {
+      // Every other map, for the Fuse picker: saved maps first, then drafts (newest first in each).
+      const rows = store.list({ drafts: true })
+        .filter((/** @type {any} */ m) => m.id !== id)
+        .map((/** @type {any} */ m) => ({ id: m.id, name: m.name, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft) }));
+      rows.sort((a, b) => Number(a.draft) - Number(b.draft) || b.updatedAt - a.updatedAt);
+      return json(res, 200, rows);
+    }
     if (rawPath === '/api/snapshot') return json(res, 200, store.read(id));
     if (rawPath === '/api/events') {
       const from = Math.max(0, Number.parseInt(query.get('from') || '0', 10) || 0);
@@ -387,6 +478,8 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
           closed = true;
           for (const t of timers) clearTimeout(t);
           for (const r of sseClients) r.end();
+          await Promise.all([...children].map((c) => c.close().catch(() => {})));
+          children.clear();
           try { store.sessions.remove(id); } catch { /* ignore */ }
           await new Promise((res) => { server.close(() => res(undefined)); server.closeAllConnections?.(); });
         },
