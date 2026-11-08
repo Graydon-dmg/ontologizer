@@ -8,7 +8,7 @@ Everything in this build that needs a person: accounts, keys, starting the sessi
 
 | Tool | Check | Install |
 |---|---|---|
-| Node 20 or newer | `node -v` | nodejs.org, or `nvm install 22` |
+| Node 22 or newer | `node -v` | nodejs.org, or `nvm install 22` |
 | git 2.40 or newer | `git --version` | your OS package manager |
 | GitHub CLI | `gh --version`, then `gh auth login` | cli.github.com |
 | Claude Code | `claude --version`, then run `claude` and sign in | claude.com/claude-code |

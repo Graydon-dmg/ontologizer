@@ -48,7 +48,7 @@ After this, no npm token of any kind can publish `ontologizer`. Trusted publishi
 
 github.com/Graydon-dmg/ontologizer → **Settings** → **Environments** → **New environment** `npm-publish` (if it does not exist yet) → tick **Required reviewers** → add yourself → **Save protection rules**.
 
-Optional but recommended on the same page: **Deployment branches and tags** → **Selected branches and tags** → add a tag rule `v*.*.*`, so only version tags can ever reach this environment.
+Recommended, on the same page: **Deployment branches and tags** → **Selected branches and tags** → add a tag rule `v*.*.*`, so only version tags can ever reach this environment.
 
 ## Releasing a new version
 
@@ -60,11 +60,9 @@ git push --follow-tags     # pushes the commit and the tag
 
 Then on GitHub → **Actions** → **release** → the waiting run → **Review deployments** → approve `npm-publish`.
 
-The workflow then:
-1. installs exactly the locked dependencies (`npm ci`),
-2. runs the full check (`npm run check`),
-3. refuses to publish unless the tag is exactly `v` + the `package.json` version,
-4. runs `npm publish --access public`; npm attaches provenance automatically.
+The workflow runs two jobs:
+1. **verify** (no publish rights): refuses to go on unless the tag is exactly `v` + the `package.json` version, installs exactly the locked dependencies (`npm ci --ignore-scripts`) and runs the full check.
+2. **publish** (only after verify passes **and** you approve): checks out the same commit and runs `npm publish --access public --ignore-scripts`; npm attaches provenance automatically. This job installs no dependencies and runs no tests.
 
 Check the result on npmjs.com: the version page shows a **Provenance** badge linking to the exact commit and workflow run.
 
@@ -74,7 +72,8 @@ Check the result on npmjs.com: the version page shows a **Provenance** badge lin
 
 - **No stored credential:** the publish credential is minted per run by npm from GitHub's OIDC token, and only for `Graydon-dmg/ontologizer`, `release.yml`, environment `npm-publish`.
 - **Human gate:** the `npm-publish` environment requires your approval for every run.
-- **Least privilege:** the release job can only read the repository and request an OIDC token (`contents: read`, `id-token: write`); every other workflow has read-only access.
+- **Least privilege:** only the publish job can request an OIDC token (`contents: read`, `id-token: write`); everything else is read-only.
+- **Dependency code never meets the token:** tests (which run dependency code) happen in the verify job, which cannot mint a token. The publish job installs no dependencies, and every install and publish runs with `--ignore-scripts`, so no package lifecycle script runs anywhere in CI.
 - **Pinned actions:** third-party actions are pinned to full commit hashes, so a moved tag upstream cannot change what runs.
 - **Exact npm:** the npm CLI used to publish is pinned to an exact version.
 - **No untrusted input:** the workflows never run on `pull_request_target`, and no event text is pasted into a shell script.
