@@ -1,5 +1,6 @@
 // @ts-check
 import { CliError } from '../deps.js';
+import { showBanner, packageVersion } from '../banner.js';
 import { engineFor, rethrowAuth, serveSession, untilInterrupt } from '../serve.js';
 
 /** Save under `name`, or name-2, name-3 when taken. @param {any} store @param {string} id @param {string} name */
@@ -18,6 +19,7 @@ function saveUnique(store, id, name) {
 export async function handler(argv) {
   /** @type {import('../deps.js').Deps} */
   const deps = argv.deps;
+  if (!argv.bannerShown) await showBanner(deps, { version: await packageVersion() }); // TTY only; nothing when piped
   const store = deps.store();
   const yes = Boolean(argv.yes);
   const interactive = deps.interactive && !yes;
