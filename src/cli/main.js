@@ -38,7 +38,8 @@ export async function main(argv, over = {}) {
     .scriptName('ontologizer')
     .usage('$0 [command]\n\nA live, color-coded map of any topic, built by an LLM.')
     .middleware((args) => {
-      args.deps = deps;
+      // Non-enumerable, so no debug or JSON dump of argv can ever print env.
+      Object.defineProperty(args, 'deps', { value: deps, enumerable: false, configurable: true });
     })
     .strict()
     .help()
@@ -54,6 +55,13 @@ export async function main(argv, over = {}) {
     })
     .wrap(Math.min(100, process.stdout.columns || 100));
   for (const mod of await loadCommands()) cli.command(mod);
+  // Once-a-day update notice; returns at once and never blocks on the network.
+  try {
+    const { checkForUpdate } = await import('./notice.js');
+    const { readFileSync } = await import('node:fs');
+    const current = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+    if (argv[0] !== 'update') checkForUpdate({ deps, current });
+  } catch { /* never let the notice break a command */ }
   try {
     await cli.parseAsync();
     if (failed) return code || 1;

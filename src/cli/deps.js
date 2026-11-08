@@ -1,6 +1,7 @@
 // @ts-check
 // Everything a command touches in the outside world, in one injectable object, so tests can run
 // every command in-process with fakes (no TTY, no browser, no keychain, no network).
+import { spawn } from 'node:child_process';
 import { defaultKeyring } from './apikey.js';
 import { openStore } from '../core/store.js';
 
@@ -12,6 +13,35 @@ export class CliError extends Error {
     this.name = 'CliError';
     this.code = code;
   }
+}
+
+/**
+ * The environment for any child process (browser opener, npm): never carries ANTHROPIC_API_KEY,
+ * so a key the user set in their shell is not inherited by other programs.
+ * @param {NodeJS.ProcessEnv} env
+ */
+export function childEnv(env) {
+  const out = { ...env };
+  delete out.ANTHROPIC_API_KEY;
+  return out;
+}
+
+/** Open a URL in the default browser, with a key-free env. @param {string} url @param {NodeJS.ProcessEnv} env */
+function openUrl(url, env) {
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]]
+    : ['xdg-open', [url]];
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(cmd, args, { env: childEnv(env), stdio: 'ignore', detached: true });
+      child.on('error', () => resolve(undefined));
+      child.unref();
+      resolve(undefined);
+    } catch {
+      resolve(undefined);
+    }
+  });
 }
 
 /**
@@ -50,8 +80,7 @@ export function makeDeps(over = {}) {
     prompts: async () => /** @type {any} */ (await import('@inquirer/prompts')),
     openBrowser: async (url) => {
       if (env.ONTOLOGIZER_NO_OPEN === '1') return;
-      const { default: open } = await import('open');
-      await open(url).catch(() => {});
+      await openUrl(url, env);
     },
     fetch: globalThis.fetch,
     onSignal: (sig, fn) => {

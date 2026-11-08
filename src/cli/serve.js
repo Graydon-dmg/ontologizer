@@ -26,8 +26,9 @@ export async function engineFor({ deps, store, id, needKey }) {
     });
     client = await makeClient(key);
   } catch (err) {
+    if (/** @type {any} */ (err)?.name === 'ExitPromptError') throw err; // Ctrl-C at the prompt: exit 130 quietly
     if (needKey) throw new CliError(/** @type {Error} */ (err).message, 1);
-    client = noKeyClient();
+    client = await noKeyClient({ keyring: deps.keyring });
   }
   return loadEngine({ store, id, client, env: deps.env });
 }

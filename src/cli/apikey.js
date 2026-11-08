@@ -44,8 +44,7 @@ export function defaultKeyring(env = process.env) {
   return {
     get() {
       try {
-        const v = getEntry().getPassword();
-        return typeof v === 'string' && v.length > 0 ? v : null;
+        return validKey(getEntry().getPassword());
       } catch {
         return null; // no entry, or no keychain on this system
       }
@@ -66,6 +65,21 @@ export function defaultKeyring(env = process.env) {
 /** @param {unknown} key */
 function looksLikeKey(key) {
   return typeof key === 'string' && key.startsWith(KEY_PREFIX) && key.length > KEY_PREFIX.length;
+}
+
+/** The trimmed key, or null when it is not a plausible Anthropic key. @param {unknown} raw */
+function validKey(raw) {
+  const key = typeof raw === 'string' ? raw.trim() : '';
+  return looksLikeKey(key) ? key : null;
+}
+
+/** keyring.get(), never throwing, and only a plausible key. @param {Keyring} kr */
+function storedKey(kr) {
+  try {
+    return validKey(kr.get());
+  } catch {
+    return null;
+  }
 }
 
 /** @param {{ message: string, mask: string }} opts */
@@ -122,8 +136,8 @@ export async function getApiKey({
     return { key: fromEnv.trim(), source: 'env' };
   }
   const kr = keyring ?? defaultKeyring(env);
-  // 2. the keychain.
-  const stored = kr.get();
+  // 2. the keychain (a junk value falls through to the prompt instead of causing a 401).
+  const stored = storedKey(kr);
   if (stored) return { key: stored, source: 'keychain' };
   // 4. no TTY: never wait for input.
   if (!interactive) throw new Error(NO_KEY_MSG);
@@ -140,7 +154,7 @@ export async function getApiKey({
 export function keySource({ keyring, env = process.env } = {}) {
   const fromEnv = env.ANTHROPIC_API_KEY;
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return 'env';
-  return (keyring ?? defaultKeyring(env)).get() ? 'keychain' : 'none';
+  return storedKey(keyring ?? defaultKeyring(env)) ? 'keychain' : 'none';
 }
 
 /** True for the SDK's AuthenticationError (HTTP 401). @param {any} err */
@@ -155,12 +169,35 @@ export async function makeClient(apiKey) {
 }
 
 /**
- * A stand-in client for sessions with no key (load never prompts): every model call fails with
- * the contract's job message, so a clicked job ends as job.failed instead of hanging or crashing.
+ * The client for a session that started with no key (load never prompts). On every use it re-reads
+ * the keychain (never prompting): once `ontologizer key set` has stored a key in another terminal,
+ * it builds the real client and delegates to it. Until then every model call fails with the
+ * contract's job message, so a clicked job ends as job.failed instead of hanging or crashing.
+ * @param {{ keyring: Keyring }} opts
  */
-export function noKeyClient() {
+export async function noKeyClient({ keyring }) {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  /** @type {any} */
+  let real = null;
+  const current = () => {
+    if (!real) {
+      const key = storedKey(keyring);
+      if (key) real = new Anthropic({ apiKey: key });
+    }
+    return real;
+  };
   const fail = () => {
     throw new Error(NO_KEY_JOB_MSG);
   };
-  return { messages: { stream: fail, create: fail } };
+  const failing = { stream: fail, create: fail };
+  return new Proxy({}, {
+    get(_target, prop) {
+      const c = current();
+      if (c) {
+        const v = c[prop];
+        return typeof v === 'function' ? v.bind(c) : v;
+      }
+      return prop === 'messages' ? failing : undefined;
+    },
+  });
 }

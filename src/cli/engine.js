@@ -12,6 +12,8 @@ const REAL_BY_DEFAULT = true;
 export async function loadEngine({ store, id, client = null, env = process.env }) {
   const choice = env.ONTOLOGIZER_ENGINE;
   const real = choice === 'real' || (choice !== 'stub' && REAL_BY_DEFAULT);
+  // The CLI always passes a client built from getApiKey(); never fall back to a bare new Anthropic().
+  if (real && !client) throw new Error('internal: the real engine needs a client');
   const { createEngine } = real
     ? await import('../core/engine/index.js')
     : await import('./engine-stub.js');
