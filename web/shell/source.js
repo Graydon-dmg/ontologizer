@@ -1,0 +1,142 @@
+// @ts-check
+// Where the shell's data comes from. The mode comes from the URL:
+//   ?fixture=<name>[&speed=<n>]  replay /fixtures/<name>.events.jsonl locally
+//   otherwise                    fold EventSource('/api/events?from=0') and POST /api/action
+// Both modes start from emptyOntology() and fold every event. Never /api/snapshot (double counts).
+// No DOM here: Node tests inject fetch, EventSource and timers.
+import { emptyOntology, fold } from '../../src/core/events.js';
+import { JOB_ACTIONS, isValidAction, viewPatchFor } from './actions.js';
+
+/** @typedef {import('../../src/core/schema.js').Ontology} Ontology */
+/** @typedef {(event: any, ontology: Ontology) => void} Listener */
+
+/**
+ * @param {{ search?: string, speed?: number, fetch?: typeof fetch, EventSource?: any,
+ *           setTimeout?: (fn: () => void, ms: number) => any, base?: string,
+ *           jobDelayMs?: number, reconnectMs?: number }} [params]
+ */
+export function createSource(params = {}) {
+  const search = params.search ?? (globalThis.location ? globalThis.location.search : '');
+  const q = new URLSearchParams(search);
+  const fixture = q.get('fixture');
+  const speed = Number(params.speed ?? q.get('speed')) || 1;
+  const fetchFn = params.fetch ?? globalThis.fetch;
+  const ES = params.EventSource ?? /** @type {any} */ (globalThis).EventSource;
+  const later = params.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
+  const base = params.base ?? '';
+  const jobDelayMs = params.jobDelayMs ?? 1000;
+  const reconnectMs = params.reconnectMs ?? 1000;
+
+  /** @type {Ontology} */
+  let ontology = emptyOntology();
+  /** @type {Set<Listener>} */
+  const listeners = new Set();
+  let received = 0; // events folded from the source (server mode resumes from here)
+  let lastAt = 0;
+
+  /** @param {any} e */
+  function push(e) {
+    if (!e || typeof e !== 'object') return;
+    ontology = fold(ontology, e);
+    if (typeof e.at === 'number' && e.at > lastAt) lastAt = e.at;
+    for (const fn of listeners) {
+      try { fn(e, ontology); } catch (err) { console.error('shell listener failed', err); }
+    }
+  }
+
+  const common = {
+    snapshot: () => ontology,
+    /** @param {Listener} fn */
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => { listeners.delete(fn); };
+    },
+  };
+
+  if (fixture) {
+    let jobSeq = 0;
+    const done = (async () => {
+      const res = await fetchFn(`${base}/fixtures/${encodeURIComponent(fixture)}.events.jsonl`);
+      if (!res.ok) throw new Error(`fixture ${fixture}: HTTP ${res.status}`);
+      const events = parseJsonl(await res.text());
+      await new Promise((resolve) => {
+        let i = 0;
+        let prev = 0;
+        const step = () => {
+          if (i >= events.length) return resolve(undefined);
+          const e = events[i++];
+          const at = typeof e.at === 'number' ? e.at : prev;
+          const wait = Math.max(0, (at - prev) / speed);
+          prev = at;
+          later(() => { received++; push(e); step(); }, wait);
+        };
+        step();
+      });
+    })();
+    return {
+      mode: /** @type {'fixture'} */ ('fixture'),
+      ...common,
+      done,
+      /** @param {any} action */
+      async act(action) {
+        if (!isValidAction(action)) return { ok: false, error: `unknown action ${action && action.type}` };
+        if (JOB_ACTIONS.includes(action.type)) {
+          const job = { id: `local-${++jobSeq}`, kind: action.type, nodeId: action.nodeId };
+          push({ t: 'job.queued', at: lastAt, job });
+          later(() => push({ t: 'job.done', at: lastAt, job }), jobDelayMs);
+          return { ok: true, jobId: job.id };
+        }
+        const patch = viewPatchFor(action, ontology);
+        if (patch) push({ t: 'view.changed', at: lastAt, patch });
+        return { ok: true };
+      },
+    };
+  }
+
+  // Server mode.
+  /** @type {any} */
+  let es = null;
+  let closed = false;
+  const open = () => {
+    es = new ES(`${base}/api/events?from=${received}`);
+    es.onmessage = (/** @type {{ data: string }} */ m) => {
+      let e;
+      try { e = JSON.parse(m.data); } catch { return; }
+      received++;
+      push(e);
+    };
+    // The browser would reconnect to the same URL and replay from 0 (double counting).
+    // Close and resume from the number of events already folded instead.
+    es.onerror = () => {
+      if (es) es.close();
+      if (!closed) later(open, reconnectMs);
+    };
+  };
+  open();
+  return {
+    mode: /** @type {'server'} */ ('server'),
+    ...common,
+    done: Promise.resolve(),
+    /** @param {any} action */
+    async act(action) {
+      const res = await fetchFn(`${base}/api/action`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(action),
+      });
+      try { return await res.json(); } catch { return { ok: res.ok }; }
+    },
+    close() { closed = true; if (es) es.close(); },
+  };
+}
+
+/** @param {string} text */
+export function parseJsonl(text) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    try { out.push(JSON.parse(s)); } catch { /* skip a bad line */ }
+  }
+  return out;
+}
