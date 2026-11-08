@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createEngine } from '../../src/core/engine/index.js';
-import { researchContextPrompt } from '../../src/core/engine/prompts.js';
+import { researchContextPrompt, researchGeneralPrompt } from '../../src/core/engine/prompts.js';
+import { cleanSources, siteOf } from '../../src/core/engine/jobs.js';
 import { createFakeClient, createMemoryStore, lines, searchBlock } from './fake.js';
 
 const ADH = 'plastic-modeling/tools/adhesives';
@@ -26,18 +27,23 @@ const evs = (store, t) => store.list('pm').filter((/** @type {any} */ e) => e.t 
 const ARTICLE = { summary: 'Glue for plastic.', keyFacts: ['a', 7, 'b'], whyItMatters: 'Matters.', seeAlso: ['CA Glue'] };
 const R2 = [{ title: 'One', url: 'https://one.example' }, { title: 'Two', url: 'https://two.example' }];
 
-test('research: context carries brief and path, general carries only the label', async () => {
+test('research: context carries the brief; general carries the subject and path but not the reader', async () => {
   const { store, fake, engine } = setup((_p, i) => ({ text: lines([{ label: i === 0 ? 'Ctx Item' : 'Gen Item', summary: 's', hook: 'h' }]) }));
   const subject = fixture[0].brief.subject;
   await run(engine, { kind: 'research', nodeId: ADH, mode: 'context' });
   await run(engine, { kind: 'research', nodeId: ADH, mode: 'general' });
   const [ctx, gen] = fake.calls.map((c) => c.params.messages[0].content + '\n' + c.params.system);
   assert.ok(ctx.includes(subject) && ctx.includes('Tools > Adhesives'));
-  assert.ok(gen.includes('Adhesives'));
-  assert.ok(!gen.includes(subject) && !gen.includes('Tools'));
-  // Planted fault: a prompt built the context way would fail the general assertion.
-  const wrong = researchContextPrompt(fixture[0].brief, ['Plastic modeling', 'Tools', 'Adhesives'], []);
-  assert.ok((wrong.prompt).includes(subject), 'the faulty prompt leaks the brief, so the general check would fail it');
+  const brief = fixture[0].brief;
+  /** General stays anchored (subject + ancestor path) but carries none of the reader's purpose or level. @param {string} text */
+  const anchoredNotTailored = (text) => text.includes(subject) && text.includes('Tools > Adhesives')
+    && !text.includes(brief.purpose) && !text.includes(brief.context) && !/Reader level/.test(text);
+  assert.ok(anchoredNotTailored(gen), gen);
+  // Planted faults: the 0.1.0 label-only prompt drifts off-subject; the context prompt is tailored to the reader.
+  const labelOnly = researchGeneralPrompt('', ['Adhesives'], []);
+  assert.ok(!anchoredNotTailored(labelOnly.prompt + '\n' + labelOnly.system));
+  const wrong = researchContextPrompt(brief, ['Plastic modeling', 'Tools', 'Adhesives'], []);
+  assert.ok(!anchoredNotTailored(wrong.prompt + '\n' + wrong.system));
   const added = evs(store, 'node.added').filter((/** @type {any} */ e) => e.node.createdBy === 'research');
   assert.deepEqual(added.map((/** @type {any} */ e) => [e.node.parent, e.node.origin, e.node.createdBy]),
     [[ADH, 'context', 'research'], [ADH, 'general', 'research']]);
@@ -144,4 +150,39 @@ test('missing node throws', async () => {
   const { store, engine } = setup(() => ({}));
   await run(engine, { kind: 'explain', nodeId: 'nope' });
   assert.match(evs(store, 'job.failed')[0].job.error, /no node "nope"/);
+});
+
+test('sources: marketplaces and listicle farms are dropped, and one link per site', async () => {
+  const found = [
+    { title: 'Alibaba glue', url: 'https://www.alibaba.com/showroom/plastic-glue.html' },
+    { title: 'Tips 1', url: 'https://hobbies.lifetips.com/a' },
+    { title: 'Tips 2', url: 'https://crafts.lifetips.com/b' },
+    { title: 'Tamiya', url: 'https://www.tamiya.com/english/cement' },
+    { title: 'Tamiya again', url: 'https://tamiya.com/english/other' },
+    { title: 'Wiki', url: 'https://en.wikipedia.org/wiki/Plastic_cement' },
+    { title: 'Forum', url: 'https://www.britmodeller.com/forums/topic/1' },
+    { title: 'BBC', url: 'https://www.bbc.co.uk/x' }, { title: 'BBC 2', url: 'https://news.bbc.co.uk/y' },
+  ];
+  const { store, engine } = setup(() => ({
+    text: lines([found[0], found[1], found[2], found[3], found[4]]), content: [searchBlock(found)] }));
+  await run(engine, { kind: 'sources', nodeId: ADH });
+  const urls = evs(store, 'node.updated')[0].patch.sources.map((/** @type {any} */ s) => s.url);
+  assert.ok(!urls.some((/** @type {string} */ u) => /alibaba|lifetips/.test(u)), urls.join(' '));
+  const sites = urls.map(siteOf);
+  assert.equal(new Set(sites).size, sites.length, 'one link per site');
+  assert.deepEqual(urls, [found[3].url, found[5].url, found[6].url, found[7].url]);   // 1 pick survives, topped up from the search
+  // Planted fault: unfiltered, the same picks hold a marketplace and two links from one farm.
+  const raw = [found[0], found[1], found[2], found[3], found[4]].map((s) => s.url);
+  assert.ok(raw.some((u) => /alibaba/.test(u)) && new Set(raw.map(siteOf)).size < raw.length);
+  assert.equal(cleanSources(found.map((f) => ({ ...f }))).length, 4);   // tamiya, wikipedia, britmodeller, bbc
+  assert.equal(siteOf('https://news.bbc.co.uk/y'), 'bbc.co.uk');
+});
+
+test('explain: article sources follow the same rules', async () => {
+  const found = [{ title: 'Amazon', url: 'https://www.amazon.com/dp/1' }, { title: 'W1', url: 'https://en.wikipedia.org/a' },
+    { title: 'W2', url: 'https://de.wikipedia.org/b' }, { title: 'Maker', url: 'https://www.revell.de/x' }];
+  const { store, engine } = setup(() => ({ text: lines([ARTICLE]), content: [searchBlock(found)] }));
+  await run(engine, { kind: 'explain', nodeId: ADH });
+  assert.deepEqual(evs(store, 'node.updated')[0].patch.article.sources.map((/** @type {any} */ s) => s.url),
+    ['https://en.wikipedia.org/a', 'https://www.revell.de/x']);
 });
