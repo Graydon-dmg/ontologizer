@@ -7,7 +7,7 @@ import { fold, emptyOntology } from '../../src/core/events.js';
  *   text?: string,                 // what the model "writes"; streamed in small random chunks
  *   stop_reason?: string,          // default 'end_turn'; 'refusal' | 'pause_turn' | 'max_tokens'
  *   stop_details?: any,
- *   content?: any[],               // extra final content blocks, e.g. web_search_tool_result
+ *   content?: any[],               // extra final content blocks, e.g. web_search_tool_result or tool_use
  *   delayMs?: number,              // wait before the first chunk
  *   error?: any,                   // thrown from the stream instead of answering (e.g. { status: 401 })
  * }} FakeAnswer
@@ -50,6 +50,8 @@ export function createFakeClient({ respond, chunkMs = 2, seed = 1 }) {
         if (answer.delayMs) await sleep(answer.delayMs);
         if (answer.error) throw answer.error;
         yield { type: 'message_start', message: { role: 'assistant', content: [] } };
+        // Extra blocks (tool_use, server_tool_use, search results) announce themselves first.
+        for (const b of answer.content ?? []) yield { type: 'content_block_start', index: 0, content_block: b };
         yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } };
         let i = 0;
         while (i < text.length) {

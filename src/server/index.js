@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveVendorPath } from '../core/vendor.js';
+import { MAX_BODY as MAX_CHAT_BODY, TOO_LARGE, ChatError, readCappedBody, drainCapped, validateChat, storeAttachment, findAttachment, imageSize, relayAsk } from './chat.js';
 
 const PKG_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MAX_BODY = 64 * 1024;
@@ -33,12 +34,13 @@ function sleep(ms, c) {
 /**
  * @param {{ store: any, engine: any, id: string, port?: number,
  *   replay?: null | { speed: number }, webDir?: string,
- *   makeEngine?: null | ((id: string) => Promise<any>) }} opts
+ *   makeEngine?: null | ((id: string) => Promise<any>), chatTimeouts?: { idleMs?: number, totalMs?: number } }} opts
+ * chatTimeouts is for tests only.
  * makeEngine builds the engine for another map (a fused draft); without it, fuse is refused.
  * `webDir` is for tests only.
  * @returns {Promise<{ url: string, close: () => Promise<void> }>}
  */
-export function startServer({ store, engine, id, port = 0, replay = null, webDir, makeEngine = null }) {
+export function startServer({ store, engine, id, port = 0, replay = null, webDir, makeEngine = null, chatTimeouts = {} }) {
   const webRoot = path.resolve(webDir ?? fileURLToPath(new URL('../../web/', import.meta.url)));
   const fixturesRoot = path.join(PKG_ROOT, 'fixtures');
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
@@ -406,6 +408,56 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     return fuseReply(run);
   }
 
+  // One chat request in flight per map (per server).
+  let chatBusy = false;
+
+  /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
+  async function chat(req, res) {
+    /** @param {number} status @param {string} error @param {boolean} [drop] close the socket (body past the cap) */
+    const fail = (status, error, drop = false) => {
+      res.writeHead(status, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', ...(drop ? { Connection: 'close' } : {}) });
+      res.end(JSON.stringify({ ok: false, error }));
+      if (drop) res.on('finish', () => req.destroy());
+    };
+    /** Refuse before reading: drain the body (up to the cap) first, so fetch gets the message. */
+    const refuse = async (/** @type {number} */ status, /** @type {string} */ error) => {
+      const within = await drainCapped(req, MAX_CHAT_BODY);
+      fail(within ? status : 413, within ? error : TOO_LARGE, !within);
+    };
+    const ctype = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+    if (ctype !== 'application/json') return refuse(415, 'Content-Type must be application/json.');
+    if (chatBusy) return refuse(409, 'A chat answer is already being written for this map: wait for it to finish.');
+    chatBusy = true;
+    try {
+      let raw;
+      try {
+        raw = await readCappedBody(req, MAX_CHAT_BODY);
+      } catch (/** @type {any} */ err) {
+        if (err instanceof ChatError) return fail(err.status, err.message, err.status === 413);
+        return fail(400, 'Could not read the message.', true);
+      }
+      let input;
+      try {
+        let parsed;
+        try { parsed = JSON.parse(raw.toString('utf8')); } catch { throw new ChatError(400, 'The body is not valid JSON.'); }
+        const v = validateChat(parsed);
+        const home = store.root;
+        const images = v.images.map((im) => {
+          const hash = storeAttachment(home, id, im);
+          const size = imageSize(im.buf, im.ext);
+          return { mime: im.mime, data: im.buf.toString('base64'), hash, ...(size ? { w: size.w, h: size.h } : {}) };
+        });
+        input = { text: v.text, images, lens: v.lens ?? null };
+      } catch (/** @type {any} */ err) {
+        if (err instanceof ChatError) return fail(err.status, err.message);
+        return fail(500, 'Could not save the image.'); // e.g. a disk error; never a 400
+      }
+      await relayAsk({ engine, req, res, input, ...chatTimeouts });
+    } finally {
+      chatBusy = false;
+    }
+  }
+
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
   async function handle(req, res) {
     const hostOk = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`];
@@ -416,13 +468,13 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     const query = new URLSearchParams(q < 0 ? '' : raw.slice(q + 1));
     const method = req.method || 'GET';
 
-    if (rawPath === '/api/action') {
+    if (rawPath === '/api/action' || rawPath === '/api/chat') {
       if (method !== 'POST') return plain(res, 405, 'method not allowed');
       const origin = req.headers.origin;
       if (origin !== undefined && !hostOk.map((h) => `http://${h}`).includes(origin)) {
         return plain(res, 403, 'forbidden origin');
       }
-      return action(req, res);
+      return rawPath === '/api/chat' ? chat(req, res) : action(req, res);
     }
     if (method !== 'GET' && method !== 'HEAD') return plain(res, 405, 'method not allowed');
 
@@ -447,6 +499,23 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
         .map((/** @type {any} */ m) => ({ id: m.id, name: m.name, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft) }));
       rows.sort((a, b) => Number(a.draft) - Number(b.draft) || b.updatedAt - a.updatedAt);
       return json(res, 200, rows);
+    }
+    if (rawPath.startsWith('/api/attachments/')) {
+      const hash = rawPath.slice('/api/attachments/'.length);
+      const found = findAttachment(store.root, id, hash); // null unless hash is exactly 64 hex chars
+      if (!found) return plain(res, 404, 'not found');
+      try {
+        const data = await fs.promises.readFile(found.file);
+        res.writeHead(200, {
+          'Content-Type': found.mime,
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "sandbox; default-src 'none'",
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        });
+        return res.end(data);
+      } catch {
+        return plain(res, 404, 'not found');
+      }
     }
     if (rawPath === '/api/snapshot') return json(res, 200, store.read(id));
     if (rawPath === '/api/events') {

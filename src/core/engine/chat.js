@@ -1,0 +1,515 @@
+// @ts-check
+// The chat side panel's brain: engine.ask() answers questions about the whole map.
+// Map first (search_map / get_node over the store, read-only), the web for what the map lacks,
+// every map claim cited as [[node-id]] and every web fact linked. Writes only chat.* events.
+import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage } from './call.js';
+import { labelPath, findByLabelPath } from './ids.js';
+import { chatSystem, outlineBlock } from './prompts-chat.js';
+
+const MAX_TURNS = 6;           // model calls per question, tool turns included
+const HISTORY_EXCHANGES = 10;  // earlier question/answer pairs sent with each question
+const MAX_SUGGESTIONS = 3;
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+export const STOPPED = 'Stopped.';
+
+/**
+ * @typedef {{ type: 'delta', text: string } | { type: 'citation', nodeId: string, label: string }
+ *   | { type: 'source', title: string, url: string }
+ *   | { type: 'suggestion', kind: 'research', nodeId: string, mode: 'context'|'general', label: string }
+ *   | { type: 'status', text: string } | { type: 'done', msgId: string } | { type: 'error', error: string }} ChatItem
+ * @typedef {{ mime: string, data: string, hash?: string, w?: number, h?: number }} ChatImage
+ */
+
+export const TOOLS = [
+  {
+    name: 'search_map',
+    description: 'Search the reader\'s map. Returns up to 8 nodes ranked by relevance to the query, each with its id, label path and a snippet. Use short keyword queries; search again with other words if the first try misses.',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Keywords to look for' } }, required: ['query'] },
+  },
+  {
+    name: 'get_node',
+    description: 'Read one node of the map in full: its article (summary, key facts, why it matters), sources, parent, children and cross-linked neighbours.',
+    input_schema: { type: 'object', properties: { id: { type: 'string', description: 'The node id, exactly as shown in the outline or a search result' } }, required: ['id'] },
+  },
+];
+
+// ---------------------------------------------------------------------------------------------
+// The engine entry point
+
+/**
+ * @param {{ store: any, id: string, models: { strong: string }, getClient: () => any,
+ *           emit: (t: string, fields: object) => void }} cctx
+ * @param {{ chatId?: string, text?: string, images?: ChatImage[], lens?: string|null }} input
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {AsyncIterable<ChatItem>}
+ */
+export function ask(cctx, input, { signal } = {}) {
+  const out = channel();
+  const chatId = String(input?.chatId ?? 'main');
+  const text = String(input?.text ?? '').trim();
+  const images = (Array.isArray(input?.images) ? input.images : [])
+    .filter((im) => im && IMAGE_TYPES.has(im.mime) && typeof im.data === 'string' && im.data.length > 0);
+  const lens = typeof input?.lens === 'string' && input.lens ? input.lens : null;
+
+  if (!text && !images.length) {
+    out.push({ type: 'error', error: 'Ask a question first.' });
+    out.end();
+    return out.iterable;
+  }
+
+  const stamp = `${chatId}-${Date.now().toString(36)}-${++counter}`;
+  const msgId = `${stamp}-q`;                               // the question; the answer is `${stamp}-a`
+  // Image references only: the picture itself never goes into the event log.
+  const refs = images.map((im) => ({ hash: String(im.hash ?? ''), mime: im.mime, w: Number(im.w) || 0, h: Number(im.h) || 0 }));
+  cctx.emit('chat.asked', { chatId, msgId, text, images: refs });
+
+  run(cctx, { chatId, msgId, answerId: `${stamp}-a`, text, images, lens, signal }, out).finally(() => out.end());
+  return out.iterable;
+}
+let counter = 0;
+
+/**
+ * Runs the whole answer, eagerly: it finishes and is saved even if nobody reads the items.
+ * @param {any} cctx @param {any} q @param {ReturnType<typeof channel>} out
+ */
+async function run(cctx, q, out) {
+  const { store, id, models, getClient, emit } = cctx;
+  const { chatId, msgId, answerId, text, images, lens, signal } = q;
+  const answer = { text: '', usedWeb: false };
+  /** @type {Map<string, { nodeId: string, label: string }>} */ const citations = new Map();
+  /** @type {Map<string, { title: string, url: string }>} */ const sources = new Map();
+  /** @type {Map<string, { kind: 'research', nodeId: string, mode: 'context'|'general', label: string }>} */
+  const suggestions = new Map();
+  /** @type {Map<string, string>} */ const searchTitles = new Map();   // url -> title, from search results
+
+  /** @param {ChatItem} item */
+  const send = (item) => out.push(item);
+  const nodes = () => store.read(id).nodes ?? {};
+
+  const filter = createTokenFilter((inner) => {
+    const s = inner.trim();
+    const sug = /^suggest:(.*)$/i.exec(s);
+    if (sug) {
+      const [nodeId = '', mode = '', ...rest] = sug[1].split('|').map((x) => x.trim());
+      const label = rest.join(' ').trim();
+      if (nodes()[nodeId] && (mode === 'context' || mode === 'general') && label
+          && suggestions.size < MAX_SUGGESTIONS && !suggestions.has(`${nodeId}|${mode}`)) {
+        const item = { kind: /** @type {const} */ ('research'), nodeId, mode, label: label.slice(0, 80) };
+        suggestions.set(`${nodeId}|${mode}`, item);
+        send({ type: 'suggestion', ...item });
+      }
+      return '';
+    }
+    const node = nodes()[s];
+    if (!node) return '';                                  // an id that is not in the map: drop it
+    if (!citations.has(s)) {
+      citations.set(s, { nodeId: s, label: node.label });
+      send({ type: 'citation', nodeId: s, label: node.label });
+    }
+    return `[[${s}]]`;
+  });
+
+  /** @param {string} t */
+  const emitText = (t) => {
+    if (!t) return;
+    answer.text += t;
+    send({ type: 'delta', text: t });
+    for (const link of linksIn(answer.text)) addSource(link.url, link.title);
+  };
+  /** @param {string} url @param {string} [title] */
+  const addSource = (url, title) => {
+    if (!/^https?:\/\//i.test(url) || sources.has(url)) return;
+    const s = { title: String(searchTitles.get(url) ?? title ?? url).slice(0, 200), url };
+    sources.set(url, s);
+    send({ type: 'source', title: s.title, url });
+  };
+
+  try {
+    const o = store.read(id);
+    const index = buildIndex(o, lens);
+    const system = [
+      { type: 'text', text: chatSystem(o.brief, lensInfo(o, lens)) },
+      { type: 'text', text: outlineBlock(outline(o, lens)), cache_control: { type: 'ephemeral' } },
+    ];
+    /** @type {any[]} */
+    const messages = [...historyMessages(o, chatId, msgId), {
+      role: 'user',
+      content: [
+        ...images.map((/** @type {ChatImage} */ im) => ({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.data } })),
+        { type: 'text', text: text || 'What is in this image, and how does it relate to my map?' },
+      ],
+    }];
+
+    const client = getClient();
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      if (signal?.aborted) throw abortError();
+      const last = turn === MAX_TURNS - 1;
+      /** @type {any} */
+      const params = {
+        model: models.strong, max_tokens: 8000, system, messages,
+        output_config: { effort: 'medium' },
+        tools: [...TOOLS, WEB_SEARCH_TOOL],
+      };
+      if (last) params.tool_choice = { type: 'none' };      // out of turns: answer with what it has
+      const stream = client.messages.stream(params, signal ? { signal } : undefined);
+
+      let turnText = false;
+      /** @type {Set<string>} */ const said = new Set();
+      for await (const e of stream) {
+        if (signal?.aborted) throw abortError();
+        if (e.type === 'content_block_start') {
+          const b = e.content_block ?? {};
+          if (b.type === 'tool_use' && !said.has('map')) { said.add('map'); send({ type: 'status', text: 'Searching your map…' }); }
+          if (b.type === 'server_tool_use' && b.name === 'web_search') {
+            answer.usedWeb = true;
+            if (!said.has('web')) { said.add('web'); send({ type: 'status', text: 'Searching the web…' }); }
+          }
+        } else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
+          // A new turn after tool calls starts a new paragraph.
+          if (!turnText && turn > 0 && answer.text && !/\s$/.test(answer.text)) emitText(filter.push('\n\n'));
+          turnText = true;
+          emitText(filter.push(e.delta.text));
+        }
+      }
+      const final = await stream.finalMessage();
+      if (final.stop_reason === 'refusal') throw new RefusalError(final.stop_details?.category ?? undefined);
+      readSearchBlocks(final.content, searchTitles, addSource);
+
+      if (final.stop_reason === 'pause_turn') {
+        messages.push({ role: 'assistant', content: final.content });
+        continue;
+      }
+      const uses = (final.content ?? []).filter((/** @type {any} */ b) => b.type === 'tool_use');
+      if (final.stop_reason !== 'tool_use' || !uses.length || last) break;
+      messages.push({ role: 'assistant', content: final.content });
+      messages.push({
+        role: 'user',
+        content: uses.map((/** @type {any} */ u) => {
+          const r = runTool(u.name, u.input, store.read(id), index, lens);
+          return { type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(r.result), ...(r.error ? { is_error: true } : {}) };
+        }),
+      });
+    }
+    emitText(filter.flush());
+
+    const finalText = answer.text.trim();
+    emit('chat.answered', {
+      chatId, msgId: answerId, replyTo: msgId, text: finalText,
+      citations: [...citations.values()], sources: [...sources.values()],
+      suggestions: [...suggestions.values()], usedWeb: answer.usedWeb,
+    });
+    send({ type: 'done', msgId: answerId });
+  } catch (err) {
+    const error = signal?.aborted ? STOPPED : jobErrorMessage(err);
+    emit('chat.failed', { chatId, replyTo: msgId, error });
+    send({ type: 'error', error });
+  }
+}
+
+function abortError() {
+  const e = new Error(STOPPED);
+  e.name = 'AbortError';
+  return e;
+}
+
+// ---------------------------------------------------------------------------------------------
+// [[...]] tokens in the streamed text
+
+/**
+ * A streaming filter for [[...]] tokens. Text outside tokens passes through as soon as it is safe;
+ * a token is held back until it closes, then replaced by resolve(inner) ('' drops it). An
+ * unclosed token longer than 300 characters, or broken by a newline, passes through as written.
+ * @param {(inner: string) => string} resolve
+ */
+export function createTokenFilter(resolve) {
+  let buf = '';
+  /** @param {boolean} final */
+  function drain(final) {
+    let out = '';
+    for (;;) {
+      const i = buf.indexOf('[');
+      if (i < 0) { out += buf; buf = ''; break; }
+      out += buf.slice(0, i);
+      buf = buf.slice(i);
+      if (buf.length < 2) { if (final) { out += buf; buf = ''; } break; }
+      if (buf[1] !== '[') { out += '['; buf = buf.slice(1); continue; }
+      const close = buf.indexOf(']]', 2);
+      const nl = buf.indexOf('\n');
+      if (close >= 0 && (nl < 0 || nl > close)) {
+        out += resolve(buf.slice(2, close));
+        buf = buf.slice(close + 2);
+        continue;
+      }
+      if (final || (nl >= 0) || buf.length > 300) { out += '['; buf = buf.slice(1); continue; }
+      break;                                               // wait for more text
+    }
+    return out;
+  }
+  return {
+    /** @param {string} chunk */
+    push(chunk) { buf += chunk; return drain(false); },
+    flush() { return drain(true); },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Links and web sources
+
+/** Markdown links and bare URLs in text. @param {string} text */
+export function linksIn(text) {
+  /** @type {{ title?: string, url: string }[]} */ const out = [];
+  for (const m of text.matchAll(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)/g)) out.push({ title: m[1], url: m[2] });
+  for (const m of text.matchAll(/(?<!\]\()(?<![\w/])(https?:\/\/[^\s)<>\]]+[^\s)<>\].,;:!?'"])/g)) out.push({ url: m[1] });
+  return out;
+}
+
+/**
+ * Titles from web_search results (for nicer source items), and URLs the model cited through the
+ * API's own citation fields.
+ * @param {any[]} content @param {Map<string, string>} titles @param {(url: string, title?: string) => void} addSource
+ */
+function readSearchBlocks(content, titles, addSource) {
+  for (const b of content ?? []) {
+    if (b?.type === 'web_search_tool_result' && Array.isArray(b.content)) {
+      for (const r of b.content) if (r?.url && r.title) titles.set(r.url, String(r.title));
+    }
+    if (b?.type === 'text' && Array.isArray(b.citations)) {
+      for (const c of b.citations) if (typeof c?.url === 'string') addSource(c.url, c.title);
+    }
+  }
+}
+
+/**
+ * The answer's format rules, checked after the fact (tests use it as the oracle):
+ * - under a "From the web" heading, every line that states a number carries a link;
+ * - anywhere, a line with a percentage carries a link or a [[node-id]] citation (no bare statistics);
+ * - no [[...]] token names a node that is not in the map.
+ * Lines of plain commentary (no numbers) need no link.
+ * @param {string} text @param {{ nodes?: Record<string, any> }} [opts]
+ * @returns {string[]} problems, empty when the answer is well formed
+ */
+export function checkAnswer(text, { nodes } = {}) {
+  /** @type {string[]} */ const problems = [];
+  const LINK = /\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\//;
+  let section = '';
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const heading = /^(#{1,6}\s+|\*\*)(.*?)(\*\*)?:?$/.exec(line);
+    if (heading && /from (your|the) (map|web)/i.test(heading[2])) {
+      section = /web/i.test(heading[2]) ? 'web' : 'map';
+      continue;
+    }
+    const linked = LINK.test(line);
+    const plain = line.replace(/\[\[[^\]]*\]\]/g, '').replace(/\]\(https?:[^)]*\)/g, ']');
+    if (section === 'web' && !linked && /\d/.test(plain)) problems.push(`web fact without a link: ${line.slice(0, 120)}`);
+    else if (!linked && !/\[\[[^\]]+\]\]/.test(line) && /\d\s*%/.test(plain)) problems.push(`statistic without a source: ${line.slice(0, 120)}`);
+  }
+  if (nodes) {
+    for (const m of String(text).matchAll(/\[\[([^\]\n]+)\]\]/g)) {
+      if (!/^suggest:/i.test(m[1]) && !nodes[m[1].trim()]) problems.push(`cites a node that is not in the map: ${m[1]}`);
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------------------------
+// History
+
+/**
+ * Earlier answered exchanges in this chat (ontology.chat, folded from chat.* events), oldest
+ * first, as alternating user / assistant messages. Failed and unanswered questions are left out.
+ * @param {any} o @param {string} chatId @param {string} currentMsgId
+ */
+export function historyMessages(o, chatId, currentMsgId) {
+  const chat = (Array.isArray(o?.chat) ? o.chat : []).filter((m) => m && (m.chatId ?? 'main') === chatId);
+  const answers = new Map(chat.filter((m) => m.role === 'assistant' && m.replyTo).map((m) => [m.replyTo, m]));
+  const pairs = chat
+    .filter((m) => m.role === 'user' && m.msgId !== currentMsgId && answers.has(m.msgId))
+    .map((m) => ({ q: String(m.text ?? ''), a: String(answers.get(m.msgId).text ?? ''), images: m.images?.length ?? 0 }));
+  return pairs.slice(-HISTORY_EXCHANGES).flatMap((p) => [
+    { role: 'user', content: p.images ? `${p.q}\n\n[${p.images} image(s) were attached to this message.]` : (p.q || '(an image)') },
+    { role: 'assistant', content: p.a || '(no answer)' },
+  ]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The outline, the lens, and the two map tools
+
+/** @param {any} o @param {string|null} lens */
+function lensInfo(o, lens) {
+  const l = lens ? o.lenses?.[lens] : null;
+  return l ? { persona: String(l.persona ?? lens) } : null;
+}
+
+/** Children of each node in insertion order. @param {Record<string, any>} nodes */
+function childrenOf(nodes) {
+  /** @type {Map<string, any[]>} */ const kids = new Map();
+  for (const n of Object.values(nodes)) {
+    if (!n.parent) continue;
+    kids.set(n.parent, [...(kids.get(n.parent) ?? []), n]);
+  }
+  return kids;
+}
+
+/**
+ * The compact outline: one line per node, indented by depth: "- Label (id): summary  ≈ analog".
+ * Big maps drop summaries below depth 2 to keep the prompt small.
+ * @param {any} o @param {string|null} lens
+ */
+export function outline(o, lens = null) {
+  const nodes = o.nodes ?? {};
+  const kids = childrenOf(nodes);
+  const analogs = (lens && o.lenses?.[lens]?.analogs) || {};
+  const big = Object.keys(nodes).length > 400;
+  /** @type {string[]} */ const lines = [];
+  const seen = new Set();
+  /** @param {any} n @param {number} d */
+  const walk = (n, d) => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    const summary = n.summary && !(big && d > 2) ? `: ${clip(n.summary, 110)}` : '';
+    const analog = analogs[n.id]?.label ? `  ≈ ${clip(analogs[n.id].label, 60)}` : '';
+    lines.push(`${'  '.repeat(d)}- ${n.label} (${n.id})${summary}${analog}`);
+    for (const c of kids.get(n.id) ?? []) walk(c, d + 1);
+  };
+  if (nodes[o.root]) walk(nodes[o.root], 0);
+  for (const n of Object.values(nodes)) if (!seen.has(n.id)) walk(n, Math.max(0, n.depth ?? 0));   // orphans
+  return lines.join('\n');
+}
+
+const STOP = new Set('a an and are as at be by for from has have how in is it its of on or that the this to was what when where which who why with your you my me i'.split(' '));
+
+/** @param {string} s */
+function tokens(s) {
+  return String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 1 && !STOP.has(w))
+    .map((w) => (w.length > 4 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+}
+
+/** @param {string} s @param {number} n */
+function clip(s, n) {
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+/** Sentences a snippet can come from. @param {any} n @param {any} analog */
+function passages(n, analog) {
+  const a = n.article ?? {};
+  return [n.summary, n.hook, ...(String(a.summary ?? '').split(/(?<=[.!?])\s+/)), ...(a.keyFacts ?? []), a.whyItMatters,
+    analog?.label ? `Analog: ${analog.label}` : '']
+    .filter((x) => typeof x === 'string' && x.trim());
+}
+
+/**
+ * BM25 over each node's label (x3), label path, summary, hook, article and source titles.
+ * @param {any} o @param {string|null} lens
+ */
+export function buildIndex(o, lens = null) {
+  const nodes = o.nodes ?? {};
+  const analogs = (lens && o.lenses?.[lens]?.analogs) || {};
+  const docs = Object.values(nodes).map((n) => {
+    const path = labelPath(nodes, n.id);
+    const a = n.article ?? {};
+    const text = [n.label, n.label, n.label, path.join(' '), n.summary, n.hook, a.summary,
+      ...(a.keyFacts ?? []), a.whyItMatters, ...(a.seeAlso ?? []),
+      ...[...(n.sources ?? []), ...(a.sources ?? [])].map((s) => s?.title), analogs[n.id]?.label].join(' ');
+    /** @type {Map<string, number>} */ const tf = new Map();
+    const toks = tokens(text);
+    for (const t of toks) tf.set(t, (tf.get(t) ?? 0) + 1);
+    return { n, path, tf, len: toks.length };
+  });
+  /** @type {Map<string, number>} */ const df = new Map();
+  for (const d of docs) for (const t of d.tf.keys()) df.set(t, (df.get(t) ?? 0) + 1);
+  const avg = docs.reduce((s, d) => s + d.len, 0) / Math.max(1, docs.length);
+  return {
+    /** @param {string} query @param {number} [k] */
+    search(query, k = 8) {
+      const q = [...new Set(tokens(query))];
+      if (!q.length) return [];
+      const N = docs.length;
+      return docs.map((d) => {
+        let score = 0;
+        for (const t of q) {
+          const f = d.tf.get(t);
+          if (!f) continue;
+          const idf = Math.log(1 + (N - (df.get(t) ?? 0) + 0.5) / ((df.get(t) ?? 0) + 0.5));
+          score += idf * (f * 2.2) / (f + 1.2 * (0.25 + 0.75 * d.len / avg));
+        }
+        return { d, score };
+      }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, k).map(({ d }) => {
+        const best = passages(d.n, analogs[d.n.id])
+          .map((p) => ({ p, hits: tokens(p).filter((t) => q.includes(t)).length }))
+          .sort((a, b) => b.hits - a.hits)[0];
+        return { id: d.n.id, label: d.n.label, path: d.path.join(' > '), snippet: clip(best?.p ?? d.n.summary ?? '', 220) };
+      });
+    },
+  };
+}
+
+/**
+ * Run one map tool. Read-only: takes a snapshot, returns plain data.
+ * @param {string} name @param {any} input @param {any} o @param {ReturnType<typeof buildIndex>} index @param {string|null} lens
+ * @returns {{ result: any, error?: boolean }}
+ */
+export function runTool(name, input, o, index, lens) {
+  const nodes = o.nodes ?? {};
+  if (name === 'search_map') {
+    const results = index.search(String(input?.query ?? ''));
+    return { result: results.length ? { results } : { results, note: 'No node matches. Try other words, or use web_search.' } };
+  }
+  if (name === 'get_node') {
+    const want = String(input?.id ?? '').trim();
+    const nid = nodes[want] ? want : findByLabelPath(nodes, want);
+    const n = nid ? nodes[nid] : null;
+    if (!n) {
+      const near = index.search(want.replace(/[/-]+/g, ' '), 3).map((r) => r.id);
+      return { result: { error: `No node with id "${want}".`, didYouMean: near }, error: true };
+    }
+    const kids = Object.values(nodes).filter((c) => c.parent === n.id);
+    const label = (/** @type {string} */ x) => nodes[x]?.label ?? x;
+    const a = n.article;
+    const analog = lens ? o.lenses?.[lens]?.analogs?.[n.id] : null;
+    return {
+      result: {
+        id: n.id, label: n.label, path: labelPath(nodes, n.id).join(' > '),
+        parent: n.parent ? { id: n.parent, label: label(n.parent) } : null,
+        summary: n.summary ?? '', hook: n.hook ?? '',
+        article: a ? { summary: a.summary, keyFacts: a.keyFacts, whyItMatters: a.whyItMatters, seeAlso: a.seeAlso }
+          : 'Not explained yet: the reader can click Explain on this node.',
+        sources: [...(n.sources ?? []), ...(a?.sources ?? [])].slice(0, 10),
+        children: kids.map((c) => ({ id: c.id, label: c.label, summary: c.summary ?? '' })),
+        neighbours: (o.edges ?? []).filter((e) => e.from === n.id || e.to === n.id).map((e) => {
+          const other = e.from === n.id ? e.to : e.from;
+          return { id: other, label: label(other), type: e.type, why: e.why, direction: e.from === n.id ? 'out' : 'in' };
+        }),
+        ...(analog ? { analog } : {}),
+      },
+    };
+  }
+  return { result: { error: `Unknown tool ${name}` }, error: true };
+}
+
+// ---------------------------------------------------------------------------------------------
+
+/** A push-based async iterable: the producer pushes, one consumer reads. */
+function channel() {
+  /** @type {ChatItem[]} */ const items = [];
+  /** @type {(() => void) | null} */ let wake = null;
+  let ended = false;
+  return {
+    /** @param {ChatItem} item */
+    push(item) { if (!ended) { items.push(item); wake?.(); } },
+    end() { ended = true; wake?.(); },
+    iterable: {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          if (items.length) { yield /** @type {ChatItem} */ (items.shift()); continue; }
+          if (ended) return;
+          await new Promise((r) => { wake = () => { wake = null; r(undefined); }; });
+        }
+      },
+    },
+  };
+}

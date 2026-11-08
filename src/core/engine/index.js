@@ -10,6 +10,7 @@ import { check, build } from './build.js';
 import { research, explain, sources } from './jobs.js';
 import { fuse } from './fuse.js';
 import { rosetta } from './rosetta.js';
+import { ask } from './chat.js';
 
 export function defaultModels() {
   return {
@@ -74,6 +75,16 @@ export function createEngine({ store, id, client = null, models = defaultModels(
         : job;
       return queue.add(queued, work, { priority }).jobId;
     },
+
+    /**
+     * The chat panel: answer one question about the whole map, streamed. Read-only: it never
+     * changes the map or starts a job. Appends chat.asked, then chat.answered or chat.failed.
+     * Never throws: a failure is a yielded { type: 'error', error } item.
+     * @param {{ chatId?: string, text?: string, images?: import('./chat.js').ChatImage[], lens?: string|null }} input
+     * @param {{ signal?: AbortSignal }} [opts]  aborting stops the model call (chat.failed "Stopped.")
+     * @returns {AsyncIterable<import('./chat.js').ChatItem>}
+     */
+    ask: (input, opts) => ask({ store, id, models, getClient, emit }, input, opts),
 
     /** Resolves when no job is queued or running. */
     idle: () => queue.onIdle(),
