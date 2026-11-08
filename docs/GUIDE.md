@@ -102,6 +102,16 @@ A lens re-explains your map for a persona. For each node, Claude names an **anal
 
 `fuse` takes two maps and produces a **new draft**. You can start one from a terminal (`ontologizer fuse`) or from the page with the **Fuse** button. Both source maps are left untouched. The draft contains the categories of both maps (shown in separate colour families), a **Hybrids** category of things that exist only where the two fields meet, and **bridge** links across the seam. Hybrid nodes get a distinct outline. Fuse takes exactly two maps; to combine three, fuse the result with the third. Asking for three fails with: `fuse takes two maps; fuse the result again to add a third`.
 
+### Chat: ask your map
+
+The **⟦Chat⟧** panel lets you ask questions about the whole map in plain words, for example *"Which of these tools does a beginner actually need first?"* or *"How does Gunpla connect to the manga side?"*.
+
+- **How it answers.** Claude first searches your map (labels, summaries, articles and links) and answers from that. When the map doesn't cover something, it can also search the web.
+- **Citations.** Each claim is marked with where it came from. ⟦Map citation⟧ means *from your map*: click it to jump to that node. ⟦Web citation⟧ means *from the web*: the source is listed under ⟦Sources⟧ and opens in a new tab.
+- **Images.** Paste an image (or drop one onto the panel) to ask about it, for example a photo of a kit's sprue or a page you're stuck on. ⟦image limits: types, size, count⟧
+- **Research suggestions.** When an answer shows a gap in your map, the chat may suggest a node to research. It never starts a job by itself: a suggestion is a button (⟦Research suggestion label⟧) that you click to queue the research, and it then appears in the jobs tray like any other job.
+- **Cost.** Each question is one model call, roughly a cent or two more when it searches the web. See [Cost](#7-cost).
+
 ### Drafts and saved maps
 
 A new map starts as a **draft** with an id like `draft-20261108-120053`. A draft is kept on disk, but it is not a named map until you save it.
@@ -277,6 +287,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
 | **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
+| **⟦Chat⟧** | Opens the chat panel: ask questions about the map, with citations. See [Chat: ask your map](#chat-ask-your-map). |
 | **Fuse** | *Make a new map that joins this one with another saved map* (its tooltip). The new draft opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
@@ -304,6 +315,7 @@ Everything lives in `~/.ontologizer`. To use another folder, set `ONTOLOGIZER_HO
     events.jsonl      one line per thing that happened; append-only
     snapshot.json     the map as it stands now
     brief.json        the subject, scope, purpose and level
+    attachments/      images you pasted or dropped into the chat ⟦verify path⟧
 ```
 
 A map is stored as its **event log**: every category, node, link, job and lens is one line in `events.jsonl`. The map is rebuilt by reading the log from the top, so it reloads exactly, and replay is just that log played back with the original timing. A saved map's folder is named after the map; a draft's is `draft-<yyyymmdd-hhmmss>`.
@@ -337,15 +349,17 @@ What a map costs, roughly:
 - **A new map** is a handful of calls: the context check (fast), one fast call for categories, one fast call per category, and one strong call for cross-links and insights. Typically a few cents per map.
 - **Explain** and **Sources** each add a strong call that also uses web search.
 - **Research**, **fuse** and **rosetta** each add strong calls (rosetta works through the map in batches of 25 nodes, so a big map is several calls). Research does not use web search.
+- **A chat question** is one strong call: roughly a cent or two, a little more when it also searches the web or includes an image.
 - **Loading, browsing, searching, replay and `list`** make no calls at all.
 
 ---
 
 ## 8. Privacy
 
-- **Sent to Anthropic:** your context and brief (subject, scope, purpose, level), and the labels, paths and short summaries of nodes the call is about. Fuse sends both maps' node labels; rosetta sends node paths and summaries. Explain and Sources also run web searches through Anthropic's search tool. Nothing else is sent.
+- **Sent to Anthropic:** your context and brief (subject, scope, purpose, level), and the labels, paths and short summaries of nodes the call is about. Fuse sends both maps' node labels; rosetta sends node paths and summaries. Explain and Sources also run web searches through Anthropic's search tool. **Chat** sends your question, the earlier messages in that conversation, any images you attach, and the parts of the map it looks up to answer; it may also search the web. Nothing else is sent.
 - **The page** is served only on `127.0.0.1` (your own machine) on a free port. It is not reachable from other computers.
 - **Your maps** stay in `~/.ontologizer`. They are not uploaded anywhere.
+- **Chat images** are sent to Anthropic with your question and are also saved next to the map, in its `attachments/` folder (`~/.ontologizer/<map>/attachments/`). To delete them, delete that folder, or single files in it. ⟦verify: does the chat log reference them; what the page shows after deletion⟧
 - **Update check:** at most once a day, in an interactive terminal, ontologizer asks the npm registry (`https://registry.npmjs.org/ontologizer/latest`) for the newest version number. It sends nothing about you or your maps. Turn it off with `ONTOLOGIZER_NO_UPDATE_CHECK=1`. `ontologizer doctor` makes the same request, and also checks that `https://api.anthropic.com` answers.
 
 ---

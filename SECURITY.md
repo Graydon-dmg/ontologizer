@@ -36,8 +36,9 @@ Ontologizer sends requests to the Anthropic API (api.anthropic.com) through the 
 - **Explain and Sources:** the brief and the node's label path.
 - **Fuse:** the two maps' node ids and labels.
 - **Rosetta:** node ids, label paths and summaries.
+- **Chat:** your question, the earlier messages in that chat, any images you paste or drop in, and the parts of the map the model looks up to answer (labels, summaries, articles and links of the nodes it searches). It may also use web search. ⟦verify against engine.ask⟧
 
-Explain, Sources and Research use Anthropic's web search tool, so Anthropic runs searches on your behalf for those requests. See Anthropic's own terms for how it handles API data.
+Explain, Sources and Chat use Anthropic's web search tool, so Anthropic runs searches on your behalf for those requests. See Anthropic's own terms for how it handles API data.
 
 ## Other network contact
 
@@ -56,5 +57,8 @@ When you open a map, Ontologizer starts a web server on `127.0.0.1` (your own ma
 - Static files are served only from `web/shell`, `web/shared`, `web/views`, `web/dev`, `fixtures/`, `src/core/` and the vendored packages. A path that escapes those folders gets 404.
 
 ## Data at rest
+
+Images you attach in the chat are saved in the map's folder, under `attachments/`. Delete that folder (or single files in it) to remove them. ⟦verify⟧
+
 
 Maps are plain JSONL files (one event per line) in `~/.ontologizer`, or in the folder named by `ONTOLOGIZER_HOME`. They are readable by your user account and are not encrypted. They contain no API key. They do contain the context you typed and everything the model wrote, so treat them like any other personal notes.

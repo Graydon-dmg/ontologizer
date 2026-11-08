@@ -56,6 +56,8 @@ ontologizer new
 
 You will see a few context check questions, then the map streams in live in your browser. When you like it, save it with `ontologizer save [name]`.
 
+Then ask the map questions in the **⟦Chat⟧** panel: answers cite your map's nodes and, when needed, the web. Paste an image to ask about it.
+
 No key or network yet? Run `ontologizer load demo --replay` to watch the bundled demo build itself offline.
 
 ## Commands
