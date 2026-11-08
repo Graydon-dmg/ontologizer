@@ -389,3 +389,19 @@ export function planLabels(entries, boxesOf = spotBoxes) {
   }
   return out;
 }
+
+/**
+ * Which nodes and links are bright when the view dims the rest. `base` is the hover neighbourhood
+ * (while hovering) or the search highlight; `cite` is the chatbot's cited nodes, exactly those ids.
+ * Cited nodes are bright whatever the base says; a link is bright when both ends are cited or both
+ * ends are in the base. Returns null when nothing is emphasised (nothing dims).
+ * @param {Set<string>|null} base @param {Set<string>|null} cite
+ * @returns {{ nodes: Set<string>, link: (a: string, b: string) => boolean }|null}
+ */
+export function emphasis(base, cite) {
+  if (!base && !cite) return null;
+  const nodes = new Set([...(base ?? []), ...(cite ?? [])]);
+  const link = (/** @type {string} */ a, /** @type {string} */ b) =>
+    (!!cite && cite.has(a) && cite.has(b)) || (!!base && base.has(a) && base.has(b));
+  return { nodes, link };
+}
