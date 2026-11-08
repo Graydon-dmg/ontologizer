@@ -9,7 +9,7 @@ import { easeBackOut, easeCubicInOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, emphasis, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -101,6 +101,7 @@ class OntoGraph extends Base {
   /** @type {{ categories: string[]|null, maxDepth: number|null }} */ filter = { categories: null, maxDepth: null };
   /** @type {Set<string>} */ hidden = new Set();
   /** @type {Set<string>|null} neighborhood union set by highlight() */ hl = null;
+  /** @type {Set<string>|null} the chatbot's cited node ids, set by cite(); kept until cleared */ cited = null;
   /** @type {string|null} */ lensId = null;
   /** @type {Map<string, any>} ghost lens labels by node id */ ghosts = new Map();
   /** @type {Map<string, any>} "+N" badges by node id */ badges = new Map();
@@ -151,6 +152,7 @@ class OntoGraph extends Base {
     this.setLens(ont.view?.lens ?? null);
     this.refreshRings();
     this.refreshLabels();
+    if (this.hl || this.cited) this.applyDim();
     this.centerWorld();
     this.schedule();
   }
@@ -336,6 +338,8 @@ class OntoGraph extends Base {
       case 'lens.analog': if (event.lensId === this.lensId) this.syncGhost(event.nodeId); break;
       default: break;
     }
+    // a highlight or citation stays until cleared: dim whatever this event just drew
+    if (this.hl || this.cited || this.hovered) this.applyDim();
     this.schedule();
   }
 
@@ -348,7 +352,6 @@ class OntoGraph extends Base {
     this.refreshRings();
     this.refreshLabels();
     if (this.lensId) this.syncGhost(id);
-    if (this.hl || this.hovered) this.applyDim();
   }
 
   /** @param {any} patch */
@@ -527,6 +530,7 @@ class OntoGraph extends Base {
     for (const [id] of this.nodes) {
       const node = ont.nodes[id];
       if (this.hidden.has(id)) continue;
+      if (this.cited?.has(id)) { wanted.set(id, true); continue; } // cited: always labelled
       // category labels are always candidates (culled like the rest), so the map stays legible
       // wherever the focus is; others follow the label rule
       if (node.depth !== 1 && !labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE })) continue;
@@ -540,7 +544,7 @@ class OntoGraph extends Base {
     const priority = new Map();
     for (const id of wanted.keys()) {
       const n = ont.nodes[id];
-      priority.set(id, n.depth === 1 ? 3 : near.has(id) ? 2 : n.origin === 'fuse' ? 1 : 0);
+      priority.set(id, this.cited?.has(id) ? 4 : n.depth === 1 ? 3 : near.has(id) ? 2 : n.origin === 'fuse' ? 1 : 0);
     }
     this.labelPriority = priority;
     this.labelWanted = wanted;
@@ -562,7 +566,7 @@ class OntoGraph extends Base {
       const nv = this.nodes.get(id), p = cur.get(id), n = ont.nodes[id];
       if (!nv || !p || !n) continue;
       const a = analogs[id];
-      entries.push({ id, forced, full: id === this.hovered || id === ont.view.focus, must: n.origin === 'fuse',
+      entries.push({ id, forced, full: id === this.hovered || id === ont.view.focus, must: n.origin === 'fuse' || !!this.cited?.has(id),
         priority: this.labelPriority.get(id) ?? 0, depth: n.depth, r: nv.r, prev: nv.spot ?? 0,
         cx: p.x * t.k + t.x, cy: p.y * t.k + t.y, R: nv.r * t.k,
         w: LABEL_GEOM.charW * n.label.length, aw: a ? LABEL_GEOM.analogCharW * truncateAnalog(a.label).length : 0 });
@@ -757,9 +761,10 @@ class OntoGraph extends Base {
   applyDim() {
     if (!this.ctx) return;
     const ont = this.ctx.snapshot();
-    const s = this.hovered ? neighborhood(this.hovered, ont) : this.hl;
+    const em = emphasis(this.hovered ? neighborhood(this.hovered, ont) : this.hl, this.cited);
+    const s = em?.nodes;
     const dim = MOTION.hoverDim;
-    const op = (/** @type {boolean} */ on) => (s ? (on ? 1 : dim) : null);
+    const op = (/** @type {boolean} */ on) => (em ? (on ? 1 : dim) : null);
     for (const [id, nv] of this.nodes) {
       const v = op(!!s?.has(id));
       nv.g.style('opacity', v);
@@ -767,8 +772,8 @@ class OntoGraph extends Base {
       this.badges.get(id)?.g.style('opacity', v);
       this.ghosts.get(id)?.style('opacity', s && !s.has(id) ? dim * 0.85 : null);
     }
-    for (const [id, path] of this.links) path.style('opacity', op(!!s && s.has(id) && s.has(ont.nodes[id]?.parent)));
-    for (const e of this.edges.values()) e.path.style('opacity', op(!!s && s.has(e.from) && s.has(e.to)));
+    for (const [id, path] of this.links) path.style('opacity', op(!!em && em.link(id, ont.nodes[id]?.parent ?? '')));
+    for (const e of this.edges.values()) e.path.style('opacity', op(!!em && em.link(e.from, e.to)));
   }
 
   /** @param {string} id */
@@ -852,6 +857,20 @@ class OntoGraph extends Base {
     }
     this.applyDim();
   }
+
+  /**
+   * The chatbot's citations: exactly these nodes and the links between them stay bright, the rest
+   * dims, and their labels are always drawn. Kept until cleared or replaced (incoming events don't
+   * clear it); coexists with highlight(), and wins on its own nodes. null or [] clears.
+   * @param {string[]|null} nodeIds
+   */
+  cite(nodeIds) {
+    this.cited = nodeIds && nodeIds.length ? new Set(nodeIds) : null;
+    if (!this.ctx) return;
+    this.refreshLabels();
+    this.applyDim();
+  }
+
   /**
    * Draw the minimap into the shell's top-right slot. Replaces any earlier minimap.
    * @param {HTMLElement} el
@@ -896,6 +915,8 @@ class OntoGraph extends Base {
     this.ctx = null;
   }
 }
+
+export { OntoGraph };
 
 if (globalThis.customElements) {
   customElements.define('onto-graph', OntoGraph);
