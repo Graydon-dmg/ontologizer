@@ -108,7 +108,7 @@ The **⟦Chat⟧** panel lets you ask questions about the whole map in plain wor
 
 - **How it answers.** Claude first searches your map (labels, summaries, articles and links) and answers from that. When the map doesn't cover something, it can also search the web.
 - **Citations.** Each claim is marked with where it came from. ⟦Map citation⟧ means *from your map*: click it to jump to that node. ⟦Web citation⟧ means *from the web*: the source is listed under ⟦Sources⟧ and opens in a new tab.
-- **Images.** Paste an image (or drop one onto the panel) to ask about it, for example a photo of a kit's sprue or a page you're stuck on. PNG, JPEG, WebP and GIF work; up to 4 images per message, 5 MB each. A message can be just an image. Text is limited to 4000 characters.
+- **Images.** Paste an image (or drop one onto the panel) to ask about it, for example a photo of a kit's sprue or a page you're stuck on. PNG, JPEG, WebP and GIF work; up to 4 images per message, 5 MB each. A message can be just an image. Text is limited to 4000 characters (an emoji counts as one). One answer is written at a time per map, and an answer that stalls is stopped with `The answer took too long and was stopped.`
 - **Research suggestions.** When an answer shows a gap in your map, the chat may suggest a node to research. It never starts a job by itself: a suggestion is a button (⟦Research suggestion label⟧) that you click to queue the research, and it then appears in the jobs tray like any other job.
 - **Cost.** Each question is one model call, roughly a cent or two more when it searches the web. See [Cost](#7-cost).
 
