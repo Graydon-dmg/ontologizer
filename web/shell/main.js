@@ -17,6 +17,7 @@ import { mountFilter } from './ui/filter.js';
 import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
+import { computeInsets, sameInsets } from './insets.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -149,6 +150,36 @@ const mounts = [
 for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
+}
+
+// Tell the view how much room the floating panels take: --onto-inset-* on the mount element, and
+// an 'onto-insets' event there whenever they change (resize, panel open/close, legend collapse).
+/** @type {any} */
+let lastInsets = null;
+function publishInsets() {
+  const slot = $('view');
+  const shown = (/** @type {Element|null} */ el) => !!el && !(/** @type {HTMLElement} */ (el)).hidden
+    && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
+  const panels = ['topbar', 'legend', 'minimap'].map((id) => $(id));
+  const ex = $('explain');
+  panels.push(/** @type {HTMLElement} */ (ex.querySelector('.onto-explain') || ex));
+  const rects = panels.filter(shown).map((el) => el.getBoundingClientRect());
+  const ins = computeInsets({ w: innerWidth, h: innerHeight }, rects);
+  if (sameInsets(lastInsets, ins)) return;
+  lastInsets = ins;
+  for (const k of /** @type {const} */ (['top', 'right', 'bottom', 'left'])) slot.style.setProperty(`--onto-inset-${k}`, ins[k] + 'px');
+  slot.dispatchEvent(new CustomEvent('onto-insets', { detail: { ...ins } }));
+}
+{
+  let queued = false;
+  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; publishInsets(); }); } };
+  const watched = ['topbar', 'legend', 'minimap', 'explain'].map((id) => $(id));
+  if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(schedule); for (const el of watched) ro.observe(el); }
+  const mo = new MutationObserver(schedule);
+  for (const el of watched) mo.observe(el, { attributes: true, subtree: true, attributeFilter: ['hidden', 'class', 'style'] });
+  addEventListener('resize', schedule);
+  bus.on('view', () => { lastInsets = null; schedule(); });
+  bus.on('explain', schedule);
 }
 
 // Subscribe before mounting the view, so the layout is always fed before any view sees an event.
