@@ -1,0 +1,71 @@
+// @ts-check
+// The CLI as a function: main(argv, deps) -> exit code. Commands never call process.exit, so
+// tests run them in-process with fake deps.
+import { CliError, makeDeps } from './deps.js';
+
+// One file per command under ./commands/, each `export default { command, describe, builder, handler }`.
+const COMMANDS = [
+  'start', 'new', 'load', 'save', 'list', 'fuse', 'rosetta', 'explain', 'research',
+  'update', 'key', 'doctor', 'completion', 'complete',
+];
+
+async function loadCommands() {
+  const mods = [];
+  for (const name of COMMANDS) {
+    const url = new URL(`./commands/${name}.js`, import.meta.url);
+    try {
+      mods.push((await import(url.href)).default);
+    } catch (err) {
+      // A command file that does not exist yet is skipped; any other error is real.
+      if (/** @type {any} */ (err).code === 'ERR_MODULE_NOT_FOUND' && String(err).includes(url.pathname)) continue;
+      throw err;
+    }
+  }
+  return mods;
+}
+
+/**
+ * @param {string[]} argv  arguments after the program name
+ * @param {Partial<import('./deps.js').Deps>} [over]
+ * @returns {Promise<number>}
+ */
+export async function main(argv, over = {}) {
+  const deps = makeDeps(over);
+  const { default: yargs } = await import('yargs');
+  let code = 0;
+  let failed = false;
+  const cli = yargs(argv)
+    .scriptName('ontologizer')
+    .usage('$0 [command]\n\nA live, color-coded map of any topic, built by an LLM.')
+    .middleware((args) => {
+      args.deps = deps;
+    })
+    .strict()
+    .help()
+    .alias('h', 'help')
+    .version()
+    .exitProcess(false)
+    .showHelpOnFail(false)
+    .fail((msg, err) => {
+      failed = true;
+      if (err) throw err;
+      deps.stderr.write(`${msg}\nRun ontologizer --help for usage.\n`);
+      code = 1;
+    })
+    .wrap(Math.min(100, process.stdout.columns || 100));
+  for (const mod of await loadCommands()) cli.command(mod);
+  try {
+    await cli.parseAsync();
+    if (failed) return code || 1;
+    return typeof deps.exitCode === 'number' ? deps.exitCode : 0;
+  } catch (err) {
+    if (err instanceof CliError) {
+      if (err.message) deps.stderr.write(`${err.message}\n`);
+      return err.code;
+    }
+    if (/** @type {any} */ (err)?.name === 'ExitPromptError') return 130; // Ctrl-C inside a prompt
+    deps.stderr.write(`ontologizer: ${/** @type {any} */ (err)?.message ?? err}\n`);
+    if (deps.env.ONTOLOGIZER_DEBUG === '1') deps.stderr.write(`${/** @type {any} */ (err)?.stack}\n`);
+    return 1;
+  }
+}
