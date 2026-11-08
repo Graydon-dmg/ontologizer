@@ -359,16 +359,20 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     const served = new Promise((r) => { ready = r; });
     /** @type {Promise<void>|null} */
     let serving = null;
+    let failed = false;
+    /** @type {{ url: string, close: () => Promise<void> } | null} */
+    let childServer = null;
     /** Start the draft's server once. @param {string} draftId */
     const serveDraft = (draftId) => {
       if (serving || closed) return serving;
       run.draftId = draftId;
       serving = (async () => {
         const child = await startServer({ store, engine: await makeEngine(draftId), id: draftId, webDir, makeEngine });
-        if (closed) { await child.close(); return; }
+        if (closed || failed) { await child.close(); return; }
         children.add(child);
         run.url = child.url;
         ready(child.url);
+        childServer = child;
       })().catch(() => { ready(null); });
       return serving;
     };
@@ -382,7 +386,12 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
           store.append(id, { t: 'job.done', at: store.now(id),
             job: { ...job, ...(run.draftId ? { draftId: run.draftId } : {}), ...(run.url ? { url: run.url } : {}) } });
         } catch { /* store gone */ }
-      }, (/** @type {any} */ err) => {
+      }, async (/** @type {any} */ err) => {
+        // A failed fuse leaves no server behind for its half-made draft.
+        failed = true;
+        if (serving) await serving;
+        if (childServer) { children.delete(childServer); await childServer.close().catch(() => {}); }
+        run.url = null;
         const error = err && (err.status === 401 || err.name === 'AuthenticationError')
           ? 'Your Anthropic API key was rejected: run ontologizer key set'
           : String(err?.message ?? err);

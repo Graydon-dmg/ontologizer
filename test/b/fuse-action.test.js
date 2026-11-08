@@ -142,3 +142,25 @@ test('fuse: an engine without onDraft still answers with the url once fuse retur
   const faultyRouter = (/** @type {any} */ b) => (b.type === 'fuse' ? 400 : 202);
   assert.notEqual(faultyRouter({ type: 'fuse', with: 'manga' }), 202);
 });
+
+test('a fuse that fails after onDraft leaves no server running for the half-made draft', async () => {
+  const store = seeded();
+  /** @type {string|null} */ let draft = null;
+  const fuse = async (/** @type {string} */ a, /** @type {string} */ b, /** @type {any} */ opts) => {
+    draft = store.createDraft({}, 'half');
+    opts.onDraft(draft);
+    await new Promise((r) => setTimeout(r, 30));
+    throw new Error('No Anthropic API key: run ontologizer key set');
+  };
+  const srv = await startServer({ store, engine: { enqueue: () => 'j', fuse }, id: 'plastic-modeling', makeEngine: async () => ({ enqueue: () => 'j' }) });
+  const r = await act(srv.url, { type: 'fuse', with: 'manga', into: 'half' });
+  assert.equal(r.status, 202);
+  await new Promise((res) => setTimeout(res, 150));
+  assert.equal(store.read('plastic-modeling').jobs[r.body.jobId].state, 'failed');
+  assert.equal(store.sessions.get(/** @type {any} */ (draft)), null, 'a server is still registered for the failed draft');
+  // Planted fault: had the child stayed up, its session entry (live pid) would still be in sessions.json.
+  store.sessions.set('probe', { port: 1, pid: process.pid, startedAt: 0 });
+  assert.notEqual(store.sessions.get('probe'), null);
+  store.sessions.remove('probe');
+  await srv.close();
+});
