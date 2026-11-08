@@ -21,10 +21,12 @@
 //   setFocus(nodeId: string): void
 //   setLens(lensId: string|null): void
 //   setFilter(filter: { categories: string[]|null, maxDepth: number|null }): void
-//   highlight(nodeIds: string[] | null): void
-//                                      emphasise these nodes and the links between them, dim the
-//                                      rest; [] or null clears. (null added in 1.2.0 for the chat
-//                                      panel; a shell must not call a view that lacks the method.)
+//   highlight(nodeIds: string[]): void  [] clears
+//   cite?(nodeIds: string[] | null): void  optional (1.2.0, chat citations). Emphasise exactly these
+//                                      nodes plus the links between them, always show their labels,
+//                                      dim the rest; null clears. It survives incoming events and
+//                                      coexists with highlight() (cite wins visually on its nodes).
+//                                      The shell skips views that do not implement it.
 //   mountMinimap?(el: HTMLElement): void  optional
 //   unmount(): void
 
