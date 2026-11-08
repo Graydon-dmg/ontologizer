@@ -26,3 +26,27 @@
 #minimap.minimap-frame.collapsed { width: 24px; height: 24px; }
 .minimap-frame.collapsed > :not(.minimap-toggle) { display: none !important; }
 .minimap-toggle { position: absolute; top: 2px; right: 2px; z-index: 2; width: 18px; height: 18px; line-height: 14px; padding: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 3px; cursor: pointer; }
+
+.fuse { position: relative; }
+.fuse-btn { font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--muted) 50%, transparent); background: var(--panel); color: var(--fg); }
+.fuse-btn[aria-expanded="true"] { background: var(--fg); color: var(--bg); }
+.fuse-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: 300px; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+.fuse-pop[hidden] { display: none; }
+.fuse-head { font-weight: 600; }
+.fuse-pop input { background: var(--bg); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px; padding: 4px 8px; font: inherit; }
+.fuse-pop label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.fuse-list { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 4px; }
+.fuse-item { all: unset; display: flex; gap: 8px; align-items: center; padding: 5px 8px; cursor: pointer; }
+.fuse-item:hover, .fuse-item:focus-visible { background: var(--bg); }
+.fuse-item[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+.fuse-meta { margin-left: auto; font-size: 11px; opacity: .7; }
+.fuse-draft { font-size: 10px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; opacity: .8; }
+.fuse-empty { margin: 8px; color: var(--muted); font-size: 12px; }
+.fuse-msg { color: var(--muted); font-size: 12px; }
+.fuse-msg:empty { display: none; }
+.fuse-row { display: flex; gap: 6px; justify-content: flex-end; }
+.fuse-row button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 4px; cursor: pointer; border: 1px solid var(--muted); background: var(--panel); color: var(--fg); }
+.fuse-row button[type=submit] { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
+.fuse-row button[disabled] { opacity: .45; cursor: default; }
