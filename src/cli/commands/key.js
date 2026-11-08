@@ -20,7 +20,7 @@ export default {
     const deps = argv.deps;
     if (argv.action === 'set') {
       if (!deps.interactive) throw new CliError('ontologizer key set needs a terminal.');
-      await promptAndStoreKey({ keyring: deps.keyring, ask: deps.ask, stderr: deps.stderr });
+      await promptAndStoreKey({ keyring: deps.keyring, ask: deps.ask, stderr: deps.stderr, validate: deps.validateKey });
       const fromEnv = deps.env.ANTHROPIC_API_KEY;
       if (typeof fromEnv === 'string' && fromEnv.trim() !== '') {
         deps.stdout.write('Note: ANTHROPIC_API_KEY is set and takes precedence over the keychain.\n');

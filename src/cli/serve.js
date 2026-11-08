@@ -23,6 +23,7 @@ export async function engineFor({ deps, store, id, needKey }) {
       interactive: needKey ? deps.interactive : false,
       ask: deps.ask,
       stderr: deps.stderr,
+      validate: deps.validateKey,
     });
     client = await makeClient(key);
   } catch (err) {

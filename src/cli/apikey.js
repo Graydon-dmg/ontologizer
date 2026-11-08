@@ -15,6 +15,8 @@ export const NO_KEY_MSG =
   'No Anthropic API key. Run `ontologizer key set` in a terminal, or set ANTHROPIC_API_KEY.';
 export const NO_KEY_JOB_MSG = 'No Anthropic API key: run ontologizer key set';
 export const REJECTED_MSG = 'Your Anthropic API key was rejected: run ontologizer key set';
+export const PROMPT_REJECTED_MSG = 'That key was rejected by Anthropic. Check it and try again.';
+export const UNVERIFIED_MSG = 'Could not reach Anthropic to check the key; saving it anyway.';
 const KEY_PREFIX = 'sk-ant-';
 const MAX_TRIES = 3;
 
@@ -84,6 +86,25 @@ function storedKey(kr) {
   }
 }
 
+/**
+ * Check a key with a free call (models.list) before it is stored.
+ * 'ok': accepted. 'rejected': a 401 (or 403). 'unverified': anything else (no network, timeout,
+ * server error): the caller saves it with a warning. The error itself is never surfaced, so no
+ * message built from the request can carry the key.
+ * @param {string} key
+ * @returns {Promise<'ok'|'rejected'|'unverified'>}
+ */
+export async function checkKey(key) {
+  try {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: key, maxRetries: 1, timeout: 10_000 });
+    await client.models.list({ limit: 1 });
+    return 'ok';
+  } catch (/** @type {any} */ err) {
+    return err && (err.status === 401 || err.status === 403 || err.name === 'AuthenticationError') ? 'rejected' : 'unverified';
+  }
+}
+
 /** @param {{ message: string, mask: string }} opts */
 async function defaultAsk(opts) {
   const { password } = await import('@inquirer/prompts');
@@ -91,13 +112,15 @@ async function defaultAsk(opts) {
 }
 
 /**
- * Ask for a key with a masked prompt (3 tries, must start with "sk-ant-") and store it.
+ * Ask for a key with a masked prompt and store it. 3 tries in all: a key that does not start with
+ * "sk-ant-", or that Anthropic rejects (checked with a free call before storing), uses a try.
  * Used by getApiKey and by `ontologizer key set`.
  * @param {{ keyring: Keyring, ask?: ((opts: { message: string, mask: string }) => Promise<string>)|null,
- *           stderr?: { write(s: string): any } }} opts
+ *           stderr?: { write(s: string): any },
+ *           validate?: (key: string) => Promise<'ok'|'rejected'|'unverified'> }} opts
  * @returns {Promise<string>}
  */
-export async function promptAndStoreKey({ keyring, ask = null, stderr = process.stderr }) {
+export async function promptAndStoreKey({ keyring, ask = null, stderr = process.stderr, validate = checkKey }) {
   const askFn = ask ?? defaultAsk;
   for (let i = 0; i < MAX_TRIES; i++) {
     const raw = await askFn({ message: 'Anthropic API key:', mask: '*' });
@@ -106,6 +129,17 @@ export async function promptAndStoreKey({ keyring, ask = null, stderr = process.
       stderr.write('That does not look like an Anthropic API key (it starts with "sk-ant-").\n');
       continue;
     }
+    let verdict;
+    try {
+      verdict = await validate(key);
+    } catch {
+      verdict = 'unverified';
+    }
+    if (verdict === 'rejected') {
+      stderr.write(`${PROMPT_REJECTED_MSG}\n`);
+      continue;
+    }
+    if (verdict !== 'ok') stderr.write(`${UNVERIFIED_MSG}\n`);
     try {
       keyring.set(key);
       stderr.write('Saved to your system keychain.\n');
@@ -122,7 +156,8 @@ export async function promptAndStoreKey({ keyring, ask = null, stderr = process.
 /**
  * @param {{ keyring?: Keyring, env?: NodeJS.ProcessEnv, interactive?: boolean,
  *           ask?: ((opts: { message: string, mask: string }) => Promise<string>)|null,
- *           stderr?: { write(s: string): any } }} [opts]
+ *           stderr?: { write(s: string): any },
+ *           validate?: (key: string) => Promise<'ok'|'rejected'|'unverified'> }} [opts]
  * @returns {Promise<{ key: string, source: 'env'|'keychain'|'prompt' }>}
  */
 export async function getApiKey({
@@ -131,6 +166,7 @@ export async function getApiKey({
   interactive = Boolean(process.stdin.isTTY),
   ask = null,
   stderr = process.stderr,
+  validate = checkKey,
 } = {}) {
   // 1. env wins, and is checked before the keyring is touched at all.
   const fromEnv = env.ANTHROPIC_API_KEY;
@@ -144,7 +180,7 @@ export async function getApiKey({
   // 4. no TTY: never wait for input.
   if (!interactive) throw new Error(NO_KEY_MSG);
   // 3. ask once, store it.
-  const key = await promptAndStoreKey({ keyring: kr, ask, stderr });
+  const key = await promptAndStoreKey({ keyring: kr, ask, stderr, validate });
   return { key, source: 'prompt' };
 }
 
