@@ -1,7 +1,7 @@
 // @ts-check
 import {
   chatThread, pendingQuestion, answerCitations, starterQuestions, acceptImages, chatBody, postChat,
-  emptyAnswer, applyChatItem, suggestionAction, scaleSize, pickEncoding, MAX_IMAGES,
+  emptyAnswer, applyChatItem, suggestionAction, researchBusy, scaleSize, pickEncoding, MAX_IMAGES,
 } from '../chat.js';
 import { renderMarkdown } from '../chat-render.js';
 
@@ -189,8 +189,10 @@ export function mountChat(el, shell) {
     if (sugg.length) {
       const wrap = mk('div', 'chat-suggest');
       for (const s of sugg) {
-        const b = /** @type {HTMLButtonElement} */ (mk('button', 'chat-research', `Research ${o.nodes[s.nodeId].label}`));
+        const busyNow = researchBusy(o, s.nodeId);
+        const b = /** @type {HTMLButtonElement} */ (mk('button', 'chat-research', busyNow ? `Researching ${o.nodes[s.nodeId].label}…` : `Research ${o.nodes[s.nodeId].label}`));
         b.type = 'button';
+        b.disabled = busyNow;
         b.title = s.mode === 'general' ? 'Research this node in general (adds nodes to the map)' : 'Research this node in the context of this map (adds nodes)';
         b.addEventListener('click', () => { b.disabled = true; b.textContent = `Researching ${o.nodes[s.nodeId].label}…`; shell.act(suggestionAction(s)); });
         wrap.append(b);

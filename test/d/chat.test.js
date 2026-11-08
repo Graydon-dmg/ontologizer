@@ -5,8 +5,7 @@ import { readFileSync } from 'node:fs';
 import { foldAll } from '../../src/core/events.js';
 import {
   chatBody, postChat, parseInline, citationIds, acceptImages, createSSEParser, applyChatItem, emptyAnswer,
-  chatThread, pendingQuestion, starterQuestions, scaleSize, pickEncoding, suggestionAction, answerCitations,
-} from '../../web/shell/chat.js';
+  chatThread, pendingQuestion, starterQuestions, scaleSize, pickEncoding, suggestionAction, answerCitations, researchBusy } from '../../web/shell/chat.js';
 import { renderMarkdown } from '../../web/shell/chat-render.js';
 
 const ev = readFileSync(new URL('../../fixtures/plastic-modeling.events.jsonl', import.meta.url), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -170,4 +169,19 @@ test('images are downscaled to 1568 px on the long edge and re-encoded (PNG for 
   assert.deepEqual(scaleSize(800, 600), { w: 800, h: 600 });
   assert.equal(pickEncoding('image/png').mime, 'image/png');
   assert.deepEqual(pickEncoding('image/jpeg'), { mime: 'image/jpeg', quality: 0.85 });
+});
+
+test('researchBusy: a Research suggestion stays disabled while its job is queued or running', () => {
+  // Build the map the way the page does: fold real job events (job.state is set by events.js).
+  const job = (kind, nodeId) => ({ id: 'j1', kind, nodeId });
+  const after = (/** @type {string[]} */ ts, kind = 'research', nodeId = 'm/a') =>
+    foldAll(ts.map((t, i) => ({ t, at: i, job: job(kind, nodeId) })));
+  assert.equal(researchBusy(after(['job.queued']), 'm/a'), true);
+  assert.equal(researchBusy(after(['job.queued', 'job.started']), 'm/a'), true);
+  // planted faults: a finished job, another node, or another kind of job must not disable it
+  assert.equal(researchBusy(after(['job.queued', 'job.started', 'job.done']), 'm/a'), false);
+  assert.equal(researchBusy(after(['job.queued', 'job.started', 'job.failed']), 'm/a'), false);
+  assert.equal(researchBusy(after(['job.started'], 'research', 'm/b'), 'm/a'), false);
+  assert.equal(researchBusy(after(['job.started'], 'explain'), 'm/a'), false);
+  assert.equal(researchBusy({}, 'm/a'), false);
 });

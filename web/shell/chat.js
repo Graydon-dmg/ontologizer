@@ -220,6 +220,16 @@ export function applyChatItem(s, item) {
 }
 
 /** The research action a suggestion button sends (never sent automatically). */
+/**
+ * Is a research job for this node queued or running? The chat redraws when its saved copy arrives,
+ * so the Research suggestion button must read this from the map, not from its own click state.
+ * @param {any} ontology @param {string} nodeId @returns {boolean}
+ */
+export function researchBusy(ontology, nodeId) {
+  return Object.values(ontology?.jobs || {}).some((/** @type {any} */ j) =>
+    j && j.kind === 'research' && j.nodeId === nodeId && (j.state === 'queued' || j.state === 'running'));
+}
+
 export function suggestionAction(/** @type {{ nodeId: string, mode?: string }} */ s) {
   return { type: 'research', nodeId: s.nodeId, mode: s.mode === 'general' ? 'general' : 'context' };
 }
