@@ -18,6 +18,10 @@ const SCALE_EXTENT = /** @type {[number, number]} */ ([0.2, 4]);
 
 const DIM_TRANSITION = 'opacity 150ms';
 const RING_STEP = 90;
+/** Auto-fit (follow the build until the user zooms or pans): largest zoom, refit interval, margin. */
+const FIT_MAX_K = 1.5;
+const FIT_EVERY_MS = 500;
+const FIT_MARGIN = 0.88;
 
 /** @typedef {{ g: any, circle: any, ring: any, label: any, core: any, glyph: any, r: number, fill: string, hasArticle?: boolean,
  *   spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
@@ -80,6 +84,9 @@ class OntoGraph extends Base {
   /** @type {Map<string, Halo>} */ halos = new Map();
   maxRing = 0;
   /** @type {any[]} */ ringEls = [];
+  userMoved = false;
+  lastFit = 0;
+  /** @type {any} */ fitTimer = 0;
   /** @type {{ update(): void, unmount(): void }|null} */ minimap = null;
   /** @type {{ id: string, x: number, y: number }|null} */ dragging = null;
   k = 1;
@@ -118,6 +125,7 @@ class OntoGraph extends Base {
   buildSvg(el) {
     const svg = select(el).append('svg').attr('width', '100%').attr('height', '100%').style('position', 'absolute').style('inset', '0').style('display', 'block').style('touch-action', 'none');
     if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    svg.append('style').text('path, circle { vector-effect: non-scaling-stroke; }');
     const root = svg.append('g');
     this.layers = {
       root,
@@ -128,7 +136,10 @@ class OntoGraph extends Base {
       labels: root.append('g').attr('class', 'labels').style('pointer-events', 'none'),
     };
     this.svg = svg;
-    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).on('zoom', (/** @type {any} */ ev) => this.onZoom(ev.transform));
+    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).on('zoom', (/** @type {any} */ ev) => {
+      if (ev.sourceEvent) this.userMoved = true;
+      this.onZoom(ev.transform);
+    });
     svg.call(this.zoomBehavior).on('dblclick.zoom', null);
     svg.on('click', (/** @type {MouseEvent} */ ev) => {
       if (ev.target === svg.node()) this.ctx?.emit('select', { nodeId: null });
@@ -154,6 +165,38 @@ class OntoGraph extends Base {
     this.layers.root.attr('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
     this.refreshLabels();
     this.minimap?.update();
+    this.schedule();
+  }
+
+  /**
+   * Follow the build: while the user has not zoomed or panned, ease the view to fit every visible
+   * node (zoom capped at FIT_MAX_K so deeper labels stay hidden until the user zooms in).
+   * @param {Map<string,{x:number,y:number}>} cur
+   */
+  autoFit(cur) {
+    const now = performance.now();
+    if (this.userMoved || !cur.size) return;
+    if (now - this.lastFit < FIT_EVERY_MS) {
+      // re-check once the interval passes, so the final layout is always fitted
+      this.fitTimer ||= setTimeout(() => { this.fitTimer = 0; this.schedule(); }, FIT_EVERY_MS);
+      return;
+    }
+    this.lastFit = now;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [id, p] of cur) {
+      if (this.hidden.has(id)) continue;
+      const r = (this.nodes.get(id)?.r ?? 0) + 8;
+      minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r + 60); // room for the label
+      minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
+    }
+    const box = this.svg.node().getBoundingClientRect();
+    if (!box.width || !box.height || minX === Infinity) return;
+    const k = Math.max(SCALE_EXTENT[0], Math.min(FIT_MAX_K, FIT_MARGIN * Math.min(box.width / (maxX - minX), box.height / (maxY - minY))));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const t = zoomTransform(this.svg.node());
+    const sx = box.width / 2 - k * cx, sy = box.height / 2 - k * cy;
+    if (Math.abs(t.k - k) / k < 0.03 && Math.abs(t.x - sx) < 15 && Math.abs(t.y - sy) < 15) return;
+    this.svg.transition('fit').duration(FIT_EVERY_MS * 0.9).call(this.zoomBehavior.transform, zoomIdentity.translate(sx, sy).scale(k));
   }
 
   /** @param {import('../../../src/core/events.js').OntoEvent} event */
@@ -258,7 +301,7 @@ class OntoGraph extends Base {
     glyph.append('rect').attr('x', -3).attr('y', -4).attr('width', 6).attr('height', 8).attr('fill', 'none');
     glyph.append('path').attr('d', 'M-3,-4 H1 L3,-2 V4 H-3 Z M1,-4 V-2 H3').attr('fill', 'none').attr('stroke', THEME.dark.bg).attr('stroke-width', 0.8).attr('stroke-linejoin', 'round');
     g.style('transition', DIM_TRANSITION);
-    const label = this.layers.labels.append('text').attr('font-size', 11).attr('font-family', 'system-ui, sans-serif')
+    const label = this.layers.labels.append('text').attr('x', 5).attr('font-size', 11.5).attr('font-family', 'system-ui, sans-serif')
       .attr('fill', THEME.dark.fg).attr('stroke', THEME.dark.bg).attr('stroke-width', 3).attr('stroke-linejoin', 'round')
       .attr('paint-order', 'stroke').attr('dy', '0.35em').text(node.label);
     label.style('transition', DIM_TRANSITION);
@@ -440,6 +483,7 @@ class OntoGraph extends Base {
     if (!this.ctx) return;
     const pos = this.ctx.layout.positions();
     const now = performance.now();
+    const inv = 1 / this.k; // labels and badges keep a constant on-screen size
     let animating = false;
     /** @type {Map<string,{x:number,y:number}>} */
     const cur = new Map();
@@ -452,18 +496,19 @@ class OntoGraph extends Base {
       nv.g.attr('transform', `translate(${p.x},${p.y})`);
       nv.circle.attr('r', nv.r);
       nv.ring.attr('r', nv.r + 3);
-      nv.label.attr('x', p.x + nv.r + 4).attr('y', p.y);
+      nv.label.attr('transform', `translate(${p.x + nv.r},${p.y}) scale(${inv})`);
       const hid = this.hidden.has(id);
       nv.g.style('display', hid ? 'none' : null);
       const showCore = nv.hasArticle && !hid;
       nv.core.attr('r', nv.r * 0.45).style('display', showCore ? null : 'none');
       nv.glyph.style('display', showCore && nv.r >= 8 ? null : 'none');
       const gh = this.ghosts.get(id);
-      if (gh) gh.attr('x', p.x).attr('y', p.y + nv.r + 12).style('display', hid ? 'none' : null);
+      if (gh) gh.attr('transform', `translate(${p.x},${p.y + nv.r}) scale(${inv})`).style('display', hid ? 'none' : null);
       const b = this.badges.get(id);
-      if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75})`).style('display', hid ? 'none' : null);
+      if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75}) scale(${inv})`).style('display', hid ? 'none' : null);
     }
     this.renderHalos(cur);
+    this.autoFit(cur);
     const fp = cur.get(this.ctx.snapshot().view.focus);
     if (fp) for (const el of this.ringEls) el.attr('cx', fp.x).attr('cy', fp.y);
     this.renderLinks(cur);
@@ -547,7 +592,7 @@ class OntoGraph extends Base {
       if (old) { old.remove(); this.ghosts.delete(id); }
       return;
     }
-    const t = old || this.layers.labels.append('text').attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
+    const t = old || this.layers.labels.append('text').attr('y', 13).attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
       .attr('fill', THEME.dark.muted).attr('opacity', 0.85).attr('text-anchor', 'middle').attr('stroke', THEME.dark.bg).attr('stroke-width', 3)
       .attr('stroke-linejoin', 'round').attr('paint-order', 'stroke').style('transition', DIM_TRANSITION);
     t.text(a.breaks ? `${a.label} \u26A0` : a.label);
@@ -568,6 +613,7 @@ class OntoGraph extends Base {
   /** @param {string} nodeId */
   setFocus(nodeId) {
     if (!this.ctx || !this.nodes.has(nodeId)) return;
+    this.userMoved = true;
     this.refreshRings();
     this.refreshLabels();
     const p = this.currentPos(nodeId, this.ctx.layout.positions());
@@ -615,7 +661,7 @@ class OntoGraph extends Base {
         const r = this.svg.node().getBoundingClientRect();
         return { width: r.width, height: r.height };
       },
-      panTo: (t) => this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k)),
+      panTo: (t) => (this.userMoved = true) && this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k)),
     });
   }
 
@@ -626,6 +672,7 @@ class OntoGraph extends Base {
     this.resizeObs = null;
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
+    clearTimeout(this.fitTimer);
     this.minimap?.unmount();
     this.minimap = null;
     this.svg?.remove();
