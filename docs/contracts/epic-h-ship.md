@@ -42,7 +42,7 @@ The README, in this order, kept short:
 2. Install and first run.
 3. Every command, from `ontologizer --help`.
 4. How it works, in five lines: the context check, streaming waves, the event log, views, fuse and Rosetta.
-5. Requirements: Node 20+, an Anthropic API key (asked for on first run and kept in your system keychain; `ANTHROPIC_API_KEY` overrides it; `ontologizer key set|clear` to change it). Notes on cost and privacy:
+5. Requirements: Node 22+, an Anthropic API key (asked for on first run and kept in your system keychain; `ANTHROPIC_API_KEY` overrides it; `ontologizer key set|clear` to change it). Notes on cost and privacy:
    - each map makes a dozen or so model calls;
    - topics and maps are sent to the Anthropic API;
    - maps are stored in `~/.ontologizer/`.
