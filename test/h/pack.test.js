@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REQUIRED, packedFiles, auditPack, checkShebang } from './pack.js';
+import { REQUIRED, REQUIRED_DIRS, packedFiles, auditPack, checkShebang } from './pack.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -32,7 +32,7 @@ function audit(/** @type {string[]} */ files, /** @type {Record<string, string>}
 }
 
 test('real package ships the required files and nothing it should not', () => {
-  assert.deepEqual(auditPack(repoRoot, packedFiles(repoRoot), REQUIRED), []);
+  assert.deepEqual(auditPack(repoRoot, packedFiles(repoRoot), REQUIRED, REQUIRED_DIRS), []);
 });
 
 test('planted fault: files field leaves out web/ is reported', () => {
@@ -81,4 +81,23 @@ test('planted fault: the dev harness and internal .md docs are reported', () => 
   assert.deepEqual(audit(['src', 'web', 'fixtures'], extra).sort(),
     ['dev harness packed: web/dev/index.html', 'internal doc packed: web/shell/API.md']);
   assert.deepEqual(audit(['src', 'web', '!web/dev', '!web/shell/API.md', 'fixtures'], extra), []); // the real files field's negations work
+});
+
+test('planted fault: brand assets left out, or docs/brand shipped, are reported', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'h-brand-'));
+  const write = (/** @type {string} */ p, /** @type {string} */ t) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), t); };
+  try {
+    write('web/shared/brand/mark.svg', '<svg/>\n');
+    write('docs/brand/lockup.svg', '<svg/>\n');
+    write('src/cli/index.js', '#!/usr/bin/env node\n');
+    const run = (/** @type {string[]} */ files) => {
+      write('package.json', JSON.stringify({ name: 'h-brand', version: '0.0.0', files }));
+      return auditPack(dir, packedFiles(dir), [], REQUIRED_DIRS);
+    };
+    assert.deepEqual(run(['src', 'web']), []); // positive control: brand ships, docs/brand does not
+    assert.deepEqual(run(['src', 'web', '!web/shared/brand']), ['missing required folder: web/shared/brand/']);
+    assert.deepEqual(run(['src', 'web', 'docs']), ['unexpected file packed: docs/brand/lockup.svg']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
