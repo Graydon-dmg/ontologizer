@@ -13,5 +13,6 @@
 .lens-switcher[hidden] { display: none; }
 .minimap-frame { position: relative; background: var(--panel); border: 1px solid var(--muted); border-radius: 4px; }
 .minimap-frame > :not(.minimap-toggle) { display: block; }
-.minimap-frame.collapsed > :not(.minimap-toggle) { display: none; }
+#minimap.minimap-frame.collapsed { width: 24px; height: 24px; }
+.minimap-frame.collapsed > :not(.minimap-toggle) { display: none !important; }
 .minimap-toggle { position: absolute; top: 2px; right: 2px; z-index: 2; width: 18px; height: 18px; line-height: 14px; padding: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--muted); border-radius: 3px; cursor: pointer; }

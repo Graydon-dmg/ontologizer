@@ -5,7 +5,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
 #view > * { display: block; width: 100%; height: 100%; }
 .no-view { display: flex !important; align-items: center; justify-content: center; color: var(--muted); font-size: 15px; }
 /* The top bar wraps: lower-priority controls move to a second row instead of overlapping. */
-#topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10; display: flex; flex-wrap: wrap; align-items: center;
+#topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 20; display: flex; flex-wrap: wrap; align-items: center;
   gap: 6px 10px; padding: 6px 10px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
   border-radius: 8px; box-sizing: border-box; pointer-events: auto; }
 #map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
