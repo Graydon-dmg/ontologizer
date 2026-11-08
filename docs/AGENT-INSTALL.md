@@ -57,6 +57,8 @@ Follow these steps in order. Do not skip ahead.
    - `ontologizer load demo --replay` (offline, no key needed)
    - `ontologizer new` (builds a new map with Claude)
 
+   Once a map is open, the human can click **Ask the map** in the page to ask it questions. Do **not** call the page's `/api/chat` endpoint for them unless they ask you to: every question spends their Anthropic credits.
+
    If you want to confirm the demo starts, run it in the background for a few seconds, check that it prints `Serving … at http://127.0.0.1:<port>/`, then stop it.
 
 ## Optional: shell completion

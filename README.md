@@ -24,6 +24,10 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
 
 ![Ontologizer's 2D graph mid-build](https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/docs/screenshot.png)
 
+- **A live map of any topic**, drawn in your browser as Claude builds it, in 2D or 3D.
+- **Ask the map**: ask questions in words or with an image, and get answers that cite the map's nodes, with web sources when the map runs out.
+- **Grow, fuse and re-explain**: research or explain any node, fuse two maps, or see a map through a field you already know (Rosetta).
+
 ## Install
 
 **Easiest:** point your coding agent (Claude Code, Codex, Cursor...) at [docs/AGENT-INSTALL.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/AGENT-INSTALL.md) and ask it to install Ontologizer.
@@ -56,7 +60,13 @@ ontologizer new
 
 You will see a few context check questions, then the map streams in live in your browser. When you like it, save it with `ontologizer save [name]`.
 
-Then click **Chat** to ask the map questions: answers cite your map's nodes and, when needed, the web. Paste an image to ask about it.
+Then ask it something:
+
+1. Click **Ask the map** (top bar, right of Search).
+2. Type a question, or paste or drop an image, and press Enter.
+3. Click a cited node to see it on the map.
+
+Claude reads an outline of the whole map, searches it with a map-search tool, cites the nodes it used (click one to see it on the map), and searches the web for facts the map lacks, with links. No embeddings and no extra key: it uses the same Anthropic key.
 
 No key or network yet? Run `ontologizer load demo --replay` to watch the bundled demo build itself offline.
 

@@ -104,7 +104,7 @@ A lens re-explains your map for a persona. For each node, Claude names an **anal
 
 ### Chat: ask your map
 
-Click **Chat** in the top bar to open the chat pane beside the map. Ask anything about the map in plain words, for example *"Which of these tools does a beginner actually need first?"*. An empty chat says `Ask anything about this map. Answers point to the nodes they use.` and offers three starter questions you can click.
+Click **Ask the map** in the top bar, right of Search (on narrow screens it just says **Ask**). The **Chat** pane opens beside the map. Ask anything about the map in plain words, for example *"Which of these tools does a beginner actually need first?"*. An empty chat says `Ask anything about this map. Answers point to the nodes they use.` and offers three starter questions you can click.
 
 Type in **Ask about this map…** and press **Send** (or Enter; Shift+Enter starts a new line). The chat is saved with the map, and the last 10 exchanges are sent along with each new question, so follow-ups work.
 
@@ -113,6 +113,7 @@ Type in **Ask about this map…** and press **Send** (or Enter; Shift+Enter star
 - **From the web.** Facts from the web are links in the text, and every page used is listed under **From the web** at the end of the answer. Links open in a new tab.
 - **Images.** Click **Add image**, or paste or drop images onto the pane, to ask about a screenshot or photo. PNG, JPEG, WebP and GIF work; up to 4 images per message, 5 MB each. A message can be just an image. Text is limited to 4000 characters (an emoji counts as one).
 - **Research suggestions.** When your map is thin on something, an answer may end with up to three buttons such as **Research Adhesives**. The chat never starts a job by itself: a suggestion runs only when you click it. It then shows `Researching Adhesives…`, and the job appears in the jobs tray like any other research.
+- **How the search works.** Claude reads an outline of the whole map, searches it with a map-search tool, cites the nodes it used (click one to see it on the map), and searches the web for facts the map lacks, with links. No embeddings and no extra key: it uses the same Anthropic key. Each question is one strong-model conversation of up to 6 steps: about a cent or two, a little more with web search or images.
 - **Limits.** One answer is written at a time per map. An answer that stalls is stopped with `The answer took too long and was stopped.`
 - **Privacy.** The pane says it plainly: `Questions and images are sent to Anthropic. Images are saved with this map.` See [Privacy](#8-privacy).
 - **Cost.** Each question is one strong-model conversation: roughly a cent or two, a little more with web search or images. See [Cost](#7-cost).
@@ -292,7 +293,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
 | **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
-| **Chat** | *Ask questions about this map; add screenshots or photos* (its tooltip). Opens the chat pane. See [Chat: ask your map](#chat-ask-your-map). |
+| **Ask the map** | *Ask questions about this map; add screenshots or photos* (its tooltip). Shows **Ask** on narrow screens. Opens the **Chat** pane. See [Chat: ask your map](#chat-ask-your-map). |
 | **Fuse** | *Make a new map that joins this one with another saved map* (its tooltip). The new draft opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |

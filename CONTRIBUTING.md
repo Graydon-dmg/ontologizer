@@ -52,6 +52,19 @@ The key stays in that one command's environment. Never echo it, and never paste 
 | `scripts/` | `test.js` (test runner) and `dev-server.js` |
 | `docs/contracts/` | The build contracts the project was made from. Start with `README.md`; `epic-a-contract.md` describes the shared pieces |
 
+## Where the chat lives
+
+"Ask the map" is split the same way as everything else:
+
+| Path | What |
+|---|---|
+| `src/core/engine/chat.js` | `engine.ask`: the streamed model loop and its map tools (`search_map`, `get_node`) plus web search |
+| `src/core/engine/prompts-chat.js` | the chat prompts |
+| `src/server/chat.js` | `POST /api/chat`: body cap, image checks, attachment storage, streaming the answer |
+| `web/shell/ui/chat.js` | the **Ask the map** button and the Chat pane |
+
+The rule for the chat's tools: **they only read.** `search_map` and `get_node` look things up in the map and never change it, and the model can't start a job. A research suggestion runs only when the reader clicks it. Keep any new chat tool read-only.
+
 ## The idea in one paragraph
 
 A map is an append-only log of events (`ontology.created`, `node.added`, `edge.added`, `job.done`, and so on). One function, `fold` in `src/core/events.js`, turns that log into the current map. The engine only writes new events, and only through the store. Views only draw what the events say and report clicks back. Nothing else changes a map.

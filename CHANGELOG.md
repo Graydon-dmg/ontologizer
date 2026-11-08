@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- **Chat with your map.** A **Chat** pane answers questions about the whole map, citing the nodes it used and, when needed, the web. Paste or drop images to ask about them. It can suggest research but never starts a job on its own.
-- Key is checked with Anthropic before it's saved; API address pinned to api.anthropic.com unless ANTHROPIC_BASE_URL is a secure address.
+- **Ask the map.** A new **Ask the map** button opens a Chat pane. Ask in words or with images (paste, drop or add up to 4), and the answer cites the map's nodes (click one to see it) and lists web sources for anything the map lacks. It can suggest research, but never starts a job on its own.
+- **Cited nodes light up** in both the 2D and the 3D view.
+- **Safer API key setup.** The key is checked with Anthropic before it's saved, and the API address is pinned to api.anthropic.com unless ANTHROPIC_BASE_URL is a secure address.
+- **Hardened chat endpoint.** `/api/chat` caps the request size, checks image types from the file bytes, writes one answer per map at a time, stops stalled answers, and serves images back sandboxed.
 
 ## 1.1.0 (2026-11-08)
 
