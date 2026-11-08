@@ -21,6 +21,11 @@ export function lensSlug(persona) {
   return last.toLowerCase() || 'lens';
 }
 
+/** @param {string} s */
+function slugName(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+
 /**
  * @param {import('../schema.js').Ontology} ontology
  * @returns {{ id: string, path: string, summary: string }[]}
@@ -54,12 +59,14 @@ export async function rosetta(ctx, ontologyId, persona, { name } = {}) {
     throw new Error('rosetta: persona is empty (who should the lens explain this to?)');
   }
   persona = persona.trim();
+  if (persona.length > 200) throw new Error('rosetta: persona is too long (200 characters at most)');
   const ontology = ctx.store.read(ontologyId);
   const all = nodeInputs(ontology);
   if (!all.length) throw new Error('rosetta: the ontology has no nodes to explain');
 
   const startedAt = Date.now();
-  const base = name ? String(name) : lensSlug(persona);
+  // name may come from the browser: keep it to a kebab-case slug.
+  const base = (name && slugName(String(name))) || lensSlug(persona);
   let lensId = base;
   for (let n = 2; ontology.lenses[lensId]; n++) lensId = `${base}-${n}`;
 
