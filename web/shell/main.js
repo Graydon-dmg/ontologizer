@@ -232,6 +232,7 @@ source.subscribe((event, ontology) => {
   try { activeView?.apply(event); } catch (err) { console.error('[shell] view.apply failed', err); }
   const mapName = ontology?.name || source.snapshot().name || '';
   $('map-name').textContent = mapName;
+  $('map-name').title = mapName; // the full name when it is truncated
   const title = mapName ? `${mapName} · Ontologizer` : 'Ontologizer';
   if (document.title !== title) document.title = title;
   $('loading').hidden = true; // the first event ends the loading state

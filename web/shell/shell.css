@@ -27,8 +27,16 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
   #map-name { max-width: 8rem; }
   .view-toggle button, .seg button { padding: 3px 9px; }
 }
-/* the tightest one-row band: a long map name truncates hard rather than wrap the bar */
-@media (min-width: 1101px) and (max-width: 1366px) { #map-name { max-width: 3rem; } }
+/* The tightest one-row band (1280-1366): "Ask" instead of "Ask the map" and no ⓘ beside the theme
+   switch, so a long map name still gets ~7rem (the full name is its tooltip). Below 1280 the bar
+   wraps anyway, so the name gets its 8rem back. */
+@media (min-width: 1280px) and (max-width: 1366px) {
+  #map-name { max-width: 7rem; }
+  .chat-btn { padding: 0 9px; gap: 4px; }
+  .chat-btn-long { display: none; }
+  .chat-btn-short { display: inline; }
+  #theme-switcher .info { display: none; }
+}
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
