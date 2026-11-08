@@ -3,10 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-// Required in the published tarball. `src/cli/index.js` (Epic B), `web/index.html` (Epic D) and
+// Required in the published tarball. `src/cli/index.js` (Epic B) and
 // `fixtures/demo.events.jsonl` (Epic H recording) are added by the lead when each one lands on main.
 // No "skip if missing" logic on purpose: a skip would hide a missing file at publish time.
-export const REQUIRED = ['web/shared/importmap.json'];
+export const REQUIRED = ['web/shared/importmap.json', 'web/index.html'];
 
 /** @param {string} dir @returns {string[]} relative paths `npm pack` would ship */
 export function packedFiles(dir) {
