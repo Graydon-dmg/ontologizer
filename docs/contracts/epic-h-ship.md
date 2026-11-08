@@ -46,7 +46,7 @@ The README, in this order, kept short:
    - each map makes a dozen or so model calls;
    - topics and maps are sent to the Anthropic API;
    - maps are stored in `~/.ontologizer/`.
-6. License: Apache-2.0 (see LICENSE, NOTICE, TRADEMARKS.md).
+6. License: MIT (see LICENSE; name and logo: TRADEMARKS.md).
 
 ## Work
 

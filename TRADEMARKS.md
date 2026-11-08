@@ -2,12 +2,12 @@
 
 "Ontologizer" and the Ontologizer logo are trademarks of Graydon Garden.
 
-The code in this repository is licensed under the Apache License, Version 2.0 (`LICENSE`). That licence does **not** grant rights to the name or the logo (Apache-2.0, section 6). This policy covers them instead.
+The MIT licence covers the code. It does not grant rights to the Ontologizer name or logo. This policy covers them instead.
 
 ## What this policy covers
 
 - the name "Ontologizer";
-- the logo and every file in `web/shared/brand/` (the symbol, the lockup, the favicons and icons) and `docs/brand/`. These files are covered by this policy, **not** by Apache-2.0.
+- the logo and every file in `web/shared/brand/` (the symbol, the lockup, the favicons and icons) and `docs/brand/`. These files are covered by this policy, **not** by the MIT licence.
 
 ## You may
 

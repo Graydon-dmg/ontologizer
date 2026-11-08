@@ -24,7 +24,7 @@ Nothing in this epic draws a real view, calls the model at run time, or touches 
 
 ## You own
 
-- `package.json`, `.gitignore`, `LICENSE` (Apache-2.0), `NOTICE`, `TRADEMARKS.md`, `THIRD_PARTY_NOTICES.md` (generated), `.claude/settings.json`, `CLAUDE.md`
+- `package.json`, `.gitignore`, `LICENSE` (MIT), `TRADEMARKS.md`, `THIRD_PARTY_NOTICES.md` (generated), `.claude/settings.json`, `CLAUDE.md`
 - `src/core/schema.js`, `src/core/events.js`, `src/core/index.js`, `src/core/vendor.js`
 - `web/shared/` (view standard, tokens, layout, import map)
 - `web/views/index.js`
@@ -99,7 +99,7 @@ docs/contracts/               these files
   },
   "files": ["src", "web", "fixtures", "README.md", "LICENSE"],
   "engines": { "node": ">=22" },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "scripts": {
     "check": "node scripts/test.js test",
     "check:a": "node scripts/test.js test/a",

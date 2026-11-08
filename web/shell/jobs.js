@@ -5,7 +5,7 @@ const ORDER = { running: 0, queued: 1, failed: 2, done: 3 };
 
 /**
  * @param {Ontology} ontology
- * @returns {{ id: string, kind: string, nodeId?: string, label: string, state: string, error?: string }[]}
+ * @returns {{ id: string, kind: string, nodeId?: string, label: string, state: string, error?: string, with?: string }[]}
  */
 export function jobRows(ontology) {
   const lensPersonas = Object.values(ontology.lenses || {}).map((l) => l.persona || l.id);
@@ -22,6 +22,7 @@ export function jobRows(ontology) {
           : (j.nodeId && ontology.nodes[j.nodeId] && ontology.nodes[j.nodeId].label) || '',
         state: j.state,
         error: j.error,
+        with: /** @type {any} */ (j).with,
       },
     }))
     .sort((a, b) => (ORDER[a.row.state] ?? 4) - (ORDER[b.row.state] ?? 4) || a.i - b.i)
@@ -35,6 +36,7 @@ const VERB = { build: 'Building', explain: 'Explaining', research: 'Researching'
  * @param {{ kind: string, label: string, error?: string }} row
  */
 export function jobText(row) {
+  if (row.kind === 'fuse') return `Fusing with ${/** @type {any} */ (row).withName || /** @type {any} */ (row).with || 'another map'}${row.error ? ' (' + row.error + ')' : ''}`;
   if (row.kind === 'rosetta') return `Building lens${row.label ? ': ' + row.label : ''}${row.error ? ' (' + row.error + ')' : ''}`;
   const verb = Object.prototype.hasOwnProperty.call(VERB, row.kind) ? VERB[/** @type {keyof typeof VERB} */ (row.kind)] : row.kind;
   return `${verb}${row.label ? ' ' + row.label : ''}${row.error ? ' (' + row.error + ')' : ''}`;

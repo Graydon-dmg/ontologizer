@@ -277,7 +277,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
 | **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
-| **Fuse** | Fuse this map with another saved map into a new draft, which opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
+| **Fuse** | *Make a new map that joins this one with another saved map* (its tooltip). The new draft opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
 | **Jobs tray** | Running and recent jobs (see Concepts). |

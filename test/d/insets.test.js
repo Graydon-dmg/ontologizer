@@ -46,3 +46,16 @@ test('the jobs tray counts too: bottom or right, whichever costs less', () => {
   const bad = computeInsets(vp, [{ left: 10, top: 10, right: 680, bottom: 80 }]);
   assert.throws(() => assert.ok(bad.bottom >= 148 || bad.right >= 268));
 });
+
+import { tickerStrip } from '../../web/shell/insets.js';
+
+test('the ticker strip is reserved at the bottom, the same whether a line shows or not', () => {
+  const vp = { w: 1400, h: 900 };
+  const bar = { left: 10, top: 10, right: 1100, bottom: 50 };
+  const a = computeInsets(vp, [bar, tickerStrip(vp.w, vp.h)]);
+  assert.ok(a.bottom >= 40 && a.bottom <= 50, JSON.stringify(a));
+  assert.equal(a.left, 0, 'charged to the bottom (cheap), not the left');
+  // planted fault: a strip that follows the ticker text would change with each line
+  const emptyTicker = computeInsets(vp, [bar]);
+  assert.throws(() => assert.deepEqual(emptyTicker, a));
+});

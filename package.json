@@ -1,6 +1,6 @@
 {
   "name": "ontologizer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Give it a topic and watch the whole field draw itself: a live, color-coded map of any topic, built by an LLM.",
   "keywords": [
     "ontology",
@@ -34,14 +34,13 @@
     "fixtures",
     "README.md",
     "LICENSE",
-    "NOTICE",
     "THIRD_PARTY_NOTICES.md",
     "TRADEMARKS.md"
   ],
   "engines": {
     "node": ">=22"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "publishConfig": {
     "access": "public",
     "provenance": true
