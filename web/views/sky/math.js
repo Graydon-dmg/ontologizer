@@ -166,3 +166,42 @@ export function placeLabels(cands, { pad = 2, keep = 1, altPlaced = null } = {})
   }
   return out;
 }
+
+/**
+ * Chat citations: exactly the cited nodes that exist, and the ids of cross-links whose BOTH
+ * ends are cited. Neighbours are not included (unlike a search highlight).
+ * @param {string[]|null} ids
+ * @param {{ nodes: Record<string, unknown>, edges?: { id: string, from: string, to: string }[] }} ontology
+ * @returns {{ nodes: Set<string>, edges: Set<string> }|null}  null when nothing is cited
+ */
+export function citedSets(ids, ontology) {
+  if (!ids || !ids.length) return null;
+  const nodes = new Set(ids.filter((id) => Object.prototype.hasOwnProperty.call(ontology.nodes, id)));
+  if (!nodes.size) return null;
+  const edges = new Set();
+  for (const e of ontology.edges || []) if (nodes.has(e.from) && nodes.has(e.to)) edges.add(e.id);
+  return { nodes, edges };
+}
+
+/**
+ * Mean of world points; null for none.
+ * @param {Vec3[]} pts
+ * @returns {Vec3|null}
+ */
+export function centroid(pts) {
+  if (!pts.length) return null;
+  const c = [0, 0, 0];
+  for (const p of pts) { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; }
+  return /** @type {Vec3} */ (c.map((v) => v / pts.length));
+}
+
+/**
+ * True when every projected point (normalised device coordinates, as from three's
+ * Vector3.project) falls outside the visible screen or behind the camera. Empty -> false.
+ * @param {{ x: number, y: number, z: number }[]} ndc
+ * @returns {boolean}
+ */
+export function allOffscreen(ndc) {
+  if (!ndc.length) return false;
+  return ndc.every((p) => p.z > 1 || p.x < -1 || p.x > 1 || p.y < -1 || p.y > 1);
+}
