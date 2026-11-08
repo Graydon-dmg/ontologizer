@@ -89,3 +89,16 @@ test('toWorld centers the bounds and scales the larger side to size; y becomes z
   assert.deepEqual(toWorld({ x: 5, y: 5 }, { minX: 5, minY: 5, maxX: 5, maxY: 5 }, 400), [0, 0, 0]);
   assert.deepEqual(boundsOf(new Map()), { minX: 0, minY: 0, maxX: 0, maxY: 0 });
 });
+
+// ---------- truncate (lens analog labels) ----------
+import { truncate } from '../../web/views/sky/math.js';
+
+test('truncate keeps short text, cuts long text to at most max characters with an ellipsis', () => {
+  assert.equal(truncate('mise en place'), 'mise en place');
+  const long = 'deglazing the pan with a splash of dry white wine';
+  const t = truncate(long, 30);
+  assert.ok(t.length <= 30, t);
+  assert.ok(t.endsWith('…'));
+  assert.ok(long.startsWith(t.slice(0, -1)));
+  assert.equal(truncate('x'.repeat(40), 30).length, 30);
+});

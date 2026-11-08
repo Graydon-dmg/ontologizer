@@ -118,3 +118,18 @@ export function arcPoints(from, to, height, n = 24) {
   }
   return pts;
 }
+
+/**
+ * Cut text to at most `max` characters, ending with an ellipsis when cut. Cuts at a word
+ * boundary when one falls in the last third, so "a slow-reduced pan sauce with" never ends mid-word.
+ * @param {string} text
+ * @param {number} [max]
+ * @returns {string}
+ */
+export function truncate(text, max = 30) {
+  const s = String(text ?? '').trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const sp = cut.lastIndexOf(' ');
+  return (sp >= Math.floor((max - 1) * 2 / 3) ? cut.slice(0, sp) : cut).trimEnd() + '…';
+}
