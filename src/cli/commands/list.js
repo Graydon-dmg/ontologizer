@@ -12,8 +12,8 @@ export default {
     }
     for (const r of rows) {
       const when = new Date(r.updatedAt).toISOString();
-      const tail = r.draft ? `  (draft)  ${r.id}` : '';
-      deps.stdout.write(`${r.name}  ${r.nodes} nodes  ${when}${tail}\n`);
+      const title = r.name && r.name !== r.id ? `  ${r.name}` : '';
+      deps.stdout.write(`${r.id}${r.draft ? '  (draft)' : ''}${title}  ${r.nodes} nodes  ${when}\n`);
     }
   },
 };

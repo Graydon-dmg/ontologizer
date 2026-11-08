@@ -22,10 +22,10 @@ function savedNames() {
     const home = process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer');
     const idx = JSON.parse(fs.readFileSync(path.join(home, 'index.json'), 'utf8'));
     const out = new Set();
+    // Complete ids: a saved map's id is the kebab-case name the user types; the row's `name` is
+    // the display name ("Plastic modeling") and never matches what is typed.
     for (const o of Array.isArray(idx?.ontologies) ? idx.ontologies : []) {
-      if (o && o.draft) {
-        if (typeof o.id === 'string') out.add(o.id);
-      } else if (o && typeof o.name === 'string') out.add(o.name);
+      if (o && typeof o.id === 'string') out.add(o.id);
     }
     return [...out].sort();
   } catch {

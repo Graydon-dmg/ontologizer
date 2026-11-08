@@ -18,8 +18,9 @@ function seed(/** @type {string} */ home, n = 50) {
   const ontologies = [];
   for (let i = 0; i < n; i++) {
     const name = i === 7 ? 'plastic-modeling' : `topic-${String(i).padStart(2, '0')}`;
-    ontologies.push({ id: `id${i}`, name, root: name, nodes: 3, updatedAt: 1, draft: false });
-    const d = path.join(home, 'ontologies', `id${i}`);
+    // Real layout: a saved map's id is its kebab name; the row's name is the display name.
+    ontologies.push({ id: name, name: name.replace(/-/g, ' '), root: name, nodes: 3, updatedAt: 1, draft: false });
+    const d = path.join(home, name);
     fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(d, 'snapshot.json'), '{{{ not json');
   }
@@ -128,4 +129,23 @@ test('update notice: shows with cached newer version; silent and no fetch with N
   // @ts-ignore
   checkForUpdate({ deps: c, current: '0.1.0' });
   assert.equal(c.stderr.out, ''); assert.equal(fetched, 0);
+});
+
+test('completion offers the id of a map saved through the real store (display name differs)', async () => {
+  const { openStore } = await import('../../src/core/store.js');
+  const { tempHome, fixtureEvents } = await import('./helpers.js');
+  const home = tempHome();
+  const store = openStore(home);
+  store.importEvents('plastic-modeling', fixtureEvents('plastic-modeling'));
+  store.flush('plastic-modeling'); // the row's name becomes the display name "Plastic modeling"
+  const prev = process.env.ONTOLOGIZER_HOME;
+  process.env.ONTOLOGIZER_HOME = home;
+  try {
+    assert.deepEqual(complete(['load', 'pla']), ['plastic-modeling']);
+    // Planted fault: completing display names (the old behavior) offers nothing for "pla".
+    const rows = JSON.parse(fs.readFileSync(path.join(home, 'index.json'), 'utf8')).ontologies;
+    assert.deepEqual(rows.map((r) => r.name).filter((n) => n.startsWith('pla')), []);
+  } finally {
+    if (prev === undefined) delete process.env.ONTOLOGIZER_HOME; else process.env.ONTOLOGIZER_HOME = prev;
+  }
 });
