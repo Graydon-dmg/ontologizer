@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-11-08)
 
-- Licence changed from Apache-2.0 to MIT (1.0.0 remains Apache-2.0).
+- **Fuse from the browser.** A "Fuse with…" button in the top bar lists your other maps, then fuses the open map with the one you pick into a new map that opens in its own tab. Both originals stay untouched.
+- **MIT licence.** Ontologizer is now MIT-licensed. Version 1.0.0 remains Apache-2.0.
+- **Calmer Rosetta and 3D labels.** Each lens analogy sits as a short second line under its node's label, with a dot where the analogy breaks (full text on hover). Labels no longer pile on top of each other in 2D or 3D.
+- **Persona kept after a reload.** The jobs tray still names the Rosetta persona ("Building lens: a home chef") after you reload the page.
+- **Fixed tip strip.** The insight ticker has its own strip at the bottom, so it never covers the map or the panels.
+- **Safe to pipe.** `ontologizer doctor | head` and other piped commands exit quietly instead of printing an error. Unknown flags are now rejected before anything runs.
 
 ## 1.0.0 (2026-11-08)
 
