@@ -66,7 +66,7 @@ What each command does:
 
 | Check | ok when | fix printed |
 |---|---|---|
-| Node | version 20 or newer | install Node 20+ |
+| Node | version 22 or newer | install Node 22+ |
 | API key | `ANTHROPIC_API_KEY` is set, or the keychain holds a key | `ontologizer key set` |
 | Network | `api.anthropic.com` reachable within 3 s | check the connection |
 | Store | `~/.ontologizer/` writable | permissions on the folder |
