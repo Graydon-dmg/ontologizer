@@ -9,7 +9,7 @@ import { easeBackOut, easeCubicInOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, planLabels, truncateAnalog, LABEL_GEOM, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -30,10 +30,22 @@ const FOCUS_FOLLOW_MS = 2000;
 /** Label box estimate in screen px (11.5px system-ui): width per character, height. */
 const LABEL_CHAR_W = 6.2;
 const LABEL_H = 14;
-/** Label spots: [x, y offset in node radii, x, dy in screen units, text-anchor]: right, left, below, above. */
+/** Label spots: [x, y offset in node radii, x in screen px, text-anchor]: right, left, below, above. */
 const LABEL_SPOTS = /** @type {const} */ ([
-  [1, 0, 5, '0.35em', 'start'], [-1, 0, -5, '0.35em', 'end'], [0, 1, 0, '1.05em', 'middle'], [0, -1, 0, '-0.45em', 'middle'],
+  [1, 0, 5, 'start'], [-1, 0, -5, 'end'], [0, 1, 0, 'middle'], [0, -1, 0, 'middle'],
 ]);
+
+/**
+ * Baselines (screen px from the node's edge point) of the label and of its analog line under it.
+ * @param {number} spot @param {boolean} withAnalog
+ * @returns {[number, number]}
+ */
+function spotBaselines(spot, withAnalog) {
+  const A = LABEL_GEOM.analogH;
+  if (spot === 2) return [13, 13 + A];                         // below the node
+  if (spot === 3) return withAnalog ? [-5 - A, -5] : [-5, 0];  // above: analog sits between label and node
+  return [4, 4 + A];                                           // right / left: centred on the node
+}
 
 /** @typedef {{ g: any, circle: any, ring: any, label: any, core: any, glyph: any, r: number, fill: string, hasArticle?: boolean,
  *   spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
@@ -514,18 +526,21 @@ class OntoGraph extends Base {
     const wanted = new Map();
     for (const [id] of this.nodes) {
       const node = ont.nodes[id];
-      if (this.hidden.has(id) || !labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE })) continue;
+      if (this.hidden.has(id)) continue;
+      // category labels are always candidates (culled like the rest), so the map stays legible
+      // wherever the focus is; others follow the label rule
+      if (node.depth !== 1 && !labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE })) continue;
       const ring = this.rings.get(id) ?? Infinity;
       wanted.set(id, id === ont.view.focus || id === this.hovered || ring < 2);
     }
-    // Culling priority: categories and hybrids (origin 'fuse'), then the focus's and the
-    // selection's neighbourhood; everything else after.
+    // Culling priority: categories, then the focus's and the selection's neighbourhood, then
+    // hybrids (origin 'fuse'; they are also always drawn), then everything else.
     const near = new Set([...neighborhood(ont.view.focus, ont), ...(this.selected ? neighborhood(this.selected, ont) : [])]);
     /** @type {Map<string, number>} */
     const priority = new Map();
     for (const id of wanted.keys()) {
       const n = ont.nodes[id];
-      priority.set(id, n.depth === 1 || n.origin === 'fuse' ? 2 : near.has(id) ? 1 : 0);
+      priority.set(id, n.depth === 1 ? 3 : near.has(id) ? 2 : n.origin === 'fuse' ? 1 : 0);
     }
     this.labelPriority = priority;
     this.labelWanted = wanted;
@@ -540,39 +555,41 @@ class OntoGraph extends Base {
   placeLabelsNow(cur) {
     const t = zoomTransform(this.svg.node());
     const ont = this.ctx.snapshot();
-    const items = [];
+    const analogs = (this.lensId && ont.lenses?.[this.lensId]?.analogs) || {};
+    /** @type {import('./math.js').LabelEntry[]} */
+    const entries = [];
     for (const [id, forced] of this.labelWanted) {
-      const nv = this.nodes.get(id), p = cur.get(id);
-      if (!nv || !p) continue;
-      const w = LABEL_CHAR_W * (ont.nodes[id]?.label.length ?? 0);
-      const cx = p.x * t.k + t.x, cy = p.y * t.k + t.y, R = nv.r * t.k, H = LABEL_H;
-      /** candidate spots in screen px, in LABEL_SPOTS order: right, left, below, above */
-      const all = [
-        { x: cx + R + 5, y: cy - H / 2, w, h: H },
-        { x: cx - R - 5 - w, y: cy - H / 2, w, h: H },
-        { x: cx - w / 2, y: cy + R + 2, w, h: H },
-        { x: cx - w / 2, y: cy - R - 2 - H, w, h: H },
-      ];
-      // try last frame's spot first, so labels don't hop while the layout moves
-      const prev = nv.spot ?? 0;
-      const order = [prev, ...[0, 1, 2, 3].filter((i) => i !== prev)];
-      items.push({ id, forced, must: ont.nodes[id]?.origin === 'fuse', priority: this.labelPriority.get(id) ?? 0, depth: ont.nodes[id]?.depth ?? 0, r: nv.r,
-        boxes: forced ? [all[0]] : order.map((i) => all[i]), order: forced ? [0] : order });
+      const nv = this.nodes.get(id), p = cur.get(id), n = ont.nodes[id];
+      if (!nv || !p || !n) continue;
+      const a = analogs[id];
+      entries.push({ id, forced, full: id === this.hovered || id === ont.view.focus, must: n.origin === 'fuse',
+        priority: this.labelPriority.get(id) ?? 0, depth: n.depth, r: nv.r, prev: nv.spot ?? 0,
+        cx: p.x * t.k + t.x, cy: p.y * t.k + t.y, R: nv.r * t.k,
+        w: LABEL_GEOM.charW * n.label.length, aw: a ? LABEL_GEOM.analogCharW * truncateAnalog(a.label).length : 0 });
     }
-    const shown = placeLabels(items);
-    const orderOf = new Map(items.map((it) => [it.id, it.order]));
+    const plan = planLabels(entries);
     const inv = 1 / t.k;
     for (const [id, nv] of this.nodes) {
-      const i = shown.get(id);
-      if (i === undefined) { nv.label.style('display', 'none'); continue; }
-      const spot = /** @type {number[]} */ (orderOf.get(id))[i];
-      nv.spot = spot;
+      const at = plan.get(id);
+      const ghost = this.ghosts.get(id);
+      if (!at) {
+        nv.label.style('display', 'none');
+        ghost?.style('display', 'none'); // a culled label never shows its analog
+        continue;
+      }
+      nv.spot = at.spot;
       const p = /** @type {{x:number,y:number}} */ (cur.get(id));
-      const [ax, ay, dx, dy, anchor] = LABEL_SPOTS[spot];
-      nv.label.style('display', null).attr('text-anchor', anchor).attr('x', dx).attr('dy', dy)
-        .attr('transform', `translate(${p.x + ax * nv.r},${p.y + ay * nv.r}) scale(${inv})`);
+      const [ax, ay, dx, anchor] = LABEL_SPOTS[at.spot];
+      const tr = `translate(${p.x + ax * nv.r},${p.y + ay * nv.r}) scale(${inv})`;
+      const [ly, gy] = spotBaselines(at.spot, at.analog);
+      nv.label.style('display', null).attr('text-anchor', anchor).attr('x', dx).attr('y', ly).attr('dy', null).attr('transform', tr);
+      if (ghost) {
+        if (at.analog) ghost.style('display', null).attr('text-anchor', anchor).attr('x', dx).attr('y', gy).attr('transform', tr);
+        else ghost.style('display', 'none');
+      }
     }
   }
+
 
   /**
    * @param {string} id
@@ -672,8 +689,6 @@ class OntoGraph extends Base {
       const showCore = nv.hasArticle && !hid;
       nv.core.attr('r', nv.r * 0.45).style('display', showCore ? null : 'none');
       nv.glyph.style('display', showCore && nv.r >= 8 ? null : 'none');
-      const gh = this.ghosts.get(id);
-      if (gh) gh.attr('transform', `translate(${p.x},${p.y + nv.r}) scale(${inv})`).style('display', hid ? 'none' : null);
       const b = this.badges.get(id);
       if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75}) scale(${inv})`).style('display', hid ? 'none' : null);
     }
@@ -759,21 +774,27 @@ class OntoGraph extends Base {
   /** @param {string} id */
   syncGhost(id) {
     const old = this.ghosts.get(id);
+    const nv = this.nodes.get(id);
     const a = this.lensId ? this.ctx.snapshot().lenses?.[this.lensId]?.analogs?.[id] : null;
-    if (!a || !this.nodes.has(id)) {
+    nv?.g.select('title').remove();
+    if (!a || !nv) {
       if (old) { old.remove(); this.ghosts.delete(id); }
       return;
     }
-    const t = old || this.layers.labels.append('text').attr('y', 13).attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
-      .style('fill', 'var(--o-muted)').attr('opacity', 0.85).attr('text-anchor', 'middle').style('stroke', 'var(--o-bg)').attr('stroke-width', 3)
-      .attr('stroke-linejoin', 'round').attr('paint-order', 'stroke').style('transition', DIM_TRANSITION);
-    t.text(a.breaks ? `${a.label} \u26A0` : a.label);
-    t.select('title').remove();
-    if (a.breaks) t.style('pointer-events', 'auto').append('title').text(a.breaks);
-    else t.style('pointer-events', 'none');
+    // full analog and its break on hover (the explain panel shows them too)
+    const label = this.ctx.snapshot().nodes[id]?.label ?? '';
+    nv.g.append('title').text(`${label}\n\u2248 ${a.label}${a.breaks ? `\nBreaks: ${a.breaks}` : ''}`);
+    const t = old || this.layers.labels.append('text').attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
+      .style('fill', 'var(--o-muted)').style('stroke', 'var(--o-bg)').attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round').attr('paint-order', 'stroke').style('pointer-events', 'none').style('display', 'none')
+      .style('transition', DIM_TRANSITION);
+    t.text(truncateAnalog(a.label));
+    // a break is marked by a small dot after the analog, not an inline warning sign
+    if (a.breaks) t.append('tspan').attr('dx', 2).style('fill', 'var(--o-fg)').attr('font-style', 'normal').text('\u2022');
     if (!old) this.ghosts.set(id, t);
     this.schedule();
   }
+
 
   syncGhosts() {
     const ont = this.ctx.snapshot();
@@ -808,6 +829,7 @@ class OntoGraph extends Base {
   /** @param {string|null} lensId */
   setLens(lensId) {
     this.lensId = lensId || null;
+    for (const nv of this.nodes.values()) nv.g.select('title').remove();
     for (const t of this.ghosts.values()) t.remove();
     this.ghosts.clear();
     if (this.lensId) this.syncGhosts();

@@ -199,15 +199,15 @@ export function hiddenIds(ontology, collapsed, filter) {
  * is skipped when its box overlaps one already placed.
  * Each label may offer several candidate spots (`boxes`, in order of preference: right, left,
  * below, above); it takes the first one that overlaps nothing placed so far.
- * `must` labels are always drawn, placed right after the forced ones.
- * @param {Array<{ id: string, forced: boolean, must?: boolean, priority?: number, depth: number, r: number,
+ * Forced and `must` labels are always drawn: at their first free spot, else at `fallback` (default 0).
+ * @param {Array<{ id: string, forced: boolean, must?: boolean, fallback?: number, priority?: number, depth: number, r: number,
  *                 box?: { x: number, y: number, w: number, h: number },
  *                 boxes?: Array<{ x: number, y: number, w: number, h: number }> }>} items
  * @returns {Map<string, number>} drawn label id -> index of the spot it took
  */
 export function placeLabels(items) {
   const order = [...items].sort((a, b) =>
-    (Number(b.forced) - Number(a.forced)) || (Number(b.must ?? false) - Number(a.must ?? false)) || ((b.priority ?? 0) - (a.priority ?? 0)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
+    (Number(b.forced) - Number(a.forced)) || ((b.priority ?? 0) - (a.priority ?? 0)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
   /** @type {Array<{ x: number, y: number, w: number, h: number }>} */
   const placed = [];
   /** @type {Map<string, number>} */
@@ -217,8 +217,10 @@ export function placeLabels(items) {
   for (const it of order) {
     const boxes = it.boxes ?? (it.box ? [it.box] : []);
     // forced labels keep their first spot; the rest take the first spot that is free
-    // `must` labels (hybrids) take a free spot when there is one, and their first spot otherwise
-    const i = it.forced ? 0 : Math.max(boxes.findIndex(free), it.must ? 0 : -1);
+    // every label takes its first free spot; forced and `must` labels (hybrids) that find none
+    // take their fallback spot anyway
+    let i = boxes.findIndex(free);
+    if (i < 0 && (it.forced || it.must)) i = it.fallback ?? 0;
     if (i < 0 || !boxes[i]) continue;
     placed.push(boxes[i]);
     shown.set(it.id, i);
@@ -324,4 +326,66 @@ export function innerRect(size, ins) {
 export function readInsets(get) {
   const v = (/** @type {string} */ side) => { const n = parseFloat(get(`--onto-inset-${side}`)); return Number.isFinite(n) && n > 0 ? n : 0; };
   return { top: v('top'), right: v('right'), bottom: v('bottom'), left: v('left') };
+}
+
+/** Label geometry in screen px (11.5px labels, 10px italic analog line under them). */
+export const LABEL_GEOM = { charW: 6.2, analogCharW: 5.4, h: 14, analogH: 13 };
+
+/**
+ * An analog as shown on the map: at most `max` characters, with an ellipsis.
+ * @param {string} s @param {number} [max]
+ */
+export function truncateAnalog(s, max = 30) {
+  return s.length > max ? s.slice(0, max - 1).trimEnd() + '\u2026' : s;
+}
+
+/** @typedef {{ id: string, forced: boolean, full?: boolean, must?: boolean, priority?: number, depth: number, r: number,
+ *   cx: number, cy: number, R: number, w: number, aw: number, prev?: number }} LabelEntry
+ *   cx, cy, R: the node's centre and radius on screen; w: label width; aw: analog width (0 = no analog);
+ *   full: hovered or focused (its analog shows even when crowded); prev: last frame's spot. */
+
+/**
+ * The four spots (right, left, below, above) for a label, optionally with its analog as a second
+ * line directly under it (same anchor and side). Screen px.
+ * @param {LabelEntry} e @param {boolean} withAnalog
+ */
+export function spotBoxes(e, withAnalog) {
+  const H = LABEL_GEOM.h, A = withAnalog ? LABEL_GEOM.analogH : 0, W = withAnalog ? Math.max(e.w, e.aw) : e.w;
+  return [
+    { x: e.cx + e.R + 5, y: e.cy - H / 2, w: W, h: H + A },
+    { x: e.cx - e.R - 5 - W, y: e.cy - H / 2, w: W, h: H + A },
+    { x: e.cx - W / 2, y: e.cy + e.R + 2, w: W, h: H + A },
+    { x: e.cx - W / 2, y: e.cy - e.R - 2 - H - A, w: W, h: H + A },
+  ];
+}
+
+/**
+ * Place every label, each with its lens analog when the combined box fits. Candidates per label:
+ * label+analog at each spot (last frame's spot first, so nothing hops), then label alone at each
+ * spot. A label that is culled shows no analog. Forced labels are always drawn (at their last spot
+ * when every spot is taken); a hovered or focused one (`full`) keeps its analog even then.
+ * @param {LabelEntry[]} entries
+ * @param {typeof spotBoxes} [boxesOf]
+ * @returns {Map<string, { spot: number, analog: boolean }>} drawn labels only
+ */
+export function planLabels(entries, boxesOf = spotBoxes) {
+  const items = entries.map((e) => {
+    const prev = e.prev ?? 0;
+    const spots = [prev, ...[0, 1, 2, 3].filter((i) => i !== prev)];
+    /** @type {{ spot: number, analog: boolean, box: { x: number, y: number, w: number, h: number } }[]} */
+    const cands = [];
+    if (e.aw > 0) { const b = boxesOf(e, true); for (const sp of spots) cands.push({ spot: sp, analog: true, box: b[sp] }); }
+    const b = boxesOf(e, false);
+    for (const sp of spots) cands.push({ spot: sp, analog: false, box: b[sp] });
+    const fallback = e.aw > 0 && !e.full ? spots.length : 0;
+    return { id: e.id, forced: e.forced, must: e.must, priority: e.priority, depth: e.depth, r: e.r, boxes: cands.map((c) => c.box), cands, fallback };
+  });
+  const placed = placeLabels(items);
+  /** @type {Map<string, { spot: number, analog: boolean }>} */
+  const out = new Map();
+  for (const it of items) {
+    const i = placed.get(it.id);
+    if (i !== undefined) out.set(it.id, { spot: it.cands[i].spot, analog: it.cands[i].analog });
+  }
+  return out;
 }
