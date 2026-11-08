@@ -4,21 +4,25 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
 #view { position: fixed; inset: 0; }
 #view > * { display: block; width: 100%; height: 100%; }
 .no-view { display: flex !important; align-items: center; justify-content: center; color: var(--muted); font-size: 15px; }
-#topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10; display: flex; align-items: center;
-  gap: 10px; padding: 6px 10px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
-  border-radius: 8px; max-width: calc(100% - 240px); pointer-events: auto; }
-#map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; }
+/* The top bar wraps: lower-priority controls move to a second row instead of overlapping. */
+#topbar { position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10; display: flex; flex-wrap: wrap; align-items: center;
+  gap: 6px 10px; padding: 6px 10px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 8px; box-sizing: border-box; pointer-events: auto; }
+#map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto; min-width: 3rem; max-width: 16rem; }
+#filter { margin-left: auto; }
 #topbar > div { display: flex; align-items: center; gap: 6px; }
 #topbar > div:empty, #topbar > div[hidden] { display: none; }
 body:has(#minimap:not([hidden])) #topbar { right: 220px; }
-#search { flex: 1 1 160px; min-width: 100px; }
+#search { flex: 1 1 10rem; min-width: 10rem; max-width: 24rem; }
+#search > .search, #search input { width: 100%; box-sizing: border-box; }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
-#explain { position: fixed; right: 10px; top: 170px; bottom: 60px; z-index: 11; }
+#explain { position: fixed; right: 10px; top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); bottom: 60px; z-index: 11; }
 #ticker { position: fixed; left: 10px; bottom: 10px; z-index: 10; max-width: 40vw; color: var(--muted); }
 #jobs { position: fixed; right: 10px; bottom: 10px; z-index: 45; }
-#legend { position: fixed; left: 10px; top: 64px; z-index: 10; background: var(--panel); max-height: 50vh; overflow: auto;
+#legend { position: fixed; left: 10px; top: calc(var(--topbar-bottom, 56px) + 8px); z-index: 10; background: var(--panel); max-height: 50vh; overflow: auto;
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; padding: 4px 8px; min-width: 120px; }
 #menu { position: fixed; z-index: 30; }
 .legend-head { all: unset; cursor: pointer; font-weight: 600; color: var(--fg); display: block; padding: 2px 0; }
@@ -31,3 +35,11 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 .view-toggle button + button, .seg button + button { border-left: 1px solid color-mix(in srgb, var(--muted) 50%, transparent); }
 .view-toggle button[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .view-toggle button:focus-visible, .seg button:focus-visible { outline: 2px solid var(--fg); outline-offset: -3px; }
+
+/* Narrow screens: a smaller minimap leaves the top bar more room; tighter segmented buttons. */
+@media (max-width: 760px) {
+  #minimap { width: 140px; height: 105px; }
+  body:has(#minimap:not([hidden])) #topbar { right: 160px; }
+  #explain { top: max(125px, calc(var(--topbar-bottom, 56px) + 10px)); }
+  .view-toggle button, .seg button { padding: 3px 8px; }
+}

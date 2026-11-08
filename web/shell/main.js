@@ -22,6 +22,16 @@ const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.get
 
 // The theme is applied by ui/theme.js (System / Light / Dark), mounted first below.
 
+// Keep --topbar-bottom equal to the top bar's bottom edge: when the bar wraps to more rows,
+// the legend and the explain panel move down with it.
+{
+  const bar = $('topbar');
+  const publish = () => document.documentElement.style.setProperty('--topbar-bottom', Math.ceil(bar.getBoundingClientRect().bottom) + 'px');
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(publish).observe(bar);
+  addEventListener('resize', publish);
+  publish();
+}
+
 const layout = createGraphLayout({ width: innerWidth, height: innerHeight });
 const source = createSource({ search: location.search });
 

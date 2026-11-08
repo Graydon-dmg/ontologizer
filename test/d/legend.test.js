@@ -49,3 +49,32 @@ test('The plastic-modeling fixture gives one group of 8 items', () => {
   const splitting = (oo, t) => oo.categories.map((c) => ({ family: 0, title: '', items: [{ id: c.id }] }));
   assert.throws(() => assert.equal(splitting(o, tokens).length, 1), assert.AssertionError);
 });
+
+import { sourceMapName, shortName } from '../../web/shell/legend.js';
+
+test('fused legend headings use the source map names (shortened), and keep "Hybrids"', async () => {
+  const tokens = await import('../../web/shared/tokens.js');
+  const { legendGroups: groups } = await import('../../web/shell/legend.js');
+  const n = (/** @type {any} */ x) => ({ origin: 'fuse', sources: [], article: null, status: 'done', createdBy: 'fuse', ...x });
+  const o = foldAll([
+    { t: 'ontology.created', at: 0, name: 'gunpla', root: 'g', brief: {}, categories: [] },
+    { t: 'category.added', at: 1, category: { id: 'manga/genres', label: 'Genres', index: 0, family: 1 } },
+    { t: 'category.added', at: 1, category: { id: 'pm/tools', label: 'Tools', index: 0, family: 0 } },
+    { t: 'category.added', at: 1, category: { id: 'hybrids', label: 'Hybrids', index: 1, family: 2 } },
+    { t: 'node.added', at: 2, node: n({ id: 'g', label: 'Gunpla', parent: null, category: '', depth: 0 }) },
+    { t: 'node.added', at: 2, node: n({ id: 'pm', label: 'Scale plastic modeling of 1/72 World War II aircraft kits', parent: 'g', category: '', depth: 1 }) },
+    { t: 'node.added', at: 2, node: n({ id: 'manga', label: 'Japanese manga', parent: 'g', category: '', depth: 1 }) },
+    { t: 'node.added', at: 3, node: n({ id: 'pm/tools', label: 'Tools', parent: 'pm', category: 'pm/tools', depth: 2 }) },
+    { t: 'node.added', at: 3, node: n({ id: 'manga/genres', label: 'Genres', parent: 'manga', category: 'manga/genres', depth: 2 }) },
+  ]);
+  const titles = groups(o, tokens).map((g) => g.title);
+  assert.equal(titles[1], 'Japanese manga');
+  assert.equal(titles[2], 'Hybrids');
+  assert.ok(titles[0].startsWith('Scale plastic modeling') && titles[0].length <= 28 && titles[0].endsWith('…'), titles[0]);
+  // planted fault: generic headings
+  assert.throws(() => assert.equal(['Map 1', 'Map 2', 'Hybrids'][1], titles[1]));
+  // fallbacks: no category nodes -> depth-1 roots in order; nothing -> "Map N"
+  assert.equal(sourceMapName({ categories: [], nodes: { a: { depth: 1, category: '', label: 'A map' } } }, 0), 'A map');
+  assert.equal(sourceMapName({ categories: [], nodes: {} }, 1), 'Map 2');
+  assert.equal(shortName('Short'), 'Short');
+});
