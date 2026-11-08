@@ -30,12 +30,23 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
 
 **Manual:**
 
-```bash
-npm i -g ontologizer
-ontologizer          # start menu: pick New. The first time it needs Claude, it asks for your
-                     # Anthropic API key once and stores it in your system keychain
-ontologizer doctor   # checks that everything is in place
-```
+1. Install it:
+
+   ```bash
+   npm i -g ontologizer
+   ```
+
+2. Start it and pick **New**. The first time it needs Claude, it asks for your Anthropic API key once and stores it in your system keychain:
+
+   ```bash
+   ontologizer
+   ```
+
+3. Check that everything is in place:
+
+   ```bash
+   ontologizer doctor
+   ```
 
 ## Your first map in 30 seconds
 
