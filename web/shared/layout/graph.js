@@ -15,7 +15,7 @@ import { forceSimulation, forceLink, forceManyBody, forceCollide, forceRadial } 
 //   pin(id, x, y)             (optional, contract change) fix a node at x,y while dragging; alphaTarget 0.1
 //   unpin(id)                 release it; alphaTarget 0. Both no-ops for unknown ids
 // Forces: parent link (strong, short), cross-link (weak, long), many-body charge, collide by
-// node radius, radial by depth from the focus (ring spacing 90), and an angular pull toward the
+// node radius, radial by depth from the focus (ring spacing 90; rings past the first spaced 1.8x), and an angular pull toward the
 // node's category sector (sectors split 360 degrees in category order).
 // Determinism: all randomness comes from a seeded PRNG (mulberry32(seed)); never Math.random.
 // A node whose parent has not arrived yet starts at the center and is re-placed when its parent
@@ -52,6 +52,17 @@ function mulberry32(a) {
  *   _noAngular: drop the category-sector force; _reheat: alpha used on add() (default 0.3).
  * @param {{ seed?: number, width?: number, height?: number, _noAngular?: boolean, _reheat?: number }} [opts]
  */
+// Outer rings (graph distance >= 2) hold most nodes, so they get wider spacing and extra collide room
+// for their labels. Tuned on the plastic-modeling fixture: depth-2 label overlaps 65 -> 19, while the
+// "adding one node moves no other node more than 20 px" guarantee still holds.
+const OUTER_RING_SCALE = 1.8;
+const LABEL_PAD = 12;
+
+/** Target radius for a node at graph distance k from the focus. @param {number} k */
+function ringRadius(k) {
+  return k <= 1 ? RING * k : RING + RING * OUTER_RING_SCALE * (k - 1);
+}
+
 export function createGraphLayout({ seed = 1, width = 1000, height = 800, _noAngular = false, _reheat = 0.3 } = {}) {
   const cx = width / 2;
   const cy = height / 2;
@@ -79,8 +90,8 @@ export function createGraphLayout({ seed = 1, width = 1000, height = 800, _noAng
     .randomSource(simRng)
     .force('link', link)
     .force('charge', forceManyBody().strength(-60).distanceMax(250))
-    .force('collide', forceCollide((/** @type {any} */ d) => radiusOf(d)).strength(0.8))
-    .force('radial', forceRadial((/** @type {any} */ d) => RING * d.dist, cx, cy).strength(0.25))
+    .force('collide', forceCollide((/** @type {any} */ d) => radiusOf(d) + (d.dist >= 2 ? LABEL_PAD : 0)).strength(0.8))
+    .force('radial', forceRadial((/** @type {any} */ d) => ringRadius(d.dist), cx, cy).strength(0.25))
     .alphaDecay(0.03)
     .velocityDecay(0.5)
     .stop();
@@ -105,7 +116,7 @@ export function createGraphLayout({ seed = 1, width = 1000, height = 800, _noAng
         if (!d.data.category) continue;
         const a = sectorAngle(d.data.category);
         if (a === null) continue;
-        const r = RING * d.dist;
+        const r = ringRadius(d.dist);
         const tx = cx + r * Math.cos(a);
         const ty = cy + r * Math.sin(a);
         d.vx += (tx - d.x) * 0.12 * alpha;
