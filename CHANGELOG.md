@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Key is checked with Anthropic before it's saved; API address pinned to api.anthropic.com unless ANTHROPIC_BASE_URL is a secure address.
+
 ## 1.1.0 (2026-11-08)
 
 - **Fuse from the browser.** A "Fuse with…" button in the top bar lists your other maps, then fuses the open map with the one you pick into a new map that opens in its own tab. Both originals stay untouched.
