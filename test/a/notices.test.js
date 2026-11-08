@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { generate } from '../../scripts/third-party-notices.js';
 
 const root = new URL('../../', import.meta.url);
+const MIT_SHA256 = '4125d87c000fb322022937c5a82593396eb90350f98e49d7a536ee7bb82df832';
 const read = (/** @type {string} */ f) => readFileSync(new URL(f, root), 'utf8');
 
 /** Problems with the committed notices against a freshly generated copy. @param {string} committed @param {string} fresh */
@@ -13,12 +14,12 @@ function checkNotices(committed, fresh) {
   return committed === fresh ? [] : ['THIRD_PARTY_NOTICES.md is stale: run node scripts/third-party-notices.js'];
 }
 
-test('LICENSE is the canonical Apache License 2.0 text, byte for byte', () => {
-  // md5 of https://www.apache.org/licenses/LICENSE-2.0.txt (11358 bytes)
+test('LICENSE is the project MIT text, byte for byte, and package.json agrees', () => {
+  // The MIT text first landed in 3dc0a85 (1071 bytes); restored unchanged.
   const buf = readFileSync(new URL('LICENSE', root));
-  assert.equal(buf.length, 11358);
-  assert.equal(createHash('md5').update(buf).digest('hex'), '3b83ef96387f14655fc854ddc3c6bd57');
-  assert.equal(JSON.parse(read('package.json')).license, 'Apache-2.0');
+  assert.equal(createHash('sha256').update(buf).digest('hex'), MIT_SHA256);
+  assert.ok(buf.toString('utf8').startsWith('MIT License\n\nCopyright (c) 2026 Graydon Garden\n'));
+  assert.equal(JSON.parse(read('package.json')).license, 'MIT');
 });
 
 test('THIRD_PARTY_NOTICES.md is generated from the lockfile and up to date', () => {

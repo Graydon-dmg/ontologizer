@@ -34,14 +34,13 @@
     "fixtures",
     "README.md",
     "LICENSE",
-    "NOTICE",
     "THIRD_PARTY_NOTICES.md",
     "TRADEMARKS.md"
   ],
   "engines": {
     "node": ">=22"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "publishConfig": {
     "access": "public",
     "provenance": true
