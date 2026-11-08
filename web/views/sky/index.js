@@ -22,6 +22,19 @@ const CLICK_SLOP = 5;
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
+// Scene colours per theme. Page colours (bg, fg, panel, muted) come from tokens.THEME.
+const SCENE = {
+  dark: { floor: 0x151922, grid: [0x2a3040, 0x1e2330], tree: 0x5a6478, src: 0xa9b1c2, shadow: '#000', additive: true },
+  light: { floor: 0xeceff5, grid: [0xc3cad8, 0xdadfe8], tree: 0x8e98ab, src: 0x667085, shadow: '#fff', additive: false },
+};
+
+/** The page theme: the <html data-theme> attribute wins, otherwise the OS preference. */
+function currentTheme() {
+  const t = globalThis.document && document.documentElement.dataset.theme;
+  if (t === 'light' || t === 'dark') return t;
+  return globalThis.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
 /** Parse 'hsl(210 68% 58%)' into [h, s, l]. */
 function parseHsl(css) {
   const m = /hsl\(\s*([\d.]+)[\s,]+([\d.]+)%[\s,]+([\d.]+)%/.exec(css);
@@ -79,7 +92,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.labelRenderer = labelRenderer;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(tk.THEME.dark.bg);
+    scene.background = new THREE.Color(); // set by applyTheme()
     this.scene = scene;
     const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
     camera.position.set(WORLD * 0.55, WORLD * 0.75, WORLD * 0.95);
@@ -91,17 +104,14 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     sun.position.set(300, 600, 200);
     scene.add(sun);
 
-    // Floor: dark disc plus a faint grid.
+    // Floor: a disc plus a faint grid (the grid is rebuilt per theme by applyTheme()).
     const floorGeo = new THREE.CircleGeometry(WORLD * 0.8, 64);
-    const floorMat = new THREE.MeshBasicMaterial({ color: 0x151922, side: THREE.DoubleSide });
+    const floorMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.5;
     scene.add(floor);
-    const grid = new THREE.GridHelper(WORLD * 1.6, 32, 0x2a3040, 0x1e2330);
-    grid.position.y = -0.4;
-    scene.add(grid);
-    this.floorParts = [floor, grid];
+    this.grid = null;
     this.floorGeo = floorGeo;
     this.floorMat = floorMat;
 
@@ -114,7 +124,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       ringPts.push(new THREE.Vector3(Math.cos(a) * 1.5, -1, Math.sin(a) * 1.5));
     }
     this.srcGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
-    this.srcMat = new THREE.LineDashedMaterial({ color: 0xa9b1c2, dashSize: 0.08, gapSize: 0.12 });
+    this.srcMat = new THREE.LineDashedMaterial({ dashSize: 0.08, gapSize: 0.12 });
     this.srcRing = new THREE.LineLoop(this.srcGeo, this.srcMat);
     this.srcRing.computeLineDistances();
     this.raycaster = new THREE.Raycaster();
@@ -122,10 +132,17 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     // Structure on the floor: one segment per visible parent link, refilled each frame.
     this.treeCap = 0;
     this.treeGeo = new THREE.BufferGeometry();
-    this.treeMat = new THREE.LineBasicMaterial({ color: 0x5a6478, transparent: true, opacity: 0.55 });
+    this.treeMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.55 });
     this.treeLines = new THREE.LineSegments(this.treeGeo, this.treeMat);
     this.treeLines.frustumCulled = false;
     scene.add(this.treeLines);
+
+    // Theme: follow <html data-theme> (the shell's System / Light / Dark toggle), else the OS.
+    this.applyTheme();
+    this.onTheme = () => this.applyTheme();
+    document.addEventListener('onto-theme', this.onTheme);
+    this.mql = globalThis.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
+    if (this.mql) this.mql.addEventListener('change', this.onTheme);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -199,6 +216,38 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.mounted = true;
   }
 
+  /** Recolour the scene and labels for the current page theme. Safe to call any time after mount. */
+  applyTheme() {
+    const name = currentTheme();
+    this.theme = name;
+    const page = this.tk.THEME[name], sc = SCENE[name];
+    this.scene.background.set(page.bg);
+    this.floorMat.color.setHex(sc.floor);
+    if (this.grid) { this.scene.remove(this.grid); this.grid.geometry.dispose(); this.grid.material.dispose(); }
+    this.grid = new THREE.GridHelper(WORLD * 1.6, 32, sc.grid[0], sc.grid[1]);
+    this.grid.position.y = -0.4;
+    this.scene.add(this.grid);
+    this.treeMat.color.setHex(sc.tree);
+    this.srcMat.color.setHex(sc.src);
+    // Labels, ghost labels and badges read these variables, so one write restyles them all.
+    const ls = this.labelRenderer.domElement.style;
+    ls.setProperty('--sky-fg', page.fg);
+    ls.setProperty('--sky-panel', page.panel);
+    ls.setProperty('--sky-muted', page.muted);
+    ls.setProperty('--sky-shadow', sc.shadow);
+    // Nodes without a category (roots) use the page foreground.
+    for (const st of this.nodes.values()) if (st.neutral) st.mesh.material.color.set(page.fg);
+    for (const h of this.halos.values()) this.styleHalo(h.mesh.material);
+  }
+
+  /** Halos glow additively on dark; on light, additive blending vanishes, so blend normally. */
+  styleHalo(mat) {
+    const additive = SCENE[this.theme || 'dark'].additive;
+    mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    mat.color.setHex(additive ? 0x7fb2ff : 0x3b78d8);
+    mat.needsUpdate = true;
+  }
+
   /** Topmost visible node under a screen point, or null. @param {number} cx @param {number} cy */
   pick(cx, cy) {
     const dom = this.renderer.domElement;
@@ -249,6 +298,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     mesh.rotation.x = -Math.PI / 2;
     mesh.visible = false;
     this.scene.add(mesh);
+    this.styleHalo(mat);
     this.halos.set(jobId, { mesh, nodeId });
   }
 
@@ -289,8 +339,8 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const div = document.createElement('div');
       div.textContent = a.label + (a.breaks ? ' \u26A0' : '');
       if (a.breaks) div.title = a.breaks;
-      div.style.cssText = `color:${this.tk.THEME.dark.fg};font:italic 11px system-ui,sans-serif;white-space:nowrap;` +
-        'text-shadow:0 0 3px #000;pointer-events:none;opacity:0.7;';
+      div.style.cssText = 'color:var(--sky-fg);font:italic 11px system-ui,sans-serif;white-space:nowrap;' +
+        'text-shadow:0 0 3px var(--sky-shadow);pointer-events:none;opacity:0.7;';
       const g = new CSS2DObject(div);
       g.position.set(0, -1.3, 0);
       g.visible = false;
@@ -306,8 +356,8 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const on = this.collapsed.has(id);
       if (on && !st.badge) {
         const div = document.createElement('div');
-        div.style.cssText = `color:${this.tk.THEME.dark.fg};background:${this.tk.THEME.dark.panel};` +
-          'font:600 11px system-ui,sans-serif;padding:1px 5px;border-radius:8px;border:1px solid #444;pointer-events:none;';
+        div.style.cssText = 'color:var(--sky-fg);background:var(--sky-panel);' +
+          'font:600 11px system-ui,sans-serif;padding:1px 5px;border-radius:8px;border:1px solid var(--sky-muted);pointer-events:none;';
         const b = new CSS2DObject(div);
         b.position.set(1.2, 1.1, 0);
         st.mesh.add(b);
@@ -334,7 +384,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const [h, s, l] = parseHsl(tk.categoryColor(cat.index, cat.family));
       color.setHSL(h / 360, s / 100, Math.min(100, l + tk.depthLightness(node.depth)) / 100);
     } else {
-      color.set(tk.THEME.dark.fg);
+      color.set(tk.THEME[this.theme || 'dark'].fg);
     }
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, transparent: true });
     const mesh = new THREE.Mesh(this.sphereGeo, mat);
@@ -344,12 +394,12 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
 
     const div = document.createElement('div');
     div.textContent = node.label;
-    div.style.cssText = `color:${tk.THEME.dark.fg};font:12px system-ui,sans-serif;white-space:nowrap;` +
-      'text-shadow:0 0 3px #000,0 1px 2px #000;pointer-events:none;';
+    div.style.cssText = 'color:var(--sky-fg);font:12px system-ui,sans-serif;white-space:nowrap;' +
+      'text-shadow:0 0 3px var(--sky-shadow),0 1px 2px var(--sky-shadow);pointer-events:none;';
     const label = new CSS2DObject(div);
     label.visible = false;
     mesh.add(label);
-    this.nodes.set(id, { mesh, label, w: null, vis: false, base: 1, lastOp: -1, spawnAt: 0 });
+    this.nodes.set(id, { mesh, label, w: null, vis: false, base: 1, lastOp: -1, spawnAt: 0, neutral: !cat });
     this.restyle(id);
     this.radiiAt = 0; // descendants changed
   }
@@ -663,7 +713,9 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.sphereGeo.dispose();
     this.floorGeo.dispose();
     this.floorMat.dispose();
-    for (const o of this.floorParts) if (o.geometry && o !== this.floorParts[0]) { o.geometry.dispose(); o.material.dispose(); }
+    if (this.grid) { this.grid.geometry.dispose(); this.grid.material.dispose(); }
+    document.removeEventListener('onto-theme', this.onTheme);
+    if (this.mql) this.mql.removeEventListener('change', this.onTheme);
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();
