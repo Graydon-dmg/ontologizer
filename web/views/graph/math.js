@@ -215,3 +215,41 @@ export function placeLabels(items) {
   }
   return shown;
 }
+
+/**
+ * The zoom transform that fits world bounds into a box, or null when it cannot be computed yet
+ * (a 0x0 mount at connect time, or no nodes). k is clamped to [minK, maxK].
+ * @param {Bounds} b
+ * @param {Size} box
+ * @param {{ minK: number, maxK: number, margin: number }} opt
+ * @returns {{ x: number, y: number, k: number }|null}
+ */
+export function fitTransform(b, box, opt) {
+  if (!(box.width > 0 && box.height > 0)) return null;
+  if (![b.minX, b.minY, b.maxX, b.maxY].every(Number.isFinite)) return null;
+  const w = Math.max(b.maxX - b.minX, 1), h = Math.max(b.maxY - b.minY, 1);
+  const k = Math.max(opt.minK, Math.min(opt.maxK, opt.margin * Math.min(box.width / w, box.height / h)));
+  return { x: box.width / 2 - k * (b.minX + b.maxX) / 2, y: box.height / 2 - k * (b.minY + b.maxY) / 2, k };
+}
+
+/** @param {unknown} v */
+const key = (v) => JSON.stringify(v ?? null);
+
+/**
+ * Keep the view's local filter and collapsed set; adopt the snapshot's value for a field only when
+ * the snapshot's value actually changed since the last one seen. A filter set locally (setFilter)
+ * therefore survives every later event that does not change the stored filter.
+ * @param {{ filter: { categories: string[]|null, maxDepth: number|null }, collapsed: string[] }} local
+ * @param {{ filter: string, collapsed: string }} seen  keys of the last snapshot values seen
+ * @param {{ filter?: any, collapsed?: string[] }|undefined} view  the snapshot's view state
+ * @returns {{ local: typeof local, seen: typeof seen, changed: boolean }}
+ */
+export function syncViewState(local, seen, view) {
+  const f = { categories: view?.filter?.categories ?? null, maxDepth: view?.filter?.maxDepth ?? null };
+  const c = view?.collapsed ?? [];
+  const fk = key(f), ck = key(c);
+  const out = { local: { ...local }, seen: { ...seen }, changed: false };
+  if (fk !== seen.filter) { out.local.filter = f; out.seen.filter = fk; out.changed = true; }
+  if (ck !== seen.collapsed) { out.local.collapsed = [...c]; out.seen.collapsed = ck; out.changed = true; }
+  return out;
+}

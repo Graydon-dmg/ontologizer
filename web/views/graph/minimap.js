@@ -2,7 +2,7 @@
 // The minimap: a small SVG of the whole graph (dots only) with the main view's viewport rectangle.
 // Click or drag pans the main view. No DOM access at module top level.
 import { select } from 'd3-selection';
-import { th } from './theme.js';
+import { themeVars } from './theme.js';
 import { worldBounds, miniScale, viewportRect, panFromMinimap } from './math.js';
 
 const DEFAULT_W = 200;
@@ -52,11 +52,11 @@ export function createMinimap(el, host) {
     .style('position', 'absolute').style('inset', '0').style('display', 'block')
     .style('touch-action', 'none').style('cursor', 'crosshair')
     .style('border-radius', '6px').style('box-sizing', 'border-box');
-  const bg = svg.append('rect').attr('rx', 6).attr('fill', th().panel).attr('fill-opacity', 0.85)
-    .attr('stroke', th().muted).attr('stroke-width', 1);
+  const bg = svg.append('rect').attr('rx', 6).style('fill', 'var(--o-panel)').attr('fill-opacity', 0.85)
+    .style('stroke', 'var(--o-muted)').attr('stroke-width', 1);
   const dots = svg.append('g').style('pointer-events', 'none');
-  const rect = svg.append('rect').attr('fill', th().fg).attr('fill-opacity', 0.06)
-    .attr('stroke', th().fg).attr('stroke-width', 1).style('pointer-events', 'none');
+  const rect = svg.append('rect').style('fill', 'var(--o-fg)').attr('fill-opacity', 0.06)
+    .style('stroke', 'var(--o-fg)').attr('stroke-width', 1).style('pointer-events', 'none');
 
   /** World bounds from the last dot redraw; shared by the rect and by pan so they agree. */
   let bounds = worldBounds(new Map());
@@ -75,7 +75,7 @@ export function createMinimap(el, host) {
     const sel = dots.selectAll('circle').data(vis, (/** @type {any} */ d) => d.id);
     sel.exit().remove();
     const all = sel.enter().append('circle').attr('r', DOT_R).merge(/** @type {any} */ (sel));
-    all.attr('fill', (/** @type {any} */ d) => d.color)
+    all.style('fill', (/** @type {any} */ d) => d.color)
       .attr('cx', (/** @type {any} */ d) => ((/** @type {any} */ (pos.get(d.id))).x - bounds.minX) * s + ox)
       .attr('cy', (/** @type {any} */ d) => ((/** @type {any} */ (pos.get(d.id))).y - bounds.minY) * s + oy);
     drawn = true;
@@ -90,6 +90,7 @@ export function createMinimap(el, host) {
   }
 
   function update() {
+    themeVars(svg);
     if (!drawn || gate()) {
       if (trailing) { clearTimeout(trailing); trailing = null; }
       drawDots();
