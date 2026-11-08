@@ -58,3 +58,25 @@ test('seeAlso resolves ids and labels and skips unknown ones', () => {
   assert.deepEqual(m.seeAlso.map((s) => s.id), [b, ids[3]]);
   assert.equal(m.sources.length, 1);
 });
+
+import { jobRows, jobText, visibleJobRows } from '../../web/shell/jobs.js';
+
+test('jobs tray shows any kind; build jobs read "Building <category label>"; two research jobs on one node both show', () => {
+  const o = foldAll([
+    { t: 'ontology.created', at: 0, name: 'm', root: 'r', brief: {}, categories: [] },
+    { t: 'node.added', at: 1, node: { id: 'r', label: 'Root', parent: null, category: '', depth: 0, origin: 'seed', sources: [], article: null, status: 'done', createdBy: 'wave0' } },
+    { t: 'node.added', at: 2, node: { id: 'r/tools', label: 'Tools', parent: 'r', category: 'r/tools', depth: 1, origin: 'seed', sources: [], article: null, status: 'done', createdBy: 'wave0' } },
+    { t: 'job.started', at: 3, job: { id: 'b1', kind: 'build', nodeId: 'r/tools' } },
+    { t: 'job.queued', at: 4, job: { id: 'q1', kind: 'research', nodeId: 'r/tools' } },
+    { t: 'job.queued', at: 5, job: { id: 'q2', kind: 'research', nodeId: 'r/tools' } },
+    { t: 'job.queued', at: 6, job: { id: 'z', kind: 'mystery' } },
+  ]);
+  const rows = visibleJobRows(jobRows(o));
+  const texts = rows.map(jobText);
+  assert.equal(texts[0], 'Building Tools');
+  assert.equal(texts.filter((t) => t === 'Researching Tools').length, 2);
+  assert.ok(texts.includes('mystery'));
+  // planted fault: a tray that labels by kind only
+  const bad = (/** @type {any} */ r) => r.kind;
+  assert.throws(() => assert.equal(bad(rows[0]), 'Building Tools'));
+});

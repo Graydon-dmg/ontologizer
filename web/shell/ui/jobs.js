@@ -1,12 +1,12 @@
 // @ts-check
-import { jobRows } from '../jobs.js';
+import { jobRows, jobText, visibleJobRows } from '../jobs.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountJobs(el, shell) {
   el.classList.add('onto-jobs');
   el.hidden = true;
   function render() {
-    const rows = jobRows(shell.snapshot());
+    const rows = visibleJobRows(jobRows(shell.snapshot()));
     el.textContent = '';
     el.hidden = rows.length === 0;
     for (const r of rows) {
@@ -16,7 +16,7 @@ export function mountJobs(el, shell) {
       badge.className = 'badge ' + r.state;
       badge.textContent = r.state;
       const text = document.createElement('span');
-      text.textContent = `${r.kind}${r.label ? ' ' + r.label : ''}${r.error ? ' (' + r.error + ')' : ''}`;
+      text.textContent = jobText(r);
       row.append(badge, text);
       if (r.nodeId) {
         const id = r.nodeId;
