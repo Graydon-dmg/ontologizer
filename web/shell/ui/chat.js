@@ -30,7 +30,10 @@ export function mountChat(el, shell) {
   const onCite = (/** @type {string} */ id) => { focusNode(id); cite([id]); };
   shell.on('view', applyCite);
   shell.on('select', (/** @type {any} */ d) => { if (d && !d.nodeId && cited) cite(null); });
-  shell.on('side', (/** @type {any} */ d) => { if (d && d.active !== 'chat' && cited) cite(null); if (d && d.active === 'chat') setTimeout(() => input.focus(), 0); });
+  shell.on('side', (/** @type {any} */ d) => {
+    if (d && d.active !== 'chat' && cited) cite(null);
+    if (d && d.active === 'chat') { paint(); setTimeout(() => input.focus(), 0); }
+  });
 
   // --- layout
   const log = mk('div', 'chat-log');
@@ -229,8 +232,12 @@ export function mountChat(el, shell) {
     const o = shell.snapshot();
     const thread = chatThread(o);
     const pending = pendingQuestion(o);
-    // The live answer belongs to the pending question; once its reply is in the log, drop it.
-    if (live && live.done && !busy && !pending && !live.error) live = null;
+    // Keep the live answer until the saved copy (same msgId, or the failure reply) is in the log.
+    if (live && live.done && !busy) {
+      const saved = live.id && (o.chat || []).some((/** @type {any} */ m) => m.msgId === live?.id);
+      const failedSaved = live.error && thread.length && thread[thread.length - 1].reply && thread[thread.length - 1].reply.role === 'error';
+      if (saved || failedSaved) { live = null; pendingText = ''; }
+    }
     const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     log.replaceChildren();
     if (!thread.length && !live) log.append(starters());
@@ -242,21 +249,19 @@ export function mountChat(el, shell) {
       } else if (live) log.append(answerBlock(live, !live.done));
       else log.append(answerBlock({ status: 'Writing an answer…' }, true));
     }
-    if (live && !pending && pendingText && !thread.some((t) => !t.reply)) {
+    if (live && !pending && pendingText) {
       // chat.asked has not arrived yet: show the question and the answer so far.
       log.append(questionBlock({ text: pendingText }));
       log.append(answerBlock(live, !live.done));
     }
-    if (live && live.done && pending === null) pendingText = '';
     if (stick || busy) log.scrollTop = log.scrollHeight;
   }
   shell.on('event', (/** @type {any} */ d) => {
     const t = d && d.event && d.event.t;
     if (t === 'chat.asked' || t === 'chat.answered' || t === 'chat.failed') {
-      if (t !== 'chat.asked' && live && live.done) live = null;
       if (t === 'chat.asked') pendingText = '';
       paint();
-    } else if (t === 'node.added' || t === 'node.updated') {
+    } else if (t === 'node.added' || t === 'node.updated' || t === 'category.added') {
       if (!el.hidden) paint();
     }
   });

@@ -109,8 +109,9 @@ export function citeChip(ontology, id) {
 export function starterQuestions(ontology) {
   const cats = (ontology && ontology.categories ? ontology.categories : []).slice().sort((a, b) => a.index - b.index);
   const label = (/** @type {any} */ c) => (c && c.label) || '';
-  const subject = (ontology && (ontology.brief && ontology.brief.subject)) || (ontology && ontology.nodes && ontology.nodes[ontology.root] && ontology.nodes[ontology.root].label) || 'this topic';
-  const q = [`What should a beginner learn first about ${subject.toLowerCase() === subject ? subject : subject}?`];
+  const rootNode = ontology && ontology.nodes && ontology.nodes[ontology.root];
+  const subject = String((ontology && ontology.brief && ontology.brief.subject) || (rootNode && rootNode.label) || 'this topic').toLowerCase();
+  const q = [`What should a beginner learn first about ${subject}?`];
   if (cats.length >= 2) q.push(`How does ${label(cats[0])} relate to ${label(cats[1])}?`);
   else q.push('Which parts of this map connect the most?');
   if (cats.length >= 3) q.push(`Compare the main options in ${label(cats[2])}.`);
