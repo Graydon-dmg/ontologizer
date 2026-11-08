@@ -18,6 +18,7 @@ import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
 import { computeInsets, sameInsets } from './insets.js';
+import { createExplainRequests } from './explain.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -83,6 +84,9 @@ const shell = {
   on: bus.on,
   emit: bus.emit,
   openExplain: (/** @type {string} */ nodeId) => bus.emit('explain', { nodeId }),
+  /** @type {any} */ explainRequests: null,
+  /** Write an explanation for a node unless one exists or is being written. */
+  explainNode: (/** @type {string} */ nodeId) => shell.explainRequests.request(nodeId),
 };
 
 function ctx() {
@@ -150,6 +154,29 @@ const mounts = [
 for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
+}
+
+shell.explainRequests = createExplainRequests({
+  act: (a) => shell.act(a),
+  snapshot: () => source.snapshot(),
+  onChange: () => bus.emit('explain-request', {}),
+});
+// A request the server accepted but whose job never arrived: re-open the stream once, then report it.
+setInterval(() => {
+  if (shell.explainRequests.expire() && /** @type {any} */ (source).reconnect) /** @type {any} */ (source).reconnect();
+}, 1000);
+
+// Connection banner: shown while the page cannot reach ontologizer.
+{
+  const banner = $('conn');
+  /** @type {any} */
+  let t = null;
+  const show = (/** @type {string} */ s) => {
+    clearTimeout(t);
+    if (s === 'lost') t = setTimeout(() => { banner.hidden = false; }, 1500);
+    else banner.hidden = true;
+  };
+  if (/** @type {any} */ (source).onStatus) /** @type {any} */ (source).onStatus(show);
 }
 
 // Tell the view how much room the floating panels take: --onto-inset-* on the mount element, and

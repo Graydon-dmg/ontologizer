@@ -43,3 +43,6 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
   #explain { top: max(125px, calc(var(--topbar-bottom, 56px) + 10px)); }
   .view-toggle button, .seg button { padding: 3px 8px; }
 }
+#conn { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60; padding: 8px 14px; border-radius: 8px;
+  background: var(--fg); color: var(--bg); font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+#conn[hidden] { display: none; }

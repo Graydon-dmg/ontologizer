@@ -1,5 +1,5 @@
 // @ts-check
-import { explainModel } from '../explain.js';
+import { explainModel, explainStatus } from '../explain.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountExplain(el, shell) {
@@ -39,7 +39,16 @@ export function mountExplain(el, shell) {
       el.appendChild(box);
     }
     if (!a) {
-      el.appendChild(mk('p', m.researching ? 'Researching…' : 'No explanation yet. Use Explain on the node menu.', 'researching'));
+      const id = openId;
+      const st = explainStatus(shell.snapshot(), id, shell.explainRequests && shell.explainRequests.get(id));
+      if (st.kind === 'writing') {
+        el.appendChild(mk('p', 'Writing an explanation…', 'researching'));
+      } else {
+        if (st.kind === 'failed') el.appendChild(mk('p', st.error || 'The explanation failed.', 'explain-error'));
+        const b = mk('button', st.kind === 'failed' ? 'Try again' : 'Write an explanation', 'explain-write');
+        b.addEventListener('click', () => shell.explainNode(id));
+        el.appendChild(b);
+      }
     } else {
       if (a.keyFacts && a.keyFacts.length) {
         el.appendChild(mk('h3', 'Key facts'));
@@ -86,7 +95,8 @@ export function mountExplain(el, shell) {
     const o = shell.snapshot();
     const n = o.nodes[openId];
     const jobs = Object.values(o.jobs).filter((/** @type {any} */ j) => j.nodeId === openId).map((/** @type {any} */ j) => j.id + j.state).join(',');
-    return JSON.stringify([n && n.article, n && n.summary, jobs, o.view.lens, o.lenses]);
+    const q = shell.explainRequests && shell.explainRequests.get(openId);
+    return JSON.stringify([n && n.article, n && n.summary, jobs, o.view.lens, o.lenses, q && q.state, q && q.error]);
   }
 
   shell.on('explain', (/** @type {any} */ d) => { if (d && d.nodeId) open(d.nodeId); });
@@ -95,6 +105,7 @@ export function mountExplain(el, shell) {
     const n = shell.snapshot().nodes[d.nodeId];
     if (n && n.article) open(d.nodeId);
   });
+  shell.on('explain-request', () => { if (openId) { lastKey = keyFor(); render(); } });
   shell.on('event', () => {
     if (!openId) return;
     const k = keyFor();

@@ -24,3 +24,5 @@
 
 .onto-ticker { position: fixed; left: 12px; bottom: 12px; z-index: 30; max-width: min(480px, 60vw); padding: 6px 12px; background: var(--panel); color: var(--fg); border-radius: 14px; font: 13px system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .4s; cursor: pointer; pointer-events: none; }
 .onto-ticker.on { opacity: 1; pointer-events: auto; }
+.onto-explain .explain-error { color: var(--fg); border-left: 3px solid var(--muted); padding-left: 8px; }
+.onto-explain .explain-write { margin: 6px 0; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--fg); background: var(--fg); color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; }

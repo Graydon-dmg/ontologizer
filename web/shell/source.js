@@ -13,7 +13,7 @@ import { JOB_ACTIONS, isValidAction, viewPatchFor } from './actions.js';
 /**
  * @param {{ search?: string, speed?: number, fetch?: typeof fetch, EventSource?: any,
  *           setTimeout?: (fn: () => void, ms: number) => any, base?: string,
- *           jobDelayMs?: number, reconnectMs?: number }} [params]
+ *           jobDelayMs?: number, reconnectMs?: number, actMs?: number }} [params]
  */
 export function createSource(params = {}) {
   const search = params.search ?? (globalThis.location ? globalThis.location.search : '');
@@ -26,6 +26,7 @@ export function createSource(params = {}) {
   const base = params.base ?? '';
   const jobDelayMs = params.jobDelayMs ?? 1000;
   const reconnectMs = params.reconnectMs ?? 1000;
+  const actMs = params.actMs ?? 10000;
 
   /** @type {Ontology} */
   let ontology = emptyOntology();
@@ -44,8 +45,23 @@ export function createSource(params = {}) {
     }
   }
 
+  /** @type {'connecting'|'live'|'lost'} */
+  let status = 'connecting';
+  /** @type {Set<(s: string) => void>} */
+  const statusListeners = new Set();
+  /** @param {'connecting'|'live'|'lost'} s */
+  const setStatus = (s) => {
+    if (s === status) return;
+    status = s;
+    for (const fn of statusListeners) { try { fn(s); } catch (err) { console.error(err); } }
+  };
+
   const common = {
     snapshot: () => ontology,
+    /** 'connecting' | 'live' | 'lost' (server mode: the event stream's state) */
+    status: () => status,
+    /** @param {(s: string) => void} fn */
+    onStatus(fn) { statusListeners.add(fn); return () => { statusListeners.delete(fn); }; },
     /** @param {Listener} fn */
     subscribe(fn) {
       listeners.add(fn);
@@ -55,6 +71,7 @@ export function createSource(params = {}) {
 
   if (fixture) {
     let jobSeq = 0;
+    setStatus('live');
     const done = (async () => {
       const res = await fetchFn(`${base}/fixtures/${encodeURIComponent(fixture)}.events.jsonl`);
       if (!res.ok) throw new Error(`fixture ${fixture}: HTTP ${res.status}`);
@@ -99,7 +116,9 @@ export function createSource(params = {}) {
   let closed = false;
   const open = () => {
     es = new ES(`${base}/api/events?from=${received}`);
+    es.onopen = () => setStatus('live');
     es.onmessage = (/** @type {{ data: string }} */ m) => {
+      setStatus('live');
       let e;
       try { e = JSON.parse(m.data); } catch { return; }
       received++;
@@ -108,6 +127,7 @@ export function createSource(params = {}) {
     // The browser would reconnect to the same URL and replay from 0 (double counting).
     // Close and resume from the number of events already folded instead.
     es.onerror = () => {
+      setStatus('lost');
       if (es) es.close();
       if (!closed) later(open, reconnectMs);
     };
@@ -119,13 +139,31 @@ export function createSource(params = {}) {
     done: Promise.resolve(),
     /** @param {any} action */
     async act(action) {
-      const res = await fetchFn(`${base}/api/action`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(action),
-      });
-      try { return await res.json(); } catch { return { ok: res.ok }; }
+      // A request the server never answers (it stopped, or the connection hangs) fails after actMs.
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctl ? later(() => ctl.abort(), actMs) : null;
+      let res;
+      try {
+        res = await fetchFn(`${base}/api/action`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(action),
+          signal: ctl ? ctl.signal : undefined,
+        });
+      } catch (err) {
+        const aborted = ctl && ctl.signal.aborted;
+        return { ok: false, error: aborted ? 'the server did not answer. Is ontologizer still running?'
+          : 'cannot reach the server. Is ontologizer still running?' };
+      } finally {
+        if (timer && typeof clearTimeout === 'function') { try { clearTimeout(timer); } catch { /* fake timer */ } }
+      }
+      let body = null;
+      try { body = await res.json(); } catch { body = null; }
+      if (!res.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
+      return body || { ok: true };
     },
+    /** Drop the event stream and resume from the last folded event. */
+    reconnect() { if (es) es.close(); open(); },
     close() { closed = true; if (es) es.close(); },
   };
 }
