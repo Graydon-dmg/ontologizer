@@ -56,11 +56,7 @@ ontologizer new
 
 You will see a few context check questions, then the map streams in live in your browser. When you like it, save it with `ontologizer save [name]`.
 
-No key or network yet? Watch the bundled demo build offline:
-
-```bash
-ontologizer load demo --replay
-```
+No key or network yet? Run `ontologizer load demo --replay` to watch the bundled demo build itself offline.
 
 ## Commands
 

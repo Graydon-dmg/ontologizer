@@ -7,8 +7,8 @@ Record at the top of the run: commit `_______`, date `_______`, browser `_______
 ## 0. Setup: install the tarball, exactly as users will get it
 
 ```bash
-npm pack                                       # ontologizer-0.1.0.tgz
-npm i -g --prefix /tmp/onto-rc ./ontologizer-0.1.0.tgz   # needs Node 22+
+npm pack                                       # ontologizer-1.0.0.tgz
+npm i -g --prefix /tmp/onto-rc ./ontologizer-1.0.0.tgz   # needs Node 22+
 export PATH=/tmp/onto-rc/bin:$PATH
 export ONTOLOGIZER_HOME=/tmp/onto-rc-home      # a throwaway store; delete it to start fresh
 rm -rf "$ONTOLOGIZER_HOME"
