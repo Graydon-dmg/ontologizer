@@ -4,14 +4,23 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { registerView } from '../../shared/view.js';
-import { boundsOf, toWorld } from './math.js';
-import { descendants } from './graphmath.js';
+import { boundsOf, toWorld, treeDistance, arcPoints } from './math.js';
+import { descendants, neighborhood, ringsFrom, labelVisible } from './graphmath.js';
 
 const WORLD = 600;
 const MIN_RADIUS = 3;
 const IDLE_MS = 5000;
 const BOUNDS_LERP = 0.1;
 const RADIUS_REFRESH_MS = 500;
+// Contract: apex height = 40 * treeDistance, in world units (the floor is WORLD = 600 across).
+const ARC_HEIGHT_SCALE = 1;
+const TREE_LINK_Y = 0.3; // parent links lie just above the floor
+const ARC_POINTS = 24; // segments, so 25 points
+const DASH_UNIT = 1.5; // tokens' dash lengths are px; world units are about this much bigger
+const CLICK_SLOP = 5;
+
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /** Parse 'hsl(210 68% 58%)' into [h, s, l]. */
 function parseHsl(css) {
@@ -22,12 +31,26 @@ function parseHsl(css) {
 class OntoSky extends (globalThis.HTMLElement || Object) {
   constructor() {
     super();
-    /** @type {Map<string, { mesh: any, label: any }>} */
+    /** @type {Map<string, any>} per node: mesh, label, px, w (layout world pos), vis, ring, ghost, badge, spawnAt, base, lastOp */
     this.nodes = new Map();
+    /** @type {Map<string, { line: any, edge: any, animate: boolean, start: number|null, h: number, last: number[], lastOp: number }>} */
+    this.arcs = new Map();
+    /** @type {Map<string, { mesh: any, nodeId: string }>} */
+    this.halos = new Map();
+    this.hoveredId = null;
+    this.collapsed = new Set();
+    this.hiddenByCollapse = new Set();
+    this.bright = null;
+    this.rings = new Map();
+    this.cacheKey = '';
+    this.glide = null;
+    this.pendingMove = null;
+    this.down = null;
     this.focusId = '';
     this.lensId = null;
     this.filter = null;
     this.highlighted = [];
+    this.hlKey = 0;
     this.raf = 0;
     this.idleTimer = 0;
     this.mounted = false;
@@ -83,6 +106,26 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.floorMat = floorMat;
 
     this.sphereGeo = new THREE.SphereGeometry(1, 24, 16);
+    this.haloGeo = new THREE.RingGeometry(1.3, 1.7, 48);
+    // Dotted "no sources" ring in a node's unit-sphere space (lies on the floor at the sphere's foot).
+    const ringPts = [];
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * Math.PI * 2;
+      ringPts.push(new THREE.Vector3(Math.cos(a) * 1.5, -1, Math.sin(a) * 1.5));
+    }
+    this.srcGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+    this.srcMat = new THREE.LineDashedMaterial({ color: 0xa9b1c2, dashSize: 0.08, gapSize: 0.12 });
+    this.srcRing = new THREE.LineLoop(this.srcGeo, this.srcMat);
+    this.srcRing.computeLineDistances();
+    this.raycaster = new THREE.Raycaster();
+
+    // Structure on the floor: one segment per visible parent link, refilled each frame.
+    this.treeCap = 0;
+    this.treeGeo = new THREE.BufferGeometry();
+    this.treeMat = new THREE.LineBasicMaterial({ color: 0x5a6478, transparent: true, opacity: 0.55 });
+    this.treeLines = new THREE.LineSegments(this.treeGeo, this.treeMat);
+    this.treeLines.frustumCulled = false;
+    scene.add(this.treeLines);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -112,7 +155,12 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.ro.observe(el);
     this.resize();
 
+    this.startDist = camera.position.distanceTo(controls.target);
     const snap = ctx.snapshot();
+    this.collapsed = new Set((snap.view && snap.view.collapsed) || []);
+    for (const j of Object.values(snap.jobs || {})) {
+      if (j.nodeId && (j.state === 'queued' || j.state === 'running')) this.addHalo(j.id, j.nodeId);
+    }
     this.focusId = (snap.view && snap.view.focus) || snap.root || '';
     this.bounds = boundsOf(ctx.layout.positions());
     this.radiiAt = 0;
@@ -126,7 +174,151 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       this.frame();
     };
     this.raf = requestAnimationFrame(loop);
+
+    const dom = renderer.domElement;
+    this.onDown = (ev) => { this.down = { x: ev.clientX, y: ev.clientY }; };
+    this.onUp = (ev) => {
+      const d = this.down;
+      this.down = null;
+      if (!d || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) >= CLICK_SLOP) return;
+      const nodeId = this.pick(ev.clientX, ev.clientY);
+      // Same shape as the 2D view: screen x, y for a node; a background click is { nodeId: null }.
+      ctx.emit('select', nodeId ? { nodeId, x: ev.clientX, y: ev.clientY } : { nodeId: null });
+    };
+    this.onMove = (ev) => { this.pendingMove = { x: ev.clientX, y: ev.clientY }; };
+    this.onLeave = () => { this.pendingMove = null; this.setHover(null); };
+    this.onDbl = (ev) => {
+      const nodeId = this.pick(ev.clientX, ev.clientY);
+      if (nodeId) ctx.emit('focus', { nodeId });
+    };
+    dom.addEventListener('pointerdown', this.onDown);
+    dom.addEventListener('pointerup', this.onUp);
+    dom.addEventListener('pointermove', this.onMove);
+    dom.addEventListener('pointerleave', this.onLeave);
+    dom.addEventListener('dblclick', this.onDbl);
     this.mounted = true;
+  }
+
+  /** Topmost visible node under a screen point, or null. @param {number} cx @param {number} cy */
+  pick(cx, cy) {
+    const dom = this.renderer.domElement;
+    const r = dom.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const meshes = [];
+    for (const st of this.nodes.values()) if (st.vis) meshes.push(st.mesh);
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    return hit ? hit.object.userData.id : null;
+  }
+
+  /** @param {string|null} id */
+  setHover(id) {
+    if (id === this.hoveredId) return;
+    this.hoveredId = id;
+    this.renderer.domElement.style.cursor = id ? 'pointer' : '';
+    this.ctx.emit('hover', { nodeId: id });
+  }
+
+  /** Create the cross-link arc for an edge if it is not drawn yet. */
+  ensureArc(edge, animate) {
+    if (this.arcs.has(edge.id)) return;
+    const st = this.tk.edgeStyle(edge.type);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((ARC_POINTS + 1) * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    const color = new THREE.Color(st.color);
+    const mat = st.dash
+      ? new THREE.LineDashedMaterial({ color, transparent: true, dashSize: st.dash[0] * DASH_UNIT, gapSize: st.dash[1] * DASH_UNIT })
+      : new THREE.LineBasicMaterial({ color, transparent: true });
+    const line = new THREE.Line(geo, mat);
+    line.frustumCulled = false;
+    line.visible = false;
+    const h = 40 * treeDistance(edge.from, edge.to, this.ctx.snapshot()) * ARC_HEIGHT_SCALE;
+    this.scene.add(line);
+    this.arcs.set(edge.id, { line, edge, animate, start: null, h, last: [NaN], lastOp: -1 });
+  }
+
+  /** Halo ring on a node while one of its jobs runs. */
+  addHalo(jobId, nodeId) {
+    if (this.halos.has(jobId)) return;
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x7fb2ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(this.haloGeo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    this.scene.add(mesh);
+    this.halos.set(jobId, { mesh, nodeId });
+  }
+
+  removeHalo(jobId) {
+    const h = this.halos.get(jobId);
+    if (!h) return;
+    this.scene.remove(h.mesh);
+    h.mesh.material.dispose();
+    this.halos.delete(jobId);
+  }
+
+  /** Restyle a node's sphere from its current snapshot data (status, article, sources). */
+  restyle(id) {
+    const st = this.nodes.get(id);
+    const n = this.ctx.snapshot().nodes[id];
+    if (!st || !n) return;
+    st.base = n.status === 'pending' ? 0.45 : 1;
+    const mat = st.mesh.material;
+    if (n.article) { mat.emissive.copy(mat.color); mat.emissiveIntensity = 0.6; }
+    else { mat.emissive.setRGB(0, 0, 0); mat.emissiveIntensity = 1; }
+    const noSources = !(n.sources && n.sources.length) && n.origin !== 'seed';
+    if (noSources && !st.ring) { st.ring = this.srcRing.clone(); st.mesh.add(st.ring); }
+    else if (!noSources && st.ring) { st.mesh.remove(st.ring); st.ring = null; }
+    if (st.label.element.textContent !== n.label) st.label.element.textContent = n.label;
+  }
+
+  /** Rebuild every ghost label for the current lens (none when no lens is set). */
+  refreshGhosts() {
+    for (const st of this.nodes.values()) {
+      if (st.ghost) { st.mesh.remove(st.ghost); st.ghost.element.remove(); st.ghost = null; }
+    }
+    if (!this.lensId) return;
+    const lens = this.ctx.snapshot().lenses[this.lensId];
+    if (!lens) return;
+    for (const [id, a] of Object.entries(lens.analogs || {})) {
+      const st = this.nodes.get(id);
+      if (!st || !a) continue;
+      const div = document.createElement('div');
+      div.textContent = a.label + (a.breaks ? ' \u26A0' : '');
+      if (a.breaks) div.title = a.breaks;
+      div.style.cssText = `color:${this.tk.THEME.dark.fg};font:italic 11px system-ui,sans-serif;white-space:nowrap;` +
+        'text-shadow:0 0 3px #000;pointer-events:none;opacity:0.7;';
+      const g = new CSS2DObject(div);
+      g.position.set(0, -1.3, 0);
+      g.visible = false;
+      st.mesh.add(g);
+      st.ghost = g;
+    }
+  }
+
+  /** Add or remove "+N" badges to match the collapsed set. */
+  refreshBadges() {
+    const snap = this.ctx.snapshot();
+    for (const [id, st] of this.nodes) {
+      const on = this.collapsed.has(id);
+      if (on && !st.badge) {
+        const div = document.createElement('div');
+        div.style.cssText = `color:${this.tk.THEME.dark.fg};background:${this.tk.THEME.dark.panel};` +
+          'font:600 11px system-ui,sans-serif;padding:1px 5px;border-radius:8px;border:1px solid #444;pointer-events:none;';
+        const b = new CSS2DObject(div);
+        b.position.set(1.2, 1.1, 0);
+        st.mesh.add(b);
+        st.badge = b;
+      } else if (!on && st.badge) {
+        st.mesh.remove(st.badge);
+        st.badge.element.remove();
+        st.badge = null;
+      }
+      if (st.badge) st.badge.element.textContent = `+${descendants(id, snap)}`;
+    }
   }
 
   /** Create sphere + label for a node if it is in the ontology and not yet drawn. */
@@ -144,7 +336,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     } else {
       color.set(tk.THEME.dark.fg);
     }
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 });
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1, transparent: true });
     const mesh = new THREE.Mesh(this.sphereGeo, mat);
     mesh.userData.id = id;
     mesh.visible = false;
@@ -157,7 +349,8 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     const label = new CSS2DObject(div);
     label.visible = false;
     mesh.add(label);
-    this.nodes.set(id, { mesh, label });
+    this.nodes.set(id, { mesh, label, w: null, vis: false, base: 1, lastOp: -1, spawnAt: 0 });
+    this.restyle(id);
     this.radiiAt = 0; // descendants changed
   }
 
@@ -188,18 +381,177 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       }
     }
 
+    for (const edge of snap.edges) if (!this.arcs.has(edge.id)) this.ensureArc(edge, false);
+
+    // Derived caches, rebuilt only when the node count, focus or highlight changes.
+    // The ontology may be empty at mount (no root yet): fall back to the root once it exists.
+    const focus = this.focusId || snap.root || '';
+    const key = `${this.nodes.size}|${snap.edges.length}|${focus}|${this.hlKey}`;
+    if (key !== this.cacheKey) {
+      this.cacheKey = key;
+      this.rings = ringsFrom(focus, snap);
+      this.bright = null;
+      if (this.highlighted.length) {
+        this.bright = new Set();
+        for (const id of this.highlighted) for (const x of neighborhood(id, snap)) this.bright.add(x);
+      }
+      this.hiddenByCollapse.clear();
+      if (this.collapsed.size) {
+        for (const id of this.nodes.keys()) {
+          let cur = snap.nodes[id] && snap.nodes[id].parent;
+          const seen = new Set();
+          while (cur && !seen.has(cur)) {
+            if (this.collapsed.has(cur)) { this.hiddenByCollapse.add(id); break; }
+            seen.add(cur);
+            cur = snap.nodes[cur] ? snap.nodes[cur].parent : null;
+          }
+        }
+      }
+      this.refreshBadges();
+    }
+
+    const f = this.filter;
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const zoomK = dist > 0 ? this.startDist / dist : 1;
+    const dim = tk.MOTION.hoverDim;
+
+    // Pass 1: layout world positions.
     for (const [id, st] of this.nodes) {
       const p = positions.get(id);
+      st.w = p && snap.nodes[id] ? toWorld(p, b, WORLD) : null;
+    }
+    // Pass 2: drawn position (spawn glide), visibility, opacity, labels.
+    for (const [id, st] of this.nodes) {
       const n = snap.nodes[id];
-      if (!p || !n) { st.mesh.visible = false; continue; }
+      let vis = !!(st.w && n);
+      if (vis && id !== snap.root) {
+        if (this.hiddenByCollapse.has(id)) vis = false;
+        else if (f && f.categories && !f.categories.includes(n.category)) vis = false;
+        else if (f && f.maxDepth != null && n.depth > f.maxDepth) vis = false;
+      }
+      st.vis = vis;
+      st.mesh.visible = vis;
+      if (!vis) continue;
       const r = Math.max(MIN_RADIUS, (st.px ?? tk.nodeRadius(0)) * scale);
-      const w = toWorld(p, b, WORLD);
-      st.mesh.position.set(w[0], r, w[2]);
+      let [x, , z] = st.w;
+      if (st.spawnAt) {
+        const t = (now - st.spawnAt) / tk.MOTION.spawnMs;
+        const pw = n.parent && this.nodes.get(n.parent) ? this.nodes.get(n.parent).w : null;
+        if (t >= 1 || !pw) st.spawnAt = 0;
+        else {
+          const e = easeOutCubic(Math.max(0, t));
+          x = pw[0] + (x - pw[0]) * e;
+          z = pw[2] + (z - pw[2]) * e;
+        }
+      }
+      st.mesh.position.set(x, r, z);
       st.mesh.scale.setScalar(r);
-      st.mesh.visible = true;
+      st.r = r;
+      const dimmed = this.bright && !this.bright.has(id);
+      const op = dimmed ? Math.min(st.base, dim) : st.base;
+      if (op !== st.lastOp) {
+        st.lastOp = op;
+        st.mesh.material.opacity = op;
+        const lop = dimmed ? dim : 1;
+        st.label.element.style.opacity = String(lop);
+        if (st.ghost) st.ghost.element.style.opacity = String(0.7 * lop);
+        if (st.badge) st.badge.element.style.opacity = String(lop);
+      }
       // Label is a child of the mesh, so its offset is in unit-sphere space.
       st.label.position.set(0, 1.6, 0);
-      st.label.visible = n.depth <= tk.LABEL_RULE.alwaysDepth || id === this.focusId;
+      st.label.visible = labelVisible(n, {
+        k: zoomK, focus, hovered: this.hoveredId, rings: this.rings, rule: tk.LABEL_RULE,
+      });
+      if (st.ghost) st.ghost.visible = true;
+      if (st.badge) st.badge.visible = true;
+    }
+    for (const st of this.nodes.values()) {
+      if (st.vis) continue;
+      st.label.visible = false;
+      if (st.ghost) st.ghost.visible = false;
+      if (st.badge) st.badge.visible = false;
+    }
+
+    // Parent links on the floor, between drawn positions (so they follow the spawn glide).
+    if (!this.treeCap || this.nodes.size > this.treeCap) {
+      this.treeCap = Math.max(64, this.nodes.size * 2);
+      this.treeGeo.setAttribute('position',
+        new THREE.BufferAttribute(new Float32Array(this.treeCap * 6), 3).setUsage(THREE.DynamicDrawUsage));
+    }
+    const tp = this.treeGeo.attributes.position;
+    let seg = 0;
+    for (const [id, st] of this.nodes) {
+      if (!st.vis) continue;
+      const n = snap.nodes[id];
+      const par = n && n.parent ? this.nodes.get(n.parent) : null;
+      if (!par || !par.vis) continue;
+      const a = par.mesh.position, c = st.mesh.position;
+      tp.setXYZ(seg * 2, a.x, TREE_LINK_Y, a.z);
+      tp.setXYZ(seg * 2 + 1, c.x, TREE_LINK_Y, c.z);
+      seg++;
+    }
+    tp.needsUpdate = true;
+    this.treeGeo.setDrawRange(0, seg * 2);
+    this.treeMat.opacity = this.bright ? 0.55 * dim : 0.55;
+
+    // Arcs: endpoints at sphere centers; rewrite points in place only when an end moved.
+    for (const arc of this.arcs.values()) {
+      const a = this.nodes.get(arc.edge.from), c = this.nodes.get(arc.edge.to);
+      const show = !!(a && c && a.vis && c.vis);
+      arc.line.visible = show;
+      if (!show) continue;
+      const pa = a.mesh.position, pc = c.mesh.position;
+      if (arc.last[0] !== pa.x || arc.last[1] !== pa.y || arc.last[2] !== pa.z || arc.last[3] !== pc.x || arc.last[4] !== pc.y || arc.last[5] !== pc.z) {
+        arc.last = [pa.x, pa.y, pa.z, pc.x, pc.y, pc.z];
+        const pts = arcPoints([pa.x, pa.y, pa.z], [pc.x, pc.y, pc.z], arc.h, ARC_POINTS);
+        const attr = arc.line.geometry.attributes.position;
+        for (let i = 0; i < pts.length; i++) attr.setXYZ(i, pts[i][0], pts[i][1], pts[i][2]);
+        attr.needsUpdate = true;
+        if (arc.line.material.isLineDashedMaterial) arc.line.computeLineDistances();
+      }
+      let count = ARC_POINTS + 1;
+      if (arc.animate) {
+        if (arc.start === null) arc.start = now;
+        const t = (now - arc.start) / tk.MOTION.spawnMs;
+        if (t >= 1) arc.animate = false;
+        else count = Math.max(2, Math.ceil((ARC_POINTS + 1) * easeOutCubic(Math.max(0, t))));
+      }
+      arc.line.geometry.setDrawRange(0, count);
+      const op = this.bright && !(this.bright.has(arc.edge.from) && this.bright.has(arc.edge.to)) ? dim : 0.85;
+      if (op !== arc.lastOp) { arc.lastOp = op; arc.line.material.opacity = op; }
+    }
+
+    // Halos pulse around their node.
+    const pulse = 0.5 + 0.5 * Math.sin(now / 250);
+    for (const h of this.halos.values()) {
+      const st = this.nodes.get(h.nodeId);
+      h.mesh.visible = !!(st && st.vis);
+      if (!h.mesh.visible) continue;
+      h.mesh.position.set(st.mesh.position.x, 0.6, st.mesh.position.z);
+      h.mesh.scale.setScalar(st.r * (1 + 0.3 * pulse));
+      h.mesh.material.opacity = 0.25 + 0.5 * (1 - pulse);
+    }
+
+    // Camera glide toward the focus node, keeping the view angle (camera moves by the target's offset).
+    if (this.glide) {
+      const g = this.glide;
+      const st = this.nodes.get(g.id);
+      if (!st || !st.vis) this.glide = null;
+      else {
+        const t = Math.min(1, (now - g.start) / tk.MOTION.focusMs);
+        const next = g.from.clone().lerp(st.mesh.position, easeInOut(t));
+        const delta = next.clone().sub(this.controls.target);
+        this.camera.position.add(delta);
+        this.controls.target.copy(next);
+        if (t >= 1) this.glide = null;
+      }
+    }
+
+    // At most one raycast per animation frame for hover.
+    if (this.pendingMove) {
+      const m = this.pendingMove;
+      this.pendingMove = null;
+      this.setHover(this.pick(m.x, m.y));
     }
 
     this.controls.update();
@@ -209,22 +561,65 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
 
   /** @param {{ t: string }} event */
   apply(event) {
+    const e = /** @type {any} */ (event);
     switch (event.t) {
-      case 'node.added':
-        this.ensureNode(/** @type {any} */ (event).node.id);
+      case 'node.added': {
+        this.ensureNode(e.node.id);
+        const st = this.nodes.get(e.node.id);
+        if (st && this.mounted) st.spawnAt = performance.now();
+        if (this.lensId) this.refreshGhosts();
+        break;
+      }
+      case 'node.updated':
+        this.restyle(e.id);
+        break;
+      case 'edge.added':
+        this.ensureArc(e.edge, true);
+        break;
+      case 'job.queued':
+      case 'job.started':
+        if (e.job && e.job.nodeId) this.addHalo(e.job.id, e.job.nodeId);
+        break;
+      case 'job.done':
+      case 'job.failed':
+        if (e.job) this.removeHalo(e.job.id);
+        break;
+      case 'lens.added':
+        if (e.lens && e.lens.id === this.lensId) this.refreshGhosts();
+        break;
+      case 'lens.analog':
+        if (e.lensId === this.lensId) this.refreshGhosts();
+        break;
+      case 'view.changed':
+        if (e.patch && Array.isArray(e.patch.collapsed)) {
+          this.collapsed = new Set(e.patch.collapsed);
+          this.cacheKey = ''; // rebuild hidden set and badges
+        }
+        if (e.patch && e.patch.focus) this.setFocus(e.patch.focus);
         break;
       default:
-        break; // W3 adds the rest
+        break;
     }
   }
 
   /** @param {string} id */
-  setFocus(id) { this.focusId = id; }
+  setFocus(id) {
+    const st = this.nodes.get(id);
+    if (!st) return;
+    this.focusId = id;
+    this.glide = { id, from: this.controls.target.clone(), start: performance.now() };
+  }
   /** @param {string|null} id */
-  setLens(id) { this.lensId = id; }
+  setLens(id) {
+    this.lensId = id;
+    this.refreshGhosts();
+  }
   setFilter(f) { this.filter = f; }
   /** @param {string[]} ids */
-  highlight(ids) { this.highlighted = ids; }
+  highlight(ids) {
+    this.highlighted = ids || [];
+    this.hlKey = (this.hlKey || 0) + 1;
+  }
 
   unmount() {
     cancelAnimationFrame(this.raf);
@@ -233,13 +628,35 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.mounted = false;
     this.ctx.layout.off('tick', this.tick);
     this.ro.disconnect();
+    const dom = this.renderer.domElement;
+    dom.removeEventListener('pointerdown', this.onDown);
+    dom.removeEventListener('pointerup', this.onUp);
+    dom.removeEventListener('pointermove', this.onMove);
+    dom.removeEventListener('pointerleave', this.onLeave);
+    dom.removeEventListener('dblclick', this.onDbl);
+    this.glide = null;
+    for (const { line } of this.arcs.values()) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      line.material.dispose();
+    }
+    this.arcs.clear();
+    for (const id of [...this.halos.keys()]) this.removeHalo(id);
+    this.haloGeo.dispose();
+    this.srcGeo.dispose();
+    this.srcMat.dispose();
+    this.scene.remove(this.treeLines);
+    this.treeGeo.dispose();
+    this.treeMat.dispose();
     this.controls.removeEventListener('start', this.onStart);
     this.controls.removeEventListener('end', this.onEnd);
     this.controls.dispose();
-    for (const { mesh, label } of this.nodes.values()) {
+    for (const { mesh, label, ghost, badge } of this.nodes.values()) {
       mesh.material.dispose();
       mesh.remove(label);
       label.element.remove();
+      if (ghost) { mesh.remove(ghost); ghost.element.remove(); }
+      if (badge) { mesh.remove(badge); badge.element.remove(); }
       this.scene.remove(mesh);
     }
     this.nodes.clear();
