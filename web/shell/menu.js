@@ -38,3 +38,31 @@ export function runMenuItem(item, nodeId, shell) {
   if (item.open === 'explain') shell.openExplain(nodeId);
   return undefined;
 }
+
+/** No item may fire this soon after the menu opened (ms). */
+export const MENU_ARM_MS = 300;
+/** The menu opens this far from the pointer, so no item sits under it. */
+export const MENU_OFFSET_PX = 8;
+
+/**
+ * Guards menu items against the tail of the gesture that opened the menu (a phantom click
+ * runs a paid model call). An item fires only when:
+ *   - at least MENU_ARM_MS have passed since the menu opened, and
+ *   - the press started inside this open menu (a pointerdown after it opened),
+ *     or it is a keyboard activation (click with detail 0).
+ */
+export function createMenuGuard(armMs = MENU_ARM_MS) {
+  let openedAt = -Infinity;
+  let pressedInside = false;
+  return {
+    /** @param {number} now */
+    opened(now) { openedAt = now; pressedInside = false; },
+    /** A pointerdown inside the open menu. @param {number} now */
+    pointerDownInside(now) { if (now >= openedAt) pressedInside = true; },
+    /** @param {number} now @param {boolean} keyboard */
+    allow(now, keyboard) {
+      if (now - openedAt < armMs) return false;
+      return keyboard || pressedInside;
+    },
+  };
+}
