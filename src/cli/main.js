@@ -56,8 +56,9 @@ export async function main(argv, over = {}) {
     .fail((msg, err) => {
       failed = true;
       if (err) throw err;
-      deps.stderr.write(`${msg}\nRun ontologizer --help for usage.\n`);
+      // Throwing stops yargs here, so a command with a bad flag never runs (no half-started server).
       code = 1;
+      throw new CliError(`${msg}\nRun ontologizer --help for usage.`, 1);
     })
     .wrap(Math.min(100, process.stdout.columns || 100));
   for (const mod of await loadCommands()) cli.command(mod);

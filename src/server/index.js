@@ -301,7 +301,7 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
    */
   async function startRosetta(persona, name, key) {
     const jobId = `rosetta-${process.pid}-${++rosettaSeq}`;
-    const job = { id: jobId, kind: 'rosetta' };
+    const job = { id: jobId, kind: 'rosetta', persona };
     const run = { jobId, lensId: /** @type {string|null} */ (null) };
     rosettaRuns.set(key, run);
     /** @type {(v: any) => void} */

@@ -1,7 +1,7 @@
 // @ts-check
 import { CliError } from '../deps.js';
 import { showBanner, packageVersion } from '../banner.js';
-import { engineFor, rethrowAuth, serveSession, untilInterrupt } from '../serve.js';
+import { engineFor, rethrowAuth, serveSession, untilInterrupt, checkPort } from '../serve.js';
 
 /** Save under `name`, or name-2, name-3 when taken. @param {any} store @param {string} id @param {string} name */
 function saveUnique(store, id, name) {
@@ -66,7 +66,7 @@ export async function handler(argv) {
 
   const id = store.createDraft(brief, name);
   engine = await engineFor({ deps, store, id, needKey: true });
-  const srv = await serveSession({ deps, store, engine, id, open: argv.open });
+  const srv = await serveSession({ deps, store, engine, id, open: argv.open, port: checkPort(argv.port) });
   const off = store.subscribe(id, (/** @type {any} */ ev) => {
     if (ev.t === 'category.added') deps.stdout.write(`  + ${ev.category.label}\n`);
   });
@@ -120,6 +120,7 @@ export default {
   builder: (/** @type {any} */ y) => y
     .option('context', { type: 'string', describe: 'What you want to explore, and why' })
     .option('yes', { type: 'boolean', alias: 'y', describe: 'Skip all questions' })
+    .option('port', { type: 'number', default: 0, describe: 'Port to serve on (default: a free one)' })
     .option('open', { type: 'boolean', default: true, hidden: true })
     .option('exit-after-build', { type: 'boolean', default: false, hidden: true }),
   handler,
