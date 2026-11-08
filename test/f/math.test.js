@@ -133,3 +133,14 @@ test('planted fault: a placer that ignores overlap is caught', () => {
   const all = (/** @type {any[]} */ c) => new Set(c.map((x) => x.id));
   assert.ok(checkPlace(/** @type {any} */ (all)).length > 0);
 });
+
+test('placeLabels: a candidate whose full box collides falls back to its alt box', () => {
+  const alt = new Set();
+  const r = placeLabels([
+    { id: 'a', x: 100, y: 100, w: 80, h: 15, tier: 1, dist: 1 },
+    // full box (name + analog) reaches down into 'a'; the name-only alt box sits clear above it
+    { id: 'b', x: 100, y: 80, w: 80, h: 40, tier: 1, dist: 2, alt: { x: 100, y: 68, w: 80, h: 15 } },
+  ], { altPlaced: alt });
+  assert.ok(r.has('a') && r.has('b'));
+  assert.ok(alt.has('b') && !alt.has('a'));
+});

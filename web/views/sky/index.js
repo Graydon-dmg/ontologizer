@@ -262,22 +262,37 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     const camPos = this.camera.position;
     const prev = this.labelRoom || new Set();
     const cands = [];
-    for (const [id, st] of this.nodes) {
-      if (!st.vis || !st.wantLabel) continue;
-      const n = snap.nodes[id];
-      v.set(st.mesh.position.x, st.mesh.position.y + 1.6 * (st.r || 1), st.mesh.position.z);
-      const dist = v.distanceTo(camPos);
+    /** Screen point of a point `k` sphere radii above (or below, k < 0) a node's centre. */
+    const screen = (st, k) => {
+      v.set(st.mesh.position.x, st.mesh.position.y + k * (st.r || 1), st.mesh.position.z);
       v.project(this.camera);
-      if (v.z > 1) continue; // behind the camera
-      const text = st.label.element.textContent || '';
-      // Estimated box for 12px system-ui (no DOM measuring, so no layout cost per frame).
-      const w = text.length * 7 + 8, h = 16;
+      return { x: (v.x + 1) / 2 * r.width, y: (1 - v.y) / 2 * r.height, behind: v.z > 1 };
+    };
+    for (const [id, st] of this.nodes) {
+      const ghost = !!(st.ghost && this.ghostSet && this.ghostSet.has(id));
+      if (!st.vis || (!st.wantLabel && !ghost)) continue;
+      const n = snap.nodes[id];
+      const dist = st.mesh.position.distanceTo(camPos);
+      // One combined box per node: the name above the sphere and its lens analog below it,
+      // so the pair is placed (or skipped) together. Sizes are estimated (no DOM measuring).
+      const top = st.wantLabel ? screen(st, 1.6) : null; // 12px label
+      const bot = ghost ? screen(st, -1.3) : null;       // 11px italic analog
+      if ((top && top.behind) || (bot && bot.behind)) continue;
+      const lw = top ? (st.label.element.textContent || '').length * 7 + 8 : 0;
+      const short = ghost ? st.ghost.element.querySelector('.short') : null;
+      const gw = short ? (short.textContent || '').length * 6.4 + 8 : 0;
+      const t = top ? top.y - 8 : /** @type {{y:number}} */ (bot).y - 8;
+      const b = bot ? bot.y + 8 : /** @type {{y:number}} */ (top).y + 8;
+      const x = (top || /** @type {{x:number}} */ (bot)).x;
       const tier = id === this.hoveredId || id === focus ? 0
         : n.depth <= 1 ? 1
         : (this.ghostSet && this.ghostSet.has(id)) || (this.bright && this.bright.has(id)) ? 2 : 3;
-      cands.push({ id, x: (v.x + 1) / 2 * r.width, y: (1 - v.y) / 2 * r.height, w, h, tier, dist, was: prev.has(id) });
+      // Fallback when the pair has no room: the name alone (the analog waits for hover or room).
+      const alt = top && bot ? { x: top.x, y: top.y, w: lw, h: 16 } : undefined;
+      cands.push({ id, x, y: (t + b) / 2, w: Math.max(lw, gw), h: b - t, tier, dist, was: prev.has(id), alt });
     }
-    this.labelRoom = placeLabels(cands);
+    this.labelNameOnly = new Set();
+    this.labelRoom = placeLabels(cands, { altPlaced: this.labelNameOnly });
   }
 
   /** Topmost visible node under a screen point, or null. @param {number} cx @param {number} cy */
@@ -572,7 +587,9 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
         (id === this.hoveredId || id === focus || !this.labelRoom || this.labelRoom.has(id));
       if (st.ghost) {
         const hovered = id === this.hoveredId;
-        st.ghost.visible = hovered || !!(this.ghostSet && this.ghostSet.has(id));
+        // Shown by default only when placeLabels gave the node's combined box room.
+        st.ghost.visible = hovered || (!!(this.ghostSet && this.ghostSet.has(id)) &&
+          (id === focus || !this.labelRoom || (this.labelRoom.has(id) && !(this.labelNameOnly && this.labelNameOnly.has(id)))));
         const el = st.ghost.element;
         if (el.dataset.open !== String(hovered)) {
           el.dataset.open = String(hovered);
