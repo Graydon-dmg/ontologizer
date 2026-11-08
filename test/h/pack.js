@@ -10,6 +10,9 @@ export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/impor
 // Everything packed must be one of these files or live under one of these folders.
 // Keeps stray folders (.playwright-mcp/, docs/, .claude/) out even if `files` grows by mistake.
 export const ALLOWED_FILES = ['package.json', 'README.md', 'LICENSE'];
+
+// Folders that must ship with at least one file in them (the brand assets the page and favicon use).
+export const REQUIRED_DIRS = ['web/shared/brand/'];
 export const ALLOWED_DIRS = ['src/', 'web/', 'fixtures/'];
 
 /** @param {string} dir @returns {string[]} relative paths `npm pack` would ship */
@@ -23,10 +26,11 @@ export function packedFiles(dir) {
 // Key-shaped token: prefix plus at least one key character. A bare "sk-ant-" literal (a prefix check) is fine.
 const KEY_SHAPE = /sk-ant-[A-Za-z0-9_-]+/;
 
-/** @param {string} dir @param {string[]} files @param {string[]} required @returns {string[]} problems */
-export function auditPack(dir, files, required) {
+/** @param {string} dir @param {string[]} files @param {string[]} required @param {string[]} [requiredDirs] @returns {string[]} problems */
+export function auditPack(dir, files, required, requiredDirs = []) {
   const problems = [];
   for (const r of required) if (!files.includes(r)) problems.push(`missing required file: ${r}`);
+  for (const d of requiredDirs) if (!files.some((f) => f.startsWith(d))) problems.push(`missing required folder: ${d}`);
   for (const f of files) {
     const base = basename(f);
     if (base === '.env' || base.startsWith('.env.')) problems.push(`env file packed: ${f}`);
