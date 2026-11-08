@@ -229,8 +229,9 @@ export function placeLabels(items) {
 /**
  * The zoom transform that fits world bounds into a box, or null when it cannot be computed yet
  * (a 0x0 mount at connect time, or no nodes). k is clamped to [minK, maxK].
+ * The box may carry an offset (x, y): the free area inside the shell's insets.
  * @param {Bounds} b
- * @param {Size} box
+ * @param {Size & { x?: number, y?: number }} box
  * @param {{ minK: number, maxK: number, margin: number }} opt
  * @returns {{ x: number, y: number, k: number }|null}
  */
@@ -239,7 +240,7 @@ export function fitTransform(b, box, opt) {
   if (![b.minX, b.minY, b.maxX, b.maxY].every(Number.isFinite)) return null;
   const w = Math.max(b.maxX - b.minX, 1), h = Math.max(b.maxY - b.minY, 1);
   const k = Math.max(opt.minK, Math.min(opt.maxK, opt.margin * Math.min(box.width / w, box.height / h)));
-  return { x: box.width / 2 - k * (b.minX + b.maxX) / 2, y: box.height / 2 - k * (b.minY + b.maxY) / 2, k };
+  return { x: (box.x ?? 0) + box.width / 2 - k * (b.minX + b.maxX) / 2, y: (box.y ?? 0) + box.height / 2 - k * (b.minY + b.maxY) / 2, k };
 }
 
 /** @param {unknown} v */
@@ -281,8 +282,8 @@ export function isUserMove(start, t, clickDistance) {
  * - the user has moved: keep the same map point at the center of the view, same zoom.
  * Returns null when the new box has no size yet.
  * @param {{ x: number, y: number, k: number }} t current transform
- * @param {Size} prev previous view size
- * @param {Size} box new view size
+ * @param {Size & { x?: number, y?: number }} prev previous free area of the view (inside the insets)
+ * @param {Size & { x?: number, y?: number }} box new free area
  * @param {boolean} userMoved
  * @param {Bounds} bounds world bounds of the visible map
  * @param {{ minK: number, maxK: number, margin: number }} fitOpt
@@ -291,5 +292,29 @@ export function isUserMove(start, t, clickDistance) {
 export function resizeTransform(t, prev, box, userMoved, bounds, fitOpt) {
   if (!(box.width > 0 && box.height > 0)) return null;
   if (!userMoved || !(prev.width > 0 && prev.height > 0)) return fitTransform(bounds, box, fitOpt);
-  return { x: t.x + (box.width - prev.width) / 2, y: t.y + (box.height - prev.height) / 2, k: t.k };
+  const cx = (r) => (r.x ?? 0) + r.width / 2, cy = (r) => (r.y ?? 0) + r.height / 2;
+  return { x: t.x + cx(box) - cx(prev), y: t.y + cy(box) - cy(prev), k: t.k };
+}
+
+/**
+ * The free area of the view: its size minus the shell's chrome insets (--onto-inset-*, px).
+ * Insets that would leave less than 40% of either side are ignored for that axis.
+ * @param {Size} size
+ * @param {{ top: number, right: number, bottom: number, left: number }} ins
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+export function innerRect(size, ins) {
+  let { top, right, bottom, left } = ins;
+  if (size.width - left - right < size.width * 0.4) left = right = 0;
+  if (size.height - top - bottom < size.height * 0.4) top = bottom = 0;
+  return { x: left, y: top, width: Math.max(0, size.width - left - right), height: Math.max(0, size.height - top - bottom) };
+}
+
+/**
+ * Read --onto-inset-top/right/bottom/left (px) from a style lookup; missing or bad values are 0.
+ * @param {(name: string) => string} get e.g. (n) => getComputedStyle(el).getPropertyValue(n)
+ */
+export function readInsets(get) {
+  const v = (/** @type {string} */ side) => { const n = parseFloat(get(`--onto-inset-${side}`)); return Number.isFinite(n) && n > 0 ? n : 0; };
+  return { top: v('top'), right: v('right'), bottom: v('bottom'), left: v('left') };
 }

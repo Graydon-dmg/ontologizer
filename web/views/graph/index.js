@@ -9,7 +9,7 @@ import { easeBackOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds, innerRect, readInsets } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -102,6 +102,9 @@ class OntoGraph extends Base {
   /** @type {any} */ fitTimer = 0;
   /** last snapshot view values seen (see syncFromSnapshot) */ seen = { filter: '', collapsed: '' };
   box = { width: 0, height: 0 };
+  insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  /** @type {HTMLElement|null} */ el = null;
+  /** @type {(() => void)|null} */ insetsFn = null;
   /** @type {{x:number,y:number,k:number}|null} */ gestureStart = null;
   /** @type {(() => void)|null} */ themeOff = null;
   /** @type {{ update(): void, unmount(): void }|null} */ minimap = null;
@@ -169,9 +172,13 @@ class OntoGraph extends Base {
       this.refreshLabels();
       this.ctx?.emit('select', { nodeId: null });
     });
+    this.el = el;
     this.box = { width: el.clientWidth, height: el.clientHeight };
+    this.insets = readInsets((n) => getComputedStyle(el).getPropertyValue(n));
     this.resizeObs = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.onResize(el));
     this.resizeObs?.observe(el);
+    this.insetsFn = () => this.onResize(el);
+    el.addEventListener('onto-insets', this.insetsFn);
     themeVars(svg);
     this.themeOff = onThemeChange(() => this.onTheme());
   }
@@ -182,16 +189,18 @@ class OntoGraph extends Base {
    * @param {HTMLElement} el
    */
   onResize(el) {
-    const prev = this.box;
+    const prev = this.viewRect();
     this.box = { width: el.clientWidth, height: el.clientHeight };
-    if (!this.ctx || (prev.width === this.box.width && prev.height === this.box.height)) return;
+    this.insets = readInsets((n) => getComputedStyle(el).getPropertyValue(n));
+    const rect = this.viewRect();
+    if (!this.ctx || ['x', 'y', 'width', 'height'].every((k) => prev[k] === rect[k])) return;
     if (!prev.width || !prev.height) this.centered = false;
     // Applied at once, whether or not the build is still running (the auto-fit only runs while it is).
     const pos = this.ctx.layout.positions();
     const vis = [...this.nodes.keys()].filter((id) => !this.hidden.has(id) && pos.has(id)).map((id) => /** @type {{x:number,y:number}} */ (pos.get(id)));
     const b = worldBounds(vis);
     const pad = { minX: b.minX - 30, minY: b.minY - 30, maxX: b.maxX + 90, maxY: b.maxY + 30 }; // nodes + labels
-    const t = resizeTransform(zoomTransform(this.svg.node()), prev, this.box, this.userMoved, pad,
+    const t = resizeTransform(zoomTransform(this.svg.node()), prev, rect, this.userMoved, pad,
       { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
     if (t) {
       this.svg.interrupt('fit');
@@ -201,6 +210,11 @@ class OntoGraph extends Base {
     }
     this.minimap?.update();
     this.schedule();
+  }
+
+  /** The free area of the view: inside the shell's chrome insets (--onto-inset-*). */
+  viewRect() {
+    return innerRect(this.box, this.insets);
   }
 
   /** Theme switched (System / Light / Dark): repaint colors that come from THEME. */
@@ -216,10 +230,10 @@ class OntoGraph extends Base {
     if (this.centered) return;
     const ont = this.ctx.snapshot();
     const c = this.ctx.layout.positions().get(ont.root);
-    const box = this.box;
-    if (!c || !box.width || !box.height) return;
+    const r = this.viewRect();
+    if (!c || !r.width || !r.height) return;
     this.centered = true;
-    this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(box.width / 2 - c.x, box.height / 2 - c.y));
+    this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(r.x + r.width / 2 - c.x, r.y + r.height / 2 - c.y));
   }
 
   /** @param {{k:number,x:number,y:number}} t */
@@ -253,7 +267,7 @@ class OntoGraph extends Base {
       minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r + 60); // room for the label
       minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
     }
-    const f = fitTransform({ minX, minY, maxX, maxY }, this.box, { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
+    const f = fitTransform({ minX, minY, maxX, maxY }, this.viewRect(), { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
     if (!f) return; // 0x0 mount: the ResizeObserver refits once the element has a size
     const t = zoomTransform(this.svg.node());
     if (Math.abs(t.k - f.k) / f.k < 0.03 && Math.abs(t.x - f.x) < 15 && Math.abs(t.y - f.y) < 15) return;
@@ -812,6 +826,8 @@ class OntoGraph extends Base {
     this.frame = 0;
     clearTimeout(this.fitTimer);
     this.themeOff?.();
+    if (this.insetsFn) this.el?.removeEventListener('onto-insets', this.insetsFn);
+    this.insetsFn = null;
     this.themeOff = null;
     this.svg?.interrupt().interrupt('fit').on('.zoom', null);
     this.minimap?.unmount();
