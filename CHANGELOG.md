@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Licence changed from Apache-2.0 to MIT.
+- Licence changed from Apache-2.0 to MIT (1.0.0 remains Apache-2.0).
 
 ## 1.0.0 (2026-11-08)
 
