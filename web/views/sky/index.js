@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { registerView } from '../../shared/view.js';
-import { boundsOf, toWorld, treeDistance, arcPoints, truncate } from './math.js';
+import { boundsOf, toWorld, treeDistance, arcPoints, truncate, placeLabels } from './math.js';
 import { descendants, neighborhood, ringsFrom, labelVisible } from './graphmath.js';
 
 const WORLD = 600;
@@ -18,6 +18,7 @@ const TREE_LINK_Y = 0.3; // parent links lie just above the floor
 const ARC_POINTS = 24; // segments, so 25 points
 const DASH_UNIT = 1.5; // tokens' dash lengths are px; world units are about this much bigger
 const CLICK_SLOP = 5;
+const LABEL_EVERY = 6; // frames between label placements
 const GHOST_CHARS = 30; // lens analogs are cut to this many characters until hovered
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
@@ -251,6 +252,32 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
     mat.color.setHex(additive ? 0x7fb2ff : 0x3b78d8);
     mat.needsUpdate = true;
+  }
+
+  /** Choose which wanted node labels have room on screen (see placeLabels in math.js). */
+  declutter(snap, focus) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const v = new THREE.Vector3();
+    const camPos = this.camera.position;
+    const prev = this.labelRoom || new Set();
+    const cands = [];
+    for (const [id, st] of this.nodes) {
+      if (!st.vis || !st.wantLabel) continue;
+      const n = snap.nodes[id];
+      v.set(st.mesh.position.x, st.mesh.position.y + 1.6 * (st.r || 1), st.mesh.position.z);
+      const dist = v.distanceTo(camPos);
+      v.project(this.camera);
+      if (v.z > 1) continue; // behind the camera
+      const text = st.label.element.textContent || '';
+      // Estimated box for 12px system-ui (no DOM measuring, so no layout cost per frame).
+      const w = text.length * 7 + 8, h = 16;
+      const tier = id === this.hoveredId || id === focus ? 0
+        : n.depth <= 1 ? 1
+        : (this.ghostSet && this.ghostSet.has(id)) || (this.bright && this.bright.has(id)) ? 2 : 3;
+      cands.push({ id, x: (v.x + 1) / 2 * r.width, y: (1 - v.y) / 2 * r.height, w, h, tier, dist, was: prev.has(id) });
+    }
+    this.labelRoom = placeLabels(cands);
   }
 
   /** Topmost visible node under a screen point, or null. @param {number} cx @param {number} cy */
@@ -537,9 +564,12 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       }
       // Label is a child of the mesh, so its offset is in unit-sphere space.
       st.label.position.set(0, 1.6, 0);
-      st.label.visible = labelVisible(n, {
+      st.wantLabel = labelVisible(n, {
         k: zoomK, focus, hovered: this.hoveredId, rings: this.rings, rule: tk.LABEL_RULE,
       });
+      // Declutter: the hovered and focused labels always show; others only if placeLabels gave them room.
+      st.label.visible = st.wantLabel &&
+        (id === this.hoveredId || id === focus || !this.labelRoom || this.labelRoom.has(id));
       if (st.ghost) {
         const hovered = id === this.hoveredId;
         st.ghost.visible = hovered || !!(this.ghostSet && this.ghostSet.has(id));
@@ -641,6 +671,14 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const m = this.pendingMove;
       this.pendingMove = null;
       this.setHover(this.pick(m.x, m.y));
+    }
+
+    // Re-place labels every few frames (and at once when hover or focus changes), not every frame.
+    this.frameNo = (this.frameNo || 0) + 1;
+    const lkey = `${this.hoveredId}|${focus}|${this.selectedId}`;
+    if (this.frameNo % LABEL_EVERY === 0 || lkey !== this.labelKey) {
+      this.labelKey = lkey;
+      this.declutter(snap, focus);
     }
 
     this.controls.update();

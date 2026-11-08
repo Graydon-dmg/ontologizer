@@ -133,3 +133,29 @@ export function truncate(text, max = 30) {
   const sp = cut.lastIndexOf(' ');
   return (sp >= Math.floor((max - 1) * 2 / 3) ? cut.slice(0, sp) : cut).trimEnd() + '…';
 }
+
+/**
+ * Greedy label placement. Candidates are screen boxes centred on (x, y); lower tier wins, then
+ * nearer to the camera. Tier 0 always shows. A label skips if its box overlaps one already placed.
+ * Hysteresis: a label shown last time (`was`) tests with a box shrunk by `keep` px per side and
+ * wins ties within its tier, so labels do not flicker as the scene turns.
+ * @param {{ id: string, x: number, y: number, w: number, h: number, tier: number, dist: number, was?: boolean }[]} cands
+ * @param {{ pad?: number, keep?: number }} [opts]
+ * @returns {Set<string>}
+ */
+export function placeLabels(cands, { pad = 2, keep = 1 } = {}) {
+  const order = [...cands].sort((a, b) =>
+    a.tier - b.tier || Number(!!b.was) - Number(!!a.was) || a.dist - b.dist);
+  /** @type {{ l: number, t: number, r: number, b: number }[]} */
+  const placed = [];
+  const out = new Set();
+  for (const c of order) {
+    const g = c.was ? -keep : pad;
+    const box = { l: c.x - c.w / 2 - g, r: c.x + c.w / 2 + g, t: c.y - c.h / 2 - g, b: c.y + c.h / 2 + g };
+    const hit = c.tier > 0 && placed.some((p) => box.l < p.r && box.r > p.l && box.t < p.b && box.b > p.t);
+    if (hit) continue;
+    placed.push({ l: c.x - c.w / 2, r: c.x + c.w / 2, t: c.y - c.h / 2, b: c.y + c.h / 2 });
+    out.add(c.id);
+  }
+  return out;
+}
