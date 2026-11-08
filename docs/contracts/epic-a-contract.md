@@ -54,7 +54,7 @@ Everything below is relied on by other epics. Write it exactly. A change after t
 ### Language and layout
 
 - Plain JavaScript ES modules, `"type": "module"`, JSDoc types with `// @ts-check` at the top of every file. No TypeScript, no build step, no bundler.
-- Node 20 or newer.
+- Node 22 or newer.
 
 ```text
 package.json
@@ -98,7 +98,7 @@ docs/contracts/               these files
     "./views": "./web/views/index.js"
   },
   "files": ["src", "web", "fixtures", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "license": "MIT",
   "scripts": {
     "check": "node scripts/test.js test",

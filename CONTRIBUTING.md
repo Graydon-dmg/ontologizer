@@ -4,7 +4,7 @@ Thanks for helping. Pull requests are welcome. In the description, say what chan
 
 ## Set up
 
-You need Node 20 or newer.
+You need Node 22 or newer.
 
 ```bash
 git clone https://github.com/Graydon-dmg/ontologizer.git
@@ -163,3 +163,7 @@ A check whose planted fault passes is not a check; fix it before you trust it.
 - Plain JavaScript ES modules with JSDoc types and `// @ts-check` at the top of each file. No build step.
 - Relative imports (`../../shared/tokens.js`), so one file works in Node tests and in the browser.
 - Colors and styles come from `web/shared/tokens.js`, nowhere else.
+
+## Releases
+
+Releases are published from GitHub Actions with npm trusted publishing, with provenance. See [docs/RELEASING.md](docs/RELEASING.md).

@@ -1,0 +1,92 @@
+name: release
+
+# Publishes to npm with trusted publishing (GitHub OIDC). No npm token exists anywhere:
+# npm exchanges the publish job's short-lived OIDC identity for a one-time publish credential.
+# Setup and the normal flow: docs/RELEASING.md.
+#
+# Two jobs on purpose: `verify` runs the tests, which execute dependency code, and has NO
+# id-token permission. `publish` holds id-token: write but installs no project dependencies,
+# runs no tests and publishes with --ignore-scripts, so a compromised dependency cannot mint
+# the publish token.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false # never use caching in release builds
+
+      # Only a tag whose name is exactly v<package.json version> may publish. A manual run must be
+      # started from such a tag (not a branch). Values reach the script as env vars, never
+      # interpolated into the script text.
+      - name: Check tag matches package.json version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::release must run from a version tag, not a $REF_TYPE"
+            exit 1
+          fi
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$REF_NAME" != "v$PKG_VERSION" ]; then
+            echo "::error::tag $REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "releasing ontologizer@$PKG_VERSION"
+
+      - run: npm ci --ignore-scripts
+
+      - run: npm run check
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A required reviewer on this environment (GitHub settings) gates every publish.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Same commit verify tested: both jobs check out github.sha.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22 # trusted publishing needs Node >= 22.14.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false # never use caching in release builds
+
+      # Trusted publishing needs npm >= 11.5.1. Pinned to an exact version; npm's own package
+      # has no install scripts, and this runs before any project dependency is present.
+      - name: Upgrade npm
+        run: npm install -g --ignore-scripts npm@11.21.2 && npm --version
+
+      # No `npm ci` here: npm packs straight from the checkout (the package.json `files` list),
+      # so this job never downloads or runs a project dependency.
+      # Provenance is automatic with trusted publishing (publishConfig.provenance is also true).
+      - run: npm publish --access public --ignore-scripts

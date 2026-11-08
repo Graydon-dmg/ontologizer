@@ -53,7 +53,7 @@ Every command takes `--help`. Full detail is in the [guide](https://github.com/G
 
 ## Requirements
 
-- Node 20+
+- Node 22+
 - An Anthropic API key
 
 ## Cost and privacy

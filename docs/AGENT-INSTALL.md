@@ -6,7 +6,7 @@ Follow these steps in order. Do not skip ahead.
 
 ## Steps
 
-1. **Check Node.** Run `node -v`. It must be 20 or newer. If not, stop and tell the human: install Node 20+ from https://nodejs.org, or with nvm: `nvm install 20`. Then continue.
+1. **Check Node.** Run `node -v`. It must be 22 or newer. If not, stop and tell the human: install Node 22+ from https://nodejs.org, or with nvm: `nvm install 22`. Then continue.
 
 2. **Install.**
 
