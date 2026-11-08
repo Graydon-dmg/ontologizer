@@ -7,6 +7,7 @@
 // On macOS that is a generic password, readable by hand with:
 //   security find-generic-password -s ontologizer -a anthropic-api-key -w
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 
 export const SERVICE = 'ontologizer';
 export const ACCOUNT = 'anthropic-api-key';
@@ -42,6 +43,7 @@ export function defaultKeyring(env = process.env) {
     return entry;
   };
   return {
+    isOsKeychain: true,
     get() {
       try {
         return validKey(getEntry().getPassword());
@@ -155,6 +157,33 @@ export function keySource({ keyring, env = process.env } = {}) {
   const fromEnv = env.ANTHROPIC_API_KEY;
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return 'env';
   return storedKey(keyring ?? defaultKeyring(env)) ? 'keychain' : 'none';
+}
+
+/**
+ * Whether the OS keychain holds a plausible key, checked in a child process with a hard timeout,
+ * so a stuck keychain (e.g. a pending access dialog) can never hang `doctor`. The child prints
+ * only "1" or "0": the key itself never crosses the pipe. Its env carries no ANTHROPIC_API_KEY.
+ * @param {{ env?: NodeJS.ProcessEnv, timeoutMs?: number }} [opts]
+ * @returns {'present'|'absent'|'timeout'}
+ */
+export function probeKeychain({ env = process.env, timeoutMs = 3000 } = {}) {
+  if (env.ONTOLOGIZER_KEYRING === 'none') return 'absent';
+  let modPath;
+  try {
+    modPath = createRequire(import.meta.url).resolve('@napi-rs/keyring');
+  } catch {
+    return 'absent';
+  }
+  const script =
+    'let v=null;try{const{Entry}=require(process.argv[1]);v=new Entry(process.argv[2],process.argv[3]).getPassword()}catch{}' +
+    ";process.stdout.write(typeof v==='string'&&v.trim().startsWith('sk-ant-')&&v.trim().length>7?'1':'0')";
+  const childEnvNoKey = { ...env };
+  delete childEnvNoKey.ANTHROPIC_API_KEY;
+  const r = spawnSync(process.execPath, ['-e', script, modPath, SERVICE, ACCOUNT], {
+    env: childEnvNoKey, timeout: timeoutMs, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (r.error || r.signal) return 'timeout';
+  return r.stdout === '1' ? 'present' : 'absent';
 }
 
 /** True for the SDK's AuthenticationError (HTTP 401). @param {any} err */

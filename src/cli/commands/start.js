@@ -17,13 +17,16 @@ export default {
       message: 'What would you like to do?',
       choices: [
         { name: 'New map', value: { a: 'new' } },
-        ...recent.map((/** @type {any} */ r) => ({ name: `Load ${r.name}`, value: { a: 'load', name: r.name } })),
+        ...recent.map((/** @type {any} */ r) => ({ name: `Load ${r.name}`, value: { a: 'load', name: r.id } })),
         { name: 'Fuse two maps', value: { a: 'fuse' } },
         { name: 'Quit', value: { a: 'quit' } },
       ],
     });
     if (choice.a === 'new') {
-      await newHandler({ ...argv, open: true, yes: false, exitAfterBuild: false, context: undefined });
+      // deps is non-enumerable on argv, so a spread would drop it: re-attach it explicitly.
+      const args = { ...argv, open: true, yes: false, exitAfterBuild: false, context: undefined };
+      Object.defineProperty(args, 'deps', { value: deps, enumerable: false });
+      await newHandler(args);
     } else if (choice.a === 'load') {
       const { main } = await import('../main.js');
       deps.exitCode = await main(['load', choice.name], deps);

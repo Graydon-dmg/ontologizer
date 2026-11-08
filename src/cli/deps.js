@@ -28,9 +28,11 @@ export function childEnv(env) {
 
 /** Open a URL in the default browser, with a key-free env. @param {string} url @param {NodeJS.ProcessEnv} env */
 function openUrl(url, env) {
+  // Only ever our own local server; never a shell (no cmd.exe on Windows).
+  if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/$/.test(url)) return Promise.resolve(undefined);
   const [cmd, args] =
     process.platform === 'darwin' ? ['open', [url]]
-    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]]
+    : process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
     : ['xdg-open', [url]];
   return new Promise((resolve) => {
     try {
