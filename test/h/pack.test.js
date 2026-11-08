@@ -101,3 +101,9 @@ test('planted fault: brand assets left out, or docs/brand shipped, are reported'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('legal files at the top level are allowed; other .md files still are not', () => {
+  const extra = { 'NOTICE': 'Ontologizer\n', 'THIRD_PARTY_NOTICES.md': '# Third-party notices\n', 'TRADEMARKS.md': '# Trademarks\n', 'NOTES.md': '# notes\n' };
+  const problems = audit(['src', 'web', 'fixtures', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md', 'NOTES.md'], extra);
+  assert.deepEqual(problems.sort(), ['internal doc packed: NOTES.md', 'unexpected file packed: NOTES.md']);
+});
