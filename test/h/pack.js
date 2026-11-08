@@ -31,6 +31,8 @@ export function auditPack(dir, files, required) {
     const base = basename(f);
     if (base === '.env' || base.startsWith('.env.')) problems.push(`env file packed: ${f}`);
     if (f.startsWith('test/')) problems.push(`test file packed: ${f}`);
+    if (f.startsWith('web/dev/')) problems.push(`dev harness packed: ${f}`);
+    if (f.endsWith('.md') && f !== 'README.md') problems.push(`internal doc packed: ${f}`);
     if (!ALLOWED_FILES.includes(f) && !ALLOWED_DIRS.some((d) => f.startsWith(d))) problems.push(`unexpected file packed: ${f}`);
     if (KEY_SHAPE.test(readFileSync(join(dir, f), 'utf8'))) problems.push(`API key pattern (sk-ant-) found in: ${f}`);
   }

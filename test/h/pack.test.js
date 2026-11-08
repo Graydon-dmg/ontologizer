@@ -75,3 +75,10 @@ test('planted fault: a stray .playwright-mcp/ folder in files is reported', () =
   const problems = audit(['src', 'web', 'fixtures', '.playwright-mcp'], { '.playwright-mcp/page.yml': 'x: 1\n' });
   assert.deepEqual(problems, ['unexpected file packed: .playwright-mcp/page.yml']);
 });
+
+test('planted fault: the dev harness and internal .md docs are reported', () => {
+  const extra = { 'web/dev/index.html': '<!doctype html>\n', 'web/shell/API.md': '# api\n' };
+  assert.deepEqual(audit(['src', 'web', 'fixtures'], extra).sort(),
+    ['dev harness packed: web/dev/index.html', 'internal doc packed: web/shell/API.md']);
+  assert.deepEqual(audit(['src', 'web', '!web/dev', '!web/shell/API.md', 'fixtures'], extra), []); // the real files field's negations work
+});
