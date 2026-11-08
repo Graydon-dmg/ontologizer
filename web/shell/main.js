@@ -192,6 +192,10 @@ function publishInsets() {
   const ex = $('explain');
   panels.push(/** @type {HTMLElement} */ (ex.querySelector('.onto-explain') || ex));
   const rects = panels.filter(shown).map((el) => el.getBoundingClientRect());
+  // The explain panel's scroll area ends above the jobs tray (the tray stays on top so new jobs show).
+  const tray = $('jobs');
+  const trayTop = shown(tray) ? tray.getBoundingClientRect().top : innerHeight;
+  document.documentElement.style.setProperty('--tray-space', Math.max(0, Math.ceil(innerHeight - trayTop + 8)) + 'px');
   const ins = computeInsets({ w: innerWidth, h: innerHeight }, rects);
   if (sameInsets(lastInsets, ins)) return;
   lastInsets = ins;

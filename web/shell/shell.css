@@ -19,7 +19,7 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
-#explain { position: fixed; right: 10px; top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); bottom: 60px; z-index: 11; }
+#explain { position: fixed; right: 10px; top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); bottom: max(60px, var(--tray-space, 0px)); z-index: 11; }
 #ticker { position: fixed; left: 10px; bottom: 10px; z-index: 10; max-width: 40vw; color: var(--muted); }
 #jobs { position: fixed; right: 10px; bottom: 10px; z-index: 45; }
 #legend { position: fixed; left: 10px; top: calc(var(--topbar-bottom, 56px) + 8px); z-index: 10; background: var(--panel); max-height: 50vh; overflow: auto;
