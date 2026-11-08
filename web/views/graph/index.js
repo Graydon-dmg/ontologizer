@@ -8,9 +8,10 @@ import 'd3-transition';
 import { easeBackOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
-import { THEME, MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds } from './math.js';
+import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels } from './math.js';
 import { createMinimap } from './minimap.js';
+import { th } from './theme.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FALLBACK_CENTER = { x: 500, y: 400 };
@@ -22,6 +23,11 @@ const RING_STEP = 90;
 const FIT_MAX_K = 1.5;
 const FIT_EVERY_MS = 500;
 const FIT_MARGIN = 0.88;
+/** Pointer travel (px) still treated as a click rather than a drag or pan: real clicks jitter. */
+const CLICK_DISTANCE = 4;
+/** Label box estimate in screen px (11.5px system-ui): width per character, height. */
+const LABEL_CHAR_W = 6.2;
+const LABEL_H = 14;
 
 /** @typedef {{ g: any, circle: any, ring: any, label: any, core: any, glyph: any, r: number, fill: string, hasArticle?: boolean,
  *   spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
@@ -35,7 +41,7 @@ const FIT_MARGIN = 0.88;
  */
 function fillFor(ont, node) {
   const cat = ont.categories.find((c) => c.id === node.category);
-  if (!cat) return THEME.dark.muted;
+  if (!cat) return th().muted;
   // d3-color does not parse the space-separated hsl() syntax tokens emit
   const c = hsl(categoryColor(cat.index, cat.family).replace(/\s+/g, ','));
   c.l += depthLightness(node.depth) / 100;
@@ -84,6 +90,7 @@ class OntoGraph extends Base {
   /** @type {Map<string, Halo>} */ halos = new Map();
   maxRing = 0;
   /** @type {any[]} */ ringEls = [];
+  /** @type {Map<string, boolean>} */ labelWanted = new Map();
   userMoved = false;
   lastFit = 0;
   /** @type {any} */ fitTimer = 0;
@@ -136,7 +143,7 @@ class OntoGraph extends Base {
       labels: root.append('g').attr('class', 'labels').style('pointer-events', 'none'),
     };
     this.svg = svg;
-    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).on('zoom', (/** @type {any} */ ev) => {
+    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).clickDistance(CLICK_DISTANCE).on('zoom', (/** @type {any} */ ev) => {
       if (ev.sourceEvent) this.userMoved = true;
       this.onZoom(ev.transform);
     });
@@ -161,6 +168,7 @@ class OntoGraph extends Base {
 
   /** @param {{k:number,x:number,y:number}} t */
   onZoom(t) {
+    if (!this.ctx) return; // a transition can outlive unmount
     this.k = t.k;
     this.layers.root.attr('transform', `translate(${t.x},${t.y}) scale(${t.k})`);
     this.refreshLabels();
@@ -269,8 +277,8 @@ class OntoGraph extends Base {
       if (n === 0) { if (b) { b.g.remove(); this.badges.delete(id); } continue; }
       if (!b) {
         const g = this.layers.labels.append('g');
-        const rect = g.append('rect').attr('rx', 6).attr('height', 13).attr('y', -6.5).attr('fill', THEME.dark.panel).attr('stroke', THEME.dark.muted).attr('stroke-width', 0.5);
-        const text = g.append('text').attr('font-size', 10).attr('font-family', 'system-ui, sans-serif').attr('fill', THEME.dark.fg).attr('text-anchor', 'middle').attr('dy', '0.35em');
+        const rect = g.append('rect').attr('rx', 6).attr('height', 13).attr('y', -6.5).attr('fill', th().panel).attr('stroke', th().muted).attr('stroke-width', 0.5);
+        const text = g.append('text').attr('font-size', 10).attr('font-family', 'system-ui, sans-serif').attr('fill', th().fg).attr('text-anchor', 'middle').attr('dy', '0.35em');
         b = { g, rect, text };
         this.badges.set(id, b);
       }
@@ -296,13 +304,13 @@ class OntoGraph extends Base {
     const g = this.layers.nodes.append('g').attr('data-id', id).style('cursor', 'pointer');
     const ring = g.append('circle').attr('fill', 'none');
     const circle = g.append('circle');
-    const core = g.append('circle').attr('fill', THEME.dark.fg).attr('opacity', 0.9).style('pointer-events', 'none').style('display', 'none');
+    const core = g.append('circle').attr('fill', th().fg).attr('opacity', 0.9).style('pointer-events', 'none').style('display', 'none');
     const glyph = g.append('g').style('pointer-events', 'none').style('display', 'none');
     glyph.append('rect').attr('x', -3).attr('y', -4).attr('width', 6).attr('height', 8).attr('fill', 'none');
-    glyph.append('path').attr('d', 'M-3,-4 H1 L3,-2 V4 H-3 Z M1,-4 V-2 H3').attr('fill', 'none').attr('stroke', THEME.dark.bg).attr('stroke-width', 0.8).attr('stroke-linejoin', 'round');
+    glyph.append('path').attr('d', 'M-3,-4 H1 L3,-2 V4 H-3 Z M1,-4 V-2 H3').attr('fill', 'none').attr('stroke', th().bg).attr('stroke-width', 0.8).attr('stroke-linejoin', 'round');
     g.style('transition', DIM_TRANSITION);
     const label = this.layers.labels.append('text').attr('x', 5).attr('font-size', 11.5).attr('font-family', 'system-ui, sans-serif')
-      .attr('fill', THEME.dark.fg).attr('stroke', THEME.dark.bg).attr('stroke-width', 3).attr('stroke-linejoin', 'round')
+      .attr('fill', th().fg).attr('stroke', th().bg).attr('stroke-width', 3).attr('stroke-linejoin', 'round')
       .attr('paint-order', 'stroke').attr('dy', '0.35em').text(node.label);
     label.style('transition', DIM_TRANSITION);
     const nv = { g, circle, ring, label, core, glyph, r: 0, fill: '', spawn: null };
@@ -345,7 +353,7 @@ class OntoGraph extends Base {
   ensureLink(id) {
     const node = this.ctx.snapshot().nodes[id];
     if (!node || !node.parent || this.links.has(id) || !this.nodes.has(node.parent) || !this.nodes.has(id)) return;
-    const path = this.layers.links.append('path').attr('stroke', THEME.dark.muted).attr('stroke-opacity', 0.55).attr('stroke-width', 1.2).style('transition', DIM_TRANSITION);
+    const path = this.layers.links.append('path').attr('stroke', th().muted).attr('stroke-opacity', 0.55).attr('stroke-width', 1.2).style('transition', DIM_TRANSITION);
     this.links.set(id, path);
   }
 
@@ -391,18 +399,44 @@ class OntoGraph extends Base {
     for (const [id, d] of this.rings) if (d > max && !this.hidden.has(id)) max = d;
     this.maxRing = max;
     const els = this.ringEls;
-    while (els.length < max) els.push(this.layers.rings.append('circle').attr('stroke', THEME.dark.muted).attr('stroke-opacity', 0.12).attr('r', RING_STEP * (els.length + 1)));
+    while (els.length < max) els.push(this.layers.rings.append('circle').attr('stroke', th().muted).attr('stroke-opacity', 0.12).attr('r', RING_STEP * (els.length + 1)));
     while (els.length > max) els.pop().remove();
   }
 
   /** Re-evaluate label visibility (zoom, hover, focus changes). */
   refreshLabels() {
+    if (!this.ctx) return;
     const ont = this.ctx.snapshot();
-    for (const [id, nv] of this.nodes) {
+    /** @type {Map<string, boolean>} candidate id -> forced (always drawn) */
+    const wanted = new Map();
+    for (const [id] of this.nodes) {
       const node = ont.nodes[id];
-      const on = labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE });
-      nv.label.style('display', on && !this.hidden.has(id) ? null : 'none');
+      if (this.hidden.has(id) || !labelVisible(node, { k: this.k, focus: ont.view.focus, hovered: this.hovered, rings: this.rings, rule: LABEL_RULE })) continue;
+      const ring = this.rings.get(id) ?? Infinity;
+      wanted.set(id, id === ont.view.focus || id === this.hovered || ring < 2);
     }
+    this.labelWanted = wanted;
+    this.schedule();
+  }
+
+  /**
+   * Draw the wanted labels that fit: depth-2+ labels whose screen box collides with one already
+   * drawn are skipped (they come back on hover, focus, or once zoom gives them room).
+   * @param {Map<string,{x:number,y:number}>} cur
+   */
+  placeLabelsNow(cur) {
+    const t = zoomTransform(this.svg.node());
+    const ont = this.ctx.snapshot();
+    const items = [];
+    for (const [id, forced] of this.labelWanted) {
+      const nv = this.nodes.get(id), p = cur.get(id);
+      if (!nv || !p) continue;
+      const w = 5 + LABEL_CHAR_W * (ont.nodes[id]?.label.length ?? 0);
+      const sx = (p.x + nv.r) * t.k + t.x, sy = p.y * t.k + t.y;
+      items.push({ id, forced, depth: ont.nodes[id]?.depth ?? 0, r: nv.r, box: { x: sx, y: sy - LABEL_H / 2, w, h: LABEL_H } });
+    }
+    const shown = placeLabels(items);
+    for (const [id, nv] of this.nodes) nv.label.style('display', shown.has(id) ? null : 'none');
   }
 
   /**
@@ -420,7 +454,7 @@ class OntoGraph extends Base {
     });
     g.on('mouseenter', () => this.setHover(id));
     g.on('mouseleave', () => this.setHover(null));
-    g.call(drag().on('start', (/** @type {any} */ ev) => this.dragStart(id, ev))
+    g.call(drag().clickDistance(CLICK_DISTANCE).on('start', (/** @type {any} */ ev) => this.dragStart(id, ev))
       .on('drag', (/** @type {any} */ ev) => this.dragMove(id, ev))
       .on('end', () => this.dragEnd(id)));
   }
@@ -507,6 +541,7 @@ class OntoGraph extends Base {
       const b = this.badges.get(id);
       if (b) b.g.attr('transform', `translate(${p.x + nv.r * 0.75},${p.y - nv.r * 0.75}) scale(${inv})`).style('display', hid ? 'none' : null);
     }
+    this.placeLabelsNow(cur);
     this.renderHalos(cur);
     this.autoFit(cur);
     const fp = cur.get(this.ctx.snapshot().view.focus);
@@ -539,7 +574,7 @@ class OntoGraph extends Base {
       let h = this.halos.get(jid);
       if (!h) {
         const el = this.layers.halos.append('g').style('pointer-events', 'none');
-        const circle = el.append('circle').attr('fill', 'none').attr('stroke', THEME.dark.fg).attr('stroke-width', 1.5);
+        const circle = el.append('circle').attr('fill', 'none').attr('stroke', th().fg).attr('stroke-width', 1.5);
         const anim = circle.append('animate').attr('attributeName', 'r').attr('dur', '1.2s').attr('repeatCount', 'indefinite');
         const fade = circle.append('animate').attr('attributeName', 'opacity').attr('dur', '1.2s').attr('repeatCount', 'indefinite');
         h = { el, circle, anim, fade, r: -1, state: '' };
@@ -593,7 +628,7 @@ class OntoGraph extends Base {
       return;
     }
     const t = old || this.layers.labels.append('text').attr('y', 13).attr('font-size', 10).attr('font-style', 'italic').attr('font-family', 'system-ui, sans-serif')
-      .attr('fill', THEME.dark.muted).attr('opacity', 0.85).attr('text-anchor', 'middle').attr('stroke', THEME.dark.bg).attr('stroke-width', 3)
+      .attr('fill', th().muted).attr('opacity', 0.85).attr('text-anchor', 'middle').attr('stroke', th().bg).attr('stroke-width', 3)
       .attr('stroke-linejoin', 'round').attr('paint-order', 'stroke').style('transition', DIM_TRANSITION);
     t.text(a.breaks ? `${a.label} \u26A0` : a.label);
     t.select('title').remove();
@@ -613,11 +648,18 @@ class OntoGraph extends Base {
   /** @param {string} nodeId */
   setFocus(nodeId) {
     if (!this.ctx || !this.nodes.has(nodeId)) return;
-    this.userMoved = true;
     this.refreshRings();
     this.refreshLabels();
-    const p = this.currentPos(nodeId, this.ctx.layout.positions());
-    if (p) this.svg.transition().duration(MOTION.focusMs).call(this.zoomBehavior.translateTo, p.x, p.y);
+    // Focusing the root means "the whole map": go back to following the build.
+    // Any other focus centers that node and stops the auto-fit.
+    if (nodeId === this.ctx.snapshot().root) {
+      this.userMoved = false;
+      this.lastFit = 0;
+    } else {
+      this.userMoved = true;
+      const p = this.currentPos(nodeId, this.ctx.layout.positions());
+      if (p) this.svg.interrupt('fit').transition().duration(MOTION.focusMs).call(this.zoomBehavior.translateTo, p.x, p.y);
+    }
     this.schedule();
   }
 
@@ -673,6 +715,7 @@ class OntoGraph extends Base {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
     clearTimeout(this.fitTimer);
+    this.svg?.interrupt().interrupt('fit').on('.zoom', null);
     this.minimap?.unmount();
     this.minimap = null;
     this.svg?.remove();
