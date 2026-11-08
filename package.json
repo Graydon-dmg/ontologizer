@@ -29,6 +29,8 @@
   "files": [
     "src",
     "web",
+    "!web/dev",
+    "!web/shell/API.md",
     "fixtures",
     "README.md",
     "LICENSE"
