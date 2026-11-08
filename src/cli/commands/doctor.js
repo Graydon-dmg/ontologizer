@@ -16,6 +16,16 @@ function withTimeout(p, ms) {
     .finally(() => clearTimeout(t));
 }
 
+export const MIN_NODE = 22;
+
+/** The Node row: ok on 22 or newer. @param {string} version e.g. "22.3.0" */
+export function nodeRow(version) {
+  const major = Number(String(version).split('.')[0]);
+  return major >= MIN_NODE
+    ? { s: /** @type {const} */ ('ok'), label: 'Node', msg: version }
+    : { s: /** @type {const} */ ('fail'), label: 'Node', msg: `${version} (need ${MIN_NODE} or newer)`, fix: `install Node ${MIN_NODE}+` };
+}
+
 /** @param {string} a @param {string} b */
 function cmp(a, b) {
   const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
@@ -48,10 +58,7 @@ export default {
     );
     const versionP = withTimeout(latestVersion(deps), 3500);
 
-    const major = Number(process.versions.node.split('.')[0]);
-    rows.push(major >= 20
-      ? { s: 'ok', label: 'Node', msg: process.versions.node }
-      : { s: 'fail', label: 'Node', msg: `${process.versions.node} (need 20 or newer)`, fix: 'install Node 20+' });
+    rows.push(nodeRow(process.versions.node));
 
     // The OS keychain is read in a child process with a 3 s limit (a native read can block on an
     // access dialog and cannot be timed out in-process). Injected keyrings (tests) are read directly.

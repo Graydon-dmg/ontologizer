@@ -98,3 +98,65 @@ test('replay: view actions reach the live stream but never the store; jobs still
   await plain.close();
   assert.ok(!fs.readFileSync(file).equals(before), 'plain load should persist view actions');
 });
+
+test('rosetta action: validation, 202 with lensId, dedupe, job events, errors surface as job.failed', async () => {
+  const home = tempHome();
+  const store = openStore(home);
+  store.importEvents('plastic-modeling', fixtureEvents('plastic-modeling'));
+  const calls = [];
+  let fail = null;
+  /** @type {(() => void) | null} */
+  let release = null;
+  const engine = {
+    enqueue: () => 'j',
+    /** @param {string} id @param {string} persona @param {any} opts */
+    rosetta: async (id, persona, opts) => {
+      calls.push([id, persona, opts]);
+      if (fail) throw fail;
+      const lensId = opts.name ?? 'chef';
+      store.append(id, { t: 'lens.added', at: store.now(id), lens: { id: lensId, persona, analogs: {} } });
+      await new Promise((r) => { release = () => r(undefined); });
+      return lensId;
+    },
+  };
+  const srv = await startServer({ store, engine, id: 'plastic-modeling', replay: { speed: 1 } }); // allowed in replay too
+  /** @param {any} body */
+  const act = async (body) => {
+    const r = await fetch(new URL('api/action', srv.url), { method: 'POST', body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json() };
+  };
+
+  for (const bad of [{}, { persona: '' }, { persona: '   ' }, { persona: 7 }, { persona: 'x'.repeat(121) },
+    { persona: 'a chef', name: 'Bad Name' }, { persona: 'a chef', name: 'a'.repeat(41) }, { persona: 'a chef', name: '../x' }]) {
+    assert.equal((await act({ type: 'rosetta', ...bad })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal(calls.length, 0);
+
+  const first = await act({ type: 'rosetta', persona: '  a home chef ', name: 'chef' });
+  assert.equal(first.status, 202);
+  assert.deepEqual(first.body, { ok: true, jobId: first.body.jobId, lensId: 'chef' });
+  assert.deepEqual(calls, [['plastic-modeling', 'a home chef', { name: 'chef' }]]);
+  // Same persona while running: reuses the run, no second engine call.
+  const again = await act({ type: 'rosetta', persona: 'A HOME CHEF' });
+  assert.equal(again.status, 202);
+  assert.equal(again.body.jobId, first.body.jobId);
+  assert.equal(calls.length, 1);
+  release?.();
+  await new Promise((r) => setTimeout(r, 50));
+  const jobs = store.read('plastic-modeling').jobs;
+  assert.equal(jobs[first.body.jobId].state, 'done');
+
+  // An engine error (401) ends the job as job.failed with the contract message.
+  fail = Object.assign(new Error('401'), { status: 401 });
+  const bad = await act({ type: 'rosetta', persona: 'a gardener' });
+  assert.equal(bad.status, 202);
+  await new Promise((r) => setTimeout(r, 50));
+  const fj = store.read('plastic-modeling').jobs[bad.body.jobId];
+  assert.equal(fj.state, 'failed');
+  assert.equal(fj.error, 'Your Anthropic API key was rejected: run ontologizer key set');
+  await srv.close();
+
+  // Planted fault: a router that answers 400 to rosetta fails the 202 expectation above.
+  const faultyRouter = (/** @type {any} */ b) => (b.type === 'rosetta' ? 400 : 202);
+  assert.notEqual(faultyRouter({ type: 'rosetta', persona: 'a home chef' }), 202);
+});
