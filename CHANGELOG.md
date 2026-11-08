@@ -7,7 +7,7 @@
 
 ## 1.1.0 (2026-11-08)
 
-- **Fuse from the browser.** A "Fuse with…" button in the top bar lists your other maps, then fuses the open map with the one you pick into a new map that opens in its own tab. Both originals stay untouched.
+- **Fuse from the browser.** A "Fuse" button in the top bar lists your other maps, then fuses the open map with the one you pick into a new map that opens in its own tab. Both originals stay untouched.
 - **MIT licence.** Ontologizer is now MIT-licensed. Version 1.0.0 remains Apache-2.0.
 - **Calmer Rosetta and 3D labels.** Each lens analogy sits as a short second line under its node's label, with a dot where the analogy breaks (full text on hover). Labels no longer pile on top of each other in 2D or 3D.
 - **Persona kept after a reload.** The jobs tray still names the Rosetta persona ("Building lens: a home chef") after you reload the page.
