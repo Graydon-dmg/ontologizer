@@ -105,3 +105,20 @@ export function createExplainRequests({ act, snapshot, now = () => Date.now(), o
     },
   };
 }
+
+/**
+ * A "See also" link: open the panel ON that node (so a node without an article shows
+ * "Write an explanation", and explanations chain), and focus it on the map. The focus runs after
+ * the panel is drawn, so the view centres it inside the updated insets.
+ * @param {{ openExplain: (id: string) => void, act: (a: any) => any, activeView: () => any }} shell
+ * @param {string} nodeId
+ * @param {(fn: () => void) => void} [later]
+ */
+export function followSeeAlso(shell, nodeId, later = (fn) => fn()) {
+  shell.openExplain(nodeId);
+  later(() => {
+    shell.act({ type: 'focus', nodeId });
+    const v = shell.activeView();
+    if (v && typeof v.setFocus === 'function') v.setFocus(nodeId);
+  });
+}

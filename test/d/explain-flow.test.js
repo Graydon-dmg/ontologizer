@@ -123,3 +123,31 @@ test('server mode: a POST to a server that is gone, or that never answers, resol
   const bad = createSource({ search: '', EventSource: ES, fetch: /** @type {any} */ (async () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: 'nodeId must be a non-empty string' }) })) });
   assert.deepEqual(await bad.act({ type: 'explain', nodeId: '' }), { ok: false, error: 'nodeId must be a non-empty string' });
 });
+
+import { followSeeAlso } from '../../web/shell/explain.js';
+
+/** @param {typeof followSeeAlso} follow */
+function checkSeeAlso(follow) {
+  /** @type {any[]} */ const calls = [];
+  const shell = {
+    openExplain: (/** @type {string} */ id) => calls.push(['open', id]),
+    act: (/** @type {any} */ a) => calls.push(['act', a]),
+    activeView: () => ({ setFocus: (/** @type {string} */ id) => calls.push(['setFocus', id]) }),
+  };
+  follow(shell, 'plastic-modeling/tools/adhesives');
+  // The panel opens on the linked node first (that is where "Write an explanation" shows), then it is focused.
+  assert.deepEqual(calls, [
+    ['open', 'plastic-modeling/tools/adhesives'],
+    ['act', { type: 'focus', nodeId: 'plastic-modeling/tools/adhesives' }],
+    ['setFocus', 'plastic-modeling/tools/adhesives'],
+  ]);
+}
+
+test('a See also link opens the panel on that node and focuses it', () => {
+  checkSeeAlso(followSeeAlso);
+});
+
+test('planted fault: a See also link that only focuses (panel stays on the old node) is caught', () => {
+  const focusOnly = /** @type {any} */ ((/** @type {any} */ shell, /** @type {string} */ id) => { shell.act({ type: 'focus', nodeId: id }); shell.activeView().setFocus(id); });
+  assert.throws(() => checkSeeAlso(focusOnly));
+});

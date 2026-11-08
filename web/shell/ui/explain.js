@@ -1,5 +1,5 @@
 // @ts-check
-import { explainModel, explainStatus } from '../explain.js';
+import { explainModel, explainStatus, followSeeAlso } from '../explain.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountExplain(el, shell) {
@@ -65,7 +65,8 @@ export function mountExplain(el, shell) {
       for (const s of m.seeAlso) {
         const li = mk('li');
         const b = mk('button', s.label, 'see-also');
-        b.addEventListener('click', () => focus(s.id));
+        // Two frames: the panel re-renders, then the insets are published, then the view focuses.
+        b.addEventListener('click', () => followSeeAlso(shell, s.id, (fn) => requestAnimationFrame(() => requestAnimationFrame(fn))));
         li.appendChild(b);
         ul.appendChild(li);
       }
