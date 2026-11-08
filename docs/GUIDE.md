@@ -91,7 +91,7 @@ While the article is being written it shows `Researching…`. A node without an 
 
 ### Lenses (Rosetta)
 
-A lens re-explains your map for a persona. For each node, Claude names an **analog** from the persona's world and, where there is one, **where it breaks**. Add one with `ontologizer rosetta` (see below), or from the page itself with **See as → New lens…**, then pick it under **See as**. In the 2D graph the analog appears as an italic "ghost" label under each node (with a warning sign when there is a "breaks" note, which shows on hover). In the explain panel you see `As <persona>: <analog>` and `Where it breaks: <note>`. You can add several lenses to one map.
+A lens re-explains your map for a persona. For each node, Claude names an **analog** from the persona's world and, where there is one, **where it breaks**. Add one with `ontologizer rosetta` (see below), or from the page itself with the **Rosetta** button → **New lens…**. The **Rosetta** menu lists **None**, every lens the map has, and **New lens…**; pick a lens to switch to it. In the 2D graph the analog appears as an italic "ghost" label under each node (with a warning sign when there is a "breaks" note, which shows on hover). In the explain panel you see `As <persona>: <analog>` and `Where it breaks: <note>`. You can add several lenses to one map.
 
 ### Fuse
 
@@ -184,7 +184,7 @@ Prints `Fused into <draft id>`, opens the result and serves it. `--into` names t
 ontologizer rosetta plastic-modeling --as "a home chef"
 ```
 
-`--as` is required (200 characters at most). `--name` sets the lens id (turned into lowercase-with-hyphens); otherwise it is derived from the persona ("a home chef" becomes `chef`, and a second lens with the same id becomes `chef-2`). When done it prints `Lens "chef" added. Pick it under "See as" in the page.` and keeps serving.
+`--as` is required (200 characters at most). `--name` sets the lens id (turned into lowercase-with-hyphens); otherwise it is derived from the persona ("a home chef" becomes `chef`, and a second lens with the same id becomes `chef-2`). When done it prints a short confirmation and keeps serving; pick the lens from the **Rosetta** button on the page.
 
 ### explain and research
 
@@ -231,9 +231,9 @@ The fused draft shows the two original maps in two colour families. Look at the 
 ontologizer rosetta plastic-modeling --as "a home chef"
 ```
 
-The lens is called `chef`. On the page open **See as** and choose it. Ghost labels appear under the nodes. Click a node and read the panel: it shows `As a home chef: <the kitchen equivalent>` and, where the comparison fails, `Where it breaks: <why>`. Choose **none** to go back.
+The lens is called `chef`. On the page open the **Rosetta** button and choose it. Ghost labels appear under the nodes. Click a node and read the panel: it shows `As a home chef: <the kitchen equivalent>` and, where the comparison fails, `Where it breaks: <why>`. Choose **None** to go back.
 
-You can do the same without the terminal: on an open map, choose **See as → New lens…** and type the persona. The analogs stream in the same way.
+You can do the same without the terminal: on an open map, choose **Rosetta → New lens…** and type the persona. The analogs stream in the same way.
 
 ### d) The offline demo
 
@@ -256,7 +256,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Search** | Type to find nodes by label (matches the start of the label first, then words, then anywhere). Matches highlight on the map and up to 8 are listed; click one to jump to it. |
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
-| **See as** | Pick a lens. Only appears once the map has one. |
+| **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
 | **Jobs tray** | Running and recent jobs (see Concepts). |
@@ -335,7 +335,7 @@ Start with `ontologizer doctor`. Each line starts with `ok`, `warn` or `fail`, a
 
 | Row | Meaning and fix |
 |---|---|
-| Node | Needs Node 20 or newer. Fix: install Node 20+. |
+| Node | Needs Node 22 or newer. Fix: install Node 22+. |
 | API key | `found (env)` / `found (keychain)`, or `fail` `not set`: run `ontologizer key set`. A `warn` that the keychain did not answer within 3 s means an access dialog may be open: allow it, or run `ontologizer key`. |
 | Network | `api.anthropic.com reachable`, or a warning that it cannot be reached (`load demo --replay` still works): check your connection. |
 | Store | `<folder> is writable`, or `fail`: fix the folder's permissions. |

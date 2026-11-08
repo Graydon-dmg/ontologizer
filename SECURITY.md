@@ -9,6 +9,10 @@ Email the maintainer at graydon.garden@outlook.com. Please do not open a public 
 
 Supported versions: the latest release.
 
+## Verifying a release
+
+Releases are published to npm from GitHub Actions using npm trusted publishing (OIDC), with provenance: each published version is signed and linked to the exact source commit and workflow run that built it. To check what you installed, run `npm audit signatures` in a project that depends on ontologizer; the npm page for each version also shows its provenance.
+
 ## How your API key is handled
 
 Ontologizer looks for your Anthropic API key in this order:
