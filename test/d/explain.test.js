@@ -80,3 +80,22 @@ test('jobs tray shows any kind; build jobs read "Building <category label>"; two
   const bad = (/** @type {any} */ r) => r.kind;
   assert.throws(() => assert.equal(bad(rows[0]), 'Building Tools'));
 });
+
+test('after a reload a Rosetta job still reads "Building lens: <persona>" (from the job, else from its lens)', () => {
+  const base = [{ t: 'ontology.created', at: 0, name: 'm', root: 'r', brief: {}, categories: [] }];
+  const withPersona = foldAll([...base,
+    { t: 'job.queued', at: 1, job: { id: 'r1', kind: 'rosetta', persona: 'a home chef' } }]);
+  assert.equal(jobText(jobRows(withPersona)[0]), 'Building lens: a home chef');
+  // Older logs: the job has no persona, but its lens (made in the same order) does.
+  const old = foldAll([...base,
+    { t: 'job.queued', at: 1, job: { id: 'r1', kind: 'rosetta' } },
+    { t: 'lens.added', at: 2, lens: { id: 'chef', persona: 'a home chef', analogs: {} } },
+    { t: 'job.done', at: 3, job: { id: 'r1', kind: 'rosetta' } },
+    { t: 'job.queued', at: 4, job: { id: 'r2', kind: 'rosetta' } },
+    { t: 'lens.added', at: 5, lens: { id: 'nurse', persona: 'a nurse', analogs: {} } }]);
+  const texts = jobRows(old).map(jobText);
+  assert.ok(texts.includes('Building lens: a home chef') && texts.includes('Building lens: a nurse'), texts.join(' / '));
+  // planted fault: a tray that only knows the persona from this page's own request
+  const pageOnly = (/** @type {any} */ r) => (r.kind === 'rosetta' ? 'Building lens' : jobText(r));
+  assert.throws(() => assert.ok(jobRows(old).map(pageOnly).includes('Building lens: a home chef')));
+});
