@@ -285,3 +285,16 @@ test('a refusal or max_tokens stop keeps what streamed; a 401 is rethrown unchan
   const [draft] = [...store.logs.keys()].filter((k) => k.startsWith('draft-'));
   assert.equal(/** @type {any[]} */ (store.logs.get(draft))[0].t, 'ontology.created');
 });
+
+test('a bridge between two things with the same name is dropped (planted: Gunpla node -> Gunpla hybrid)', async () => {
+  const store = fakeStore({ manga: fixtureEvents('manga'), 'plastic-modeling': fixtureEvents('plastic-modeling') });
+  const lines = [
+    { hybrid: 'Gunpla', summary: 's', hook: 'h' },
+    { from: 'plastic-modeling/kits/gunpla', to: 'Gunpla', why: 'same thing' },
+    { from: 'manga', to: 'Gunpla', why: 'anime robots' },
+  ].map((o) => JSON.stringify(o)).join('\n');
+  const ctx = makeCtx({ store, client: fakeClient(() => lines) });
+  const id = await fuse(ctx, 'plastic-modeling', 'manga', { into: 'gunpla' });
+  const bridges = store.read(id).edges.filter((e) => e.id.startsWith('bridge-'));
+  assert.deepEqual(bridges.map((e) => e.from), ['manga']);
+});

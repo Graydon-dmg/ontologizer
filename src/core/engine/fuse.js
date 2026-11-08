@@ -154,6 +154,11 @@ export async function fuse(ctx, a, b, opts) {
   let nHybrids = 0;
   let nBridges = 0;
 
+  /** @param {string} id lower-cased label of a copied node or hybrid */
+  const labelOf = (id) => str((oa.nodes[id] ?? ob.nodes[id])?.label ?? hybridLabel.get(id)).toLowerCase();
+  /** @type {Map<string, string>} hybrid id -> label */
+  const hybridLabel = new Map();
+
   /** @param {string} ref @returns {'a'|'b'|'h'|null} with the resolved id */
   const resolve = (ref) => {
     const r = str(ref);
@@ -173,6 +178,7 @@ export async function fuse(ctx, a, b, opts) {
       let id = `${hybridsRoot}/${base}`;
       for (let k = 2; hybridIds.has(id); k++) id = `${hybridsRoot}/${base}-${k}`;
       hybridIds.add(id);
+      hybridLabel.set(id, label);
       nHybrids++;
       if (!hybridByLabel.has(label.toLowerCase())) hybridByLabel.set(label.toLowerCase(), id);
       emit('node.added', { node: clean(fusedNode({
@@ -187,6 +193,7 @@ export async function fuse(ctx, a, b, opts) {
       const f = /** @type {any} */ (resolve(obj.from));
       const t = /** @type {any} */ (resolve(obj.to));
       if (!why || !f || !t || f.id === t.id) return;
+      if (labelOf(f.id) && labelOf(f.id) === labelOf(t.id)) return; // "Gunpla -> Gunpla" says nothing
       if (f.side !== 'h' && f.side === t.side) return;
       const key = `${f.id}\u0000${t.id}`;
       if (pairs.has(key)) return;
