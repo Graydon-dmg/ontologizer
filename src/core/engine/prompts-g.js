@@ -20,7 +20,7 @@ Output: one JSON object per line, nothing else. No prose, no headings, no code f
 1. Only if the user asks for a name, the very first line names the fused map, in kebab-case, 1 to 3 words:
 {"name":"gunpla"}
 
-2. A hybrid: a real thing that exists only because both fields meet. 3 to 8 of them; aim for 5 or 6.
+2. A hybrid: a real thing that exists only because both fields meet. Write 5 to 8 of them.
 {"hybrid":"Gunpla","summary":"Bandai's snap-fit Gundam model kits, where mecha anime meets plastic modeling.","hook":"Gunpla outsells every other plastic kit line in the world."}
 
 3. A bridge: one specific connection across the seam. 8 to 20 of them in total.
