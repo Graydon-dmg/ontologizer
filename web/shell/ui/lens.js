@@ -1,17 +1,17 @@
 // @ts-check
-import { lensOptions, chooseLens, createLensRequests } from '../lens.js';
-
-const NEW = '__new__';
+import { lensMenuOptions, pickLens, chooseLens, createLensRequests } from '../lens.js';
+import { createDropdown } from './dropdown.js';
 
 /** The "Rosetta" lens switcher: None, every lens, then "New lens…". @param {HTMLElement} el @param {any} shell */
 export function mountLens(el, shell) {
   el.classList.add('lens-switcher');
-  const label = document.createElement('label');
-  label.className = 'lens-label';
-  label.textContent = 'Rosetta ';
-  const select = document.createElement('select');
-  select.setAttribute('aria-label', 'Rosetta lens');
-  label.append(select);
+  const label = document.createElement('span');
+  label.className = 'lens-label dd-label';
+  label.textContent = 'Rosetta';
+  const dd = createDropdown({
+    ariaLabel: 'Rosetta lens', options: [], value: 'none',
+    onSelect: (v) => pickLens(v, { choose: (x) => { dd.setValue(x); choose(x); }, openNew: () => openPop() }),
+  });
 
   // The "New lens…" popover.
   const pop = document.createElement('form');
@@ -36,7 +36,7 @@ export function mountLens(el, shell) {
   cancel.textContent = 'Cancel';
   row.append(create, cancel);
   pop.append(prompt, msg, row);
-  el.append(label, pop);
+  el.append(label, dd.el, pop);
 
   const choose = (/** @type {string|null} */ id) => chooseLens(shell.activeView(), (a) => shell.act(a), id);
   const requests = createLensRequests({
@@ -52,27 +52,9 @@ export function mountLens(el, shell) {
 
   function build() {
     const o = shell.snapshot();
-    const opts = lensOptions(o).map((x) => {
-      const op = document.createElement('option');
-      op.value = x.value ?? 'none';
-      op.textContent = x.label;
-      return op;
-    });
-    const add = document.createElement('option');
-    add.value = NEW;
-    add.textContent = 'New lens…';
-    select.replaceChildren(...opts, add);
-    select.value = o.view?.lens ?? 'none';
+    dd.setOptions(lensMenuOptions(o), o.view?.lens ?? 'none');
   }
 
-  select.addEventListener('change', () => {
-    if (select.value === NEW) {
-      select.value = shell.snapshot().view?.lens ?? 'none';
-      openPop();
-      return;
-    }
-    choose(select.value);
-  });
   pop.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!input.value.trim()) { msg.textContent = 'Type who the map should speak to, e.g. "a home chef".'; input.focus(); return; }
