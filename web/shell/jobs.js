@@ -8,6 +8,8 @@ const ORDER = { running: 0, queued: 1, failed: 2, done: 3 };
  * @returns {{ id: string, kind: string, nodeId?: string, label: string, state: string, error?: string }[]}
  */
 export function jobRows(ontology) {
+  const lensPersonas = Object.values(ontology.lenses || {}).map((l) => l.persona || l.id);
+  let rosettaSeen = 0;
   return Object.values(ontology.jobs)
     .map((j, i) => ({
       i,
@@ -15,7 +17,9 @@ export function jobRows(ontology) {
         id: j.id,
         kind: j.kind,
         nodeId: j.nodeId,
-        label: (j.nodeId && ontology.nodes[j.nodeId] && ontology.nodes[j.nodeId].label) || '',
+        label: j.kind === 'rosetta'
+          ? rosettaLabel(/** @type {any} */ (j), lensPersonas, rosettaSeen++)
+          : (j.nodeId && ontology.nodes[j.nodeId] && ontology.nodes[j.nodeId].label) || '',
         state: j.state,
         error: j.error,
       },
@@ -44,4 +48,15 @@ export function jobText(row) {
 export function visibleJobRows(rows, keepDone = 3) {
   const done = rows.filter((r) => r.state === 'done');
   return [...rows.filter((r) => r.state !== 'done'), ...done.slice(-keepDone)];
+}
+
+/**
+ * The persona of a Rosetta job: from the job itself (the server records it), else from the
+ * lens made by the k-th Rosetta job (jobs and lenses are both recorded in creation order), so the
+ * label survives a reload.
+ * @param {{ persona?: string }} job @param {string[]} lensPersonas @param {number} k
+ */
+export function rosettaLabel(job, lensPersonas, k) {
+  if (job.persona) return job.persona;
+  return lensPersonas[k] || '';
 }

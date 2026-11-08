@@ -1,7 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import { CliError } from '../deps.js';
-import { engineFor, serveSession } from '../serve.js';
+import { engineFor, serveSession, checkPort } from '../serve.js';
 import { resolveName, waitForExit } from '../resolve-name.js';
 
 export default {
@@ -11,6 +11,7 @@ export default {
     .positional('name', { type: 'string', describe: 'Map name (a prefix works)' })
     .option('replay', { type: 'boolean', default: false, describe: 'Replay the build as it happened' })
     .option('speed', { type: 'number', default: 1, describe: 'Replay speed multiplier' })
+    .option('port', { type: 'number', default: 0, describe: 'Port to serve on (default: a free one)' })
     .option('open', { type: 'boolean', default: true, hidden: true })
     .option('exit-after', { type: 'number', hidden: true }),
   handler: async (/** @type {any} */ argv) => {
@@ -29,7 +30,7 @@ export default {
     }
     const id = await resolveName(deps, store, name);
     const engine = await engineFor({ deps, store, id, needKey: false });
-    const srv = await serveSession({ deps, store, engine, id, replay: argv.replay ? { speed } : null, open: argv.open });
+    const srv = await serveSession({ deps, store, engine, id, replay: argv.replay ? { speed } : null, open: argv.open, port: checkPort(argv.port) });
     deps.stdout.write(`${Object.keys(store.read(id).nodes).length} nodes.\n`);
     try {
       await waitForExit(deps, argv.exitAfter);
