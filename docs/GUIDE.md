@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/web/shared/brand/lockup-dark.svg">
+  <img alt="ontologizer" src="https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/web/shared/brand/lockup-light.svg" width="408">
+</picture>
+
 # Ontologizer user guide
 
 Ontologizer builds a live, color-coded map of any topic with Claude and streams it into a web page on your own machine. You say what you want to explore; the map draws itself while you watch.
