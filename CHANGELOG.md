@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-08)
 
 - **Ask the map.** A new **Ask the map** button opens a Chat pane. Ask in words or with images (paste, drop or add up to 4), and the answer cites the map's nodes (click one to see it) and lists web sources for anything the map lacks. It can suggest research, but never starts a job on its own.
 - **Cited nodes light up** in both the 2D and the 3D view.
