@@ -20,7 +20,7 @@ Output: one JSON object per line, nothing else. No prose, no headings, no code f
 1. Only if the user asks for a name, the very first line names the fused map, in kebab-case, 1 to 3 words:
 {"name":"gunpla"}
 
-2. A hybrid: a real thing that exists only because both fields meet. 3 to 8 of them.
+2. A hybrid: a real thing that exists only because both fields meet. 3 to 8 of them; aim for 5 or 6.
 {"hybrid":"Gunpla","summary":"Bandai's snap-fit Gundam model kits, where mecha anime meets plastic modeling.","hook":"Gunpla outsells every other plastic kit line in the world."}
 
 3. A bridge: one specific connection across the seam. 8 to 20 of them in total.
@@ -31,7 +31,7 @@ Rules:
 - Write each hybrid line, then straight away the bridges that tie it in: at least one bridge from a node of the first map and one from a node of the second map, with the hybrid's label as "to".
 - After the hybrids, add direct bridges: "from" a node of the first map, "to" a node of the second map.
 - Copy node ids exactly as written in the maps. Never invent an id. Use a hybrid's exact label to refer to it.
-- "why" names the concrete link (who, what, how), never "both involve creativity".
+- "why" names the concrete link: a shared person, product, event, place, material or technique. Never a parallel such as "both involve creativity", "both are fan-driven" or "both follow a sequence": if you can only say the two things are alike, leave the bridge out.
 - summary: one plain sentence. hook: one surprising, specific fact.`;
 
 /**
