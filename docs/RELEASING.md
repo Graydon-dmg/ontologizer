@@ -50,6 +50,10 @@ github.com/Graydon-dmg/ontologizer → **Settings** → **Environments** → **N
 
 Recommended, on the same page: **Deployment branches and tags** → **Selected branches and tags** → add a tag rule `v*.*.*`, so only version tags can ever reach this environment.
 
+### 5. GitHub: social preview image
+
+github.com/Graydon-dmg/ontologizer → **Settings** → **General** → **Social preview** → **Edit** → **Upload an image…** → `docs/brand/social-preview.png` (1280×640).
+
 ## Releasing a new version
 
 ```bash
