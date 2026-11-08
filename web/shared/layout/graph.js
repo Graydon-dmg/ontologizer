@@ -12,6 +12,8 @@ import { forceSimulation, forceLink, forceManyBody, forceCollide, forceRadial } 
 //   on('tick', fn) / off('tick', fn)
 //   settle(ticks = 300)       run synchronously (tests, replays)
 //   stop()
+//   pin(id, x, y)             (optional, contract change) fix a node at x,y while dragging; alphaTarget 0.1
+//   unpin(id)                 release it; alphaTarget 0. Both no-ops for unknown ids
 // Forces: parent link (strong, short), cross-link (weak, long), many-body charge, collide by
 // node radius, radial by depth from the focus (ring spacing 90), and an angular pull toward the
 // node's category sector (sectors split 360 degrees in category order).
@@ -41,7 +43,7 @@ function mulberry32(a) {
  * @typedef {{ id: string, label?: string, parent: string|null, category: string, depth: number }} OntoNode
  * @typedef {{ id?: string, from: string, to: string, type?: string, why?: string }} OntoEdge
  * @typedef {{ id: string, data: OntoNode, x: number, y: number, vx: number, vy: number,
- *   placed: boolean, hidden: boolean, dist: number, desc: number }} SimNode
+ *   placed: boolean, hidden: boolean, dist: number, desc: number, fx?: number|null, fy?: number|null }} SimNode
  */
 
 /**
@@ -264,6 +266,25 @@ export function createGraphLayout({ seed = 1, width = 1000, height = 800, _noAng
       collapsed = new Set(ids);
       sync();
       reheat(0.3);
+    },
+    /**
+     * Pin a node while it is dragged; keeps the simulation warm. No-op for unknown ids.
+     * @param {string} id @param {number} x @param {number} y
+     */
+    pin(id, x, y) {
+      const n = nodes.get(id);
+      if (!n || !Number.isFinite(x) || !Number.isFinite(y)) return;
+      n.fx = x; n.fy = y; n.x = x; n.y = y;
+      n.placed = true;
+      sim.alphaTarget(0.1);
+      reheat(0.1);
+    },
+    /** Release a pinned node. No-op for unknown ids. @param {string} id */
+    unpin(id) {
+      const n = nodes.get(id);
+      if (!n) return;
+      n.fx = null; n.fy = null;
+      sim.alphaTarget(0);
     },
     /** @returns {Map<string, {x: number, y: number}>} */
     positions() {
