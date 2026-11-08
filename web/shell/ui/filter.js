@@ -1,4 +1,5 @@
 // @ts-check
+import { filterValue, sendFilter } from '../filter.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountFilter(el, shell) {
@@ -30,12 +31,10 @@ export function mountFilter(el, shell) {
     const all = shell.snapshot().categories.map((/** @type {any} */ c) => c.id);
     const boxes = /** @type {HTMLInputElement[]} */ ([...cats.querySelectorAll('input')]);
     const on = boxes.filter((b) => b.checked).map((b) => b.value);
-    const categories = on.length === all.length ? null : on;
-    selected = categories ? new Set(categories) : null;
+    const value = filterValue(on, all, depth.value);
+    selected = value.categories ? new Set(value.categories) : null;
     summary.textContent = selected ? `Categories (${selected.size})` : 'Categories';
-    const value = { categories, maxDepth: depth.value ? Number(depth.value) : null };
-    shell.activeView()?.setFilter(value);
-    shell.act({ type: 'filter', value });
+    sendFilter(shell, value);
   };
 
   const build = () => {

@@ -16,14 +16,11 @@ import { mountSearch } from './ui/search.js';
 import { mountFilter } from './ui/filter.js';
 import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
+import { mountTheme } from './ui/theme.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
-// Theme: dark by default; light if the OS asks for it.
-const theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-document.documentElement.dataset.theme = theme;
-const th = tokens.THEME[theme];
-for (const k of ['bg', 'fg', 'muted', 'panel']) document.documentElement.style.setProperty('--' + k, th[k]);
+// The theme is applied by ui/theme.js (System / Light / Dark), mounted first below.
 
 const layout = createGraphLayout({ width: innerWidth, height: innerHeight });
 const source = createSource({ search: location.search });
@@ -51,7 +48,17 @@ let activeId = null;
 const shell = {
   source,
   snapshot: () => source.snapshot(),
-  act: (/** @type {any} */ a) => source.act(a),
+  /** Send an action; a failure shows as a notice instead of failing silently. */
+  act: (/** @type {any} */ a) => Promise.resolve()
+    .then(() => source.act(a))
+    .then((/** @type {any} */ r) => {
+      if (r && r.ok === false) bus.emit('notice', { text: `Could not ${a && a.type}: ${r.error || 'refused by the server'}` });
+      return r;
+    })
+    .catch((/** @type {any} */ err) => {
+      bus.emit('notice', { text: `Could not ${a && a.type}: ${err && err.message ? err.message : err}` });
+      return { ok: false, error: String(err) };
+    }),
   layout,
   tokens,
   views: listViews(),
@@ -60,7 +67,7 @@ const shell = {
   switchView(/** @type {string} */ id) {
     if (!getView(id)) return;
     mountView(id);
-    source.act({ type: 'layout', value: id });
+    shell.act({ type: 'layout', value: id });
   },
   on: bus.on,
   emit: bus.emit,
@@ -75,7 +82,7 @@ function ctx() {
     layout,
     emit: (/** @type {'select'|'hover'|'focus'} */ name, /** @type {any} */ detail) => {
       bus.emit(name, detail);
-      if (name === 'focus' && detail && detail.nodeId) source.act({ type: 'focus', nodeId: detail.nodeId });
+      if (name === 'focus' && detail && detail.nodeId) shell.act({ type: 'focus', nodeId: detail.nodeId });
     },
   };
 }
@@ -124,6 +131,7 @@ function mountView(id) {
 
 // Mount the chrome first so every module sees the stream from its first event.
 const mounts = [
+  ['theme-switcher', mountTheme],
   ['view-switcher', mountViewSwitcher], ['legend', mountLegend], ['menu', mountMenu],
   ['explain', mountExplain], ['jobs', mountJobs], ['ticker', mountTicker], ['search', mountSearch],
   ['filter', mountFilter], ['lens-switcher', mountLens], ['minimap', mountMinimap],
