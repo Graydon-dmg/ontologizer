@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" fill="none">
+<line x1="48.00" y1="37.30" x2="48.00" y2="22.50" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="55.57" y1="40.43" x2="66.00" y2="30.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="58.70" y1="48.00" x2="73.50" y2="48.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="55.57" y1="55.57" x2="66.00" y2="66.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="48.00" y1="58.70" x2="48.00" y2="73.50" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="40.43" y1="55.57" x2="30.00" y2="66.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="37.30" y1="48.00" x2="22.50" y2="48.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<line x1="40.43" y1="40.43" x2="30.00" y2="30.00" stroke="#a6abb2" stroke-width="2.1" stroke-linecap="round"/>
+<circle cx="48.00" cy="15.00" r="7.5" fill="#36a9cf"/>
+<circle cx="71.30" cy="24.70" r="7.5" fill="#249eaa"/>
+<circle cx="81.00" cy="48.00" r="7.5" fill="#f2b21c"/>
+<circle cx="71.30" cy="71.30" r="7.5" fill="#f2a23b"/>
+<circle cx="48.00" cy="81.00" r="7.5" fill="#e98756"/>
+<circle cx="24.70" cy="71.30" r="7.5" fill="#d98287"/>
+<circle cx="15.00" cy="48.00" r="7.5" fill="#e88368"/>
+<circle cx="24.70" cy="24.70" r="7.5" fill="#648ec5"/>
+<circle cx="48" cy="48" r="10.7" fill="#f4f6fa"/>
+</svg>
