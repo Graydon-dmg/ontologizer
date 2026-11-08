@@ -9,7 +9,7 @@ import { easeBackOut } from 'd3-ease';
 import { hsl } from 'd3-color';
 import { registerView } from '../../shared/view.js';
 import { MOTION, LABEL_RULE, categoryColor, depthLightness, nodeRadius, edgeStyle, originOutline } from '../../shared/tokens.js';
-import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels, fitTransform, syncViewState } from './math.js';
+import { descendants, ringsFrom, labelVisible, neighborhood, hiddenIds, placeLabels, fitTransform, syncViewState, isUserMove, resizeTransform, worldBounds } from './math.js';
 import { createMinimap } from './minimap.js';
 import { themeVars, onThemeChange } from './theme.js';
 
@@ -28,6 +28,10 @@ const CLICK_DISTANCE = 4;
 /** Label box estimate in screen px (11.5px system-ui): width per character, height. */
 const LABEL_CHAR_W = 6.2;
 const LABEL_H = 14;
+/** Label spots: [x, y offset in node radii, x, dy in screen units, text-anchor]: right, left, below, above. */
+const LABEL_SPOTS = /** @type {const} */ ([
+  [1, 0, 5, '0.35em', 'start'], [-1, 0, -5, '0.35em', 'end'], [0, 1, 0, '1.05em', 'middle'], [0, -1, 0, '-0.45em', 'middle'],
+]);
 
 /** @typedef {{ g: any, circle: any, ring: any, label: any, core: any, glyph: any, r: number, fill: string, hasArticle?: boolean,
  *   spawn: { t0: number, from: {x:number,y:number} }|null }} NodeView */
@@ -91,11 +95,14 @@ class OntoGraph extends Base {
   maxRing = 0;
   /** @type {any[]} */ ringEls = [];
   /** @type {Map<string, boolean>} */ labelWanted = new Map();
+  /** @type {Map<string, number>} */ labelPriority = new Map();
+  /** @type {string|null} last node clicked (select), for label priority */ selected = null;
   userMoved = false;
   lastFit = 0;
   /** @type {any} */ fitTimer = 0;
   /** last snapshot view values seen (see syncFromSnapshot) */ seen = { filter: '', collapsed: '' };
   box = { width: 0, height: 0 };
+  /** @type {{x:number,y:number,k:number}|null} */ gestureStart = null;
   /** @type {(() => void)|null} */ themeOff = null;
   /** @type {{ update(): void, unmount(): void }|null} */ minimap = null;
   /** @type {{ id: string, x: number, y: number }|null} */ dragging = null;
@@ -145,13 +152,22 @@ class OntoGraph extends Base {
       labels: root.append('g').attr('class', 'labels').style('pointer-events', 'none'),
     };
     this.svg = svg;
-    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).clickDistance(CLICK_DISTANCE).on('zoom', (/** @type {any} */ ev) => {
-      if (ev.sourceEvent) this.userMoved = true;
-      this.onZoom(ev.transform);
-    });
+    this.zoomBehavior = zoom().scaleExtent(SCALE_EXTENT).clickDistance(CLICK_DISTANCE)
+      .on('start', (/** @type {any} */ ev) => {
+        if (!ev.sourceEvent) return;
+        this.svg.interrupt('fit'); // a user gesture always wins over a running auto-fit
+        this.gestureStart = { x: ev.transform.x, y: ev.transform.y, k: ev.transform.k };
+      })
+      .on('zoom', (/** @type {any} */ ev) => {
+        if (ev.sourceEvent && (!this.gestureStart || isUserMove(this.gestureStart, ev.transform, CLICK_DISTANCE))) this.userMoved = true;
+        this.onZoom(ev.transform);
+      });
     svg.call(this.zoomBehavior).on('dblclick.zoom', null);
     svg.on('click', (/** @type {MouseEvent} */ ev) => {
-      if (ev.target === svg.node()) this.ctx?.emit('select', { nodeId: null });
+      if (ev.target !== svg.node()) return;
+      this.selected = null;
+      this.refreshLabels();
+      this.ctx?.emit('select', { nodeId: null });
     });
     this.box = { width: el.clientWidth, height: el.clientHeight };
     this.resizeObs = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.onResize(el));
@@ -169,14 +185,19 @@ class OntoGraph extends Base {
     const prev = this.box;
     this.box = { width: el.clientWidth, height: el.clientHeight };
     if (!this.ctx || (prev.width === this.box.width && prev.height === this.box.height)) return;
-    if (this.userMoved && prev.width && prev.height) {
-      const t = zoomTransform(this.svg.node());
-      this.svg.call(this.zoomBehavior.transform, zoomIdentity
-        .translate(t.x + (this.box.width - prev.width) / 2, t.y + (this.box.height - prev.height) / 2).scale(t.k));
-    } else {
-      this.lastFit = 0;
-      if (!prev.width || !prev.height) this.centered = false;
-      this.centerWorld();
+    if (!prev.width || !prev.height) this.centered = false;
+    // Applied at once, whether or not the build is still running (the auto-fit only runs while it is).
+    const pos = this.ctx.layout.positions();
+    const vis = [...this.nodes.keys()].filter((id) => !this.hidden.has(id) && pos.has(id)).map((id) => /** @type {{x:number,y:number}} */ (pos.get(id)));
+    const b = worldBounds(vis);
+    const pad = { minX: b.minX - 30, minY: b.minY - 30, maxX: b.maxX + 90, maxY: b.maxY + 30 }; // nodes + labels
+    const t = resizeTransform(zoomTransform(this.svg.node()), prev, this.box, this.userMoved, pad,
+      { minK: SCALE_EXTENT[0], maxK: FIT_MAX_K, margin: FIT_MARGIN });
+    if (t) {
+      this.svg.interrupt('fit');
+      this.svg.call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k));
+      this.centered = true;
+      this.lastFit = performance.now();
     }
     this.minimap?.update();
     this.schedule();
@@ -460,6 +481,16 @@ class OntoGraph extends Base {
       const ring = this.rings.get(id) ?? Infinity;
       wanted.set(id, id === ont.view.focus || id === this.hovered || ring < 2);
     }
+    // Culling priority: categories and hybrids (origin 'fuse'), then the focus's and the
+    // selection's neighbourhood; everything else after.
+    const near = new Set([...neighborhood(ont.view.focus, ont), ...(this.selected ? neighborhood(this.selected, ont) : [])]);
+    /** @type {Map<string, number>} */
+    const priority = new Map();
+    for (const id of wanted.keys()) {
+      const n = ont.nodes[id];
+      priority.set(id, n.depth === 1 || n.origin === 'fuse' ? 2 : near.has(id) ? 1 : 0);
+    }
+    this.labelPriority = priority;
     this.labelWanted = wanted;
     this.schedule();
   }
@@ -476,12 +507,34 @@ class OntoGraph extends Base {
     for (const [id, forced] of this.labelWanted) {
       const nv = this.nodes.get(id), p = cur.get(id);
       if (!nv || !p) continue;
-      const w = 5 + LABEL_CHAR_W * (ont.nodes[id]?.label.length ?? 0);
-      const sx = (p.x + nv.r) * t.k + t.x, sy = p.y * t.k + t.y;
-      items.push({ id, forced, depth: ont.nodes[id]?.depth ?? 0, r: nv.r, box: { x: sx, y: sy - LABEL_H / 2, w, h: LABEL_H } });
+      const w = LABEL_CHAR_W * (ont.nodes[id]?.label.length ?? 0);
+      const cx = p.x * t.k + t.x, cy = p.y * t.k + t.y, R = nv.r * t.k, H = LABEL_H;
+      /** candidate spots in screen px, in LABEL_SPOTS order: right, left, below, above */
+      const all = [
+        { x: cx + R + 5, y: cy - H / 2, w, h: H },
+        { x: cx - R - 5 - w, y: cy - H / 2, w, h: H },
+        { x: cx - w / 2, y: cy + R + 2, w, h: H },
+        { x: cx - w / 2, y: cy - R - 2 - H, w, h: H },
+      ];
+      // try last frame's spot first, so labels don't hop while the layout moves
+      const prev = nv.spot ?? 0;
+      const order = [prev, ...[0, 1, 2, 3].filter((i) => i !== prev)];
+      items.push({ id, forced, must: ont.nodes[id]?.origin === 'fuse', priority: this.labelPriority.get(id) ?? 0, depth: ont.nodes[id]?.depth ?? 0, r: nv.r,
+        boxes: forced ? [all[0]] : order.map((i) => all[i]), order: forced ? [0] : order });
     }
     const shown = placeLabels(items);
-    for (const [id, nv] of this.nodes) nv.label.style('display', shown.has(id) ? null : 'none');
+    const orderOf = new Map(items.map((it) => [it.id, it.order]));
+    const inv = 1 / t.k;
+    for (const [id, nv] of this.nodes) {
+      const i = shown.get(id);
+      if (i === undefined) { nv.label.style('display', 'none'); continue; }
+      const spot = /** @type {number[]} */ (orderOf.get(id))[i];
+      nv.spot = spot;
+      const p = /** @type {{x:number,y:number}} */ (cur.get(id));
+      const [ax, ay, dx, dy, anchor] = LABEL_SPOTS[spot];
+      nv.label.style('display', null).attr('text-anchor', anchor).attr('x', dx).attr('dy', dy)
+        .attr('transform', `translate(${p.x + ax * nv.r},${p.y + ay * nv.r}) scale(${inv})`);
+    }
   }
 
   /**
@@ -491,6 +544,8 @@ class OntoGraph extends Base {
   bindNode(id, g) {
     g.on('click', (/** @type {MouseEvent} */ ev) => {
       ev.stopPropagation();
+      this.selected = id;
+      this.refreshLabels();
       this.ctx?.emit('select', { nodeId: id, x: ev.clientX, y: ev.clientY });
     });
     g.on('dblclick', (/** @type {MouseEvent} */ ev) => {
@@ -575,7 +630,6 @@ class OntoGraph extends Base {
       nv.g.attr('transform', `translate(${p.x},${p.y})`);
       nv.circle.attr('r', nv.r);
       nv.ring.attr('r', nv.r + 3);
-      nv.label.attr('transform', `translate(${p.x + nv.r},${p.y}) scale(${inv})`);
       const hid = this.hidden.has(id);
       nv.g.style('display', hid ? 'none' : null);
       const showCore = nv.hasArticle && !hid;

@@ -194,24 +194,34 @@ export function hiddenIds(ontology, collapsed, filter) {
 
 /**
  * Greedy label placement in screen space. Forced labels (focus, hovered, the first rings) always
- * show; the rest are tried parents before children, then larger nodes before smaller, and a label
+ * show at their first spot; the rest are tried by priority (higher first: categories, hybrids, the focus's or
+ * selection's neighbourhood), then parents before children, then larger nodes before smaller, and a label
  * is skipped when its box overlaps one already placed.
- * @param {Array<{ id: string, forced: boolean, depth: number, r: number,
- *                 box: { x: number, y: number, w: number, h: number } }>} items
- * @returns {Set<string>} ids whose label is drawn
+ * Each label may offer several candidate spots (`boxes`, in order of preference: right, left,
+ * below, above); it takes the first one that overlaps nothing placed so far.
+ * `must` labels are always drawn, placed right after the forced ones.
+ * @param {Array<{ id: string, forced: boolean, must?: boolean, priority?: number, depth: number, r: number,
+ *                 box?: { x: number, y: number, w: number, h: number },
+ *                 boxes?: Array<{ x: number, y: number, w: number, h: number }> }>} items
+ * @returns {Map<string, number>} drawn label id -> index of the spot it took
  */
 export function placeLabels(items) {
   const order = [...items].sort((a, b) =>
-    (Number(b.forced) - Number(a.forced)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
+    (Number(b.forced) - Number(a.forced)) || (Number(b.must ?? false) - Number(a.must ?? false)) || ((b.priority ?? 0) - (a.priority ?? 0)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
   /** @type {Array<{ x: number, y: number, w: number, h: number }>} */
   const placed = [];
-  const shown = new Set();
+  /** @type {Map<string, number>} */
+  const shown = new Map();
+  const free = (/** @type {{ x: number, y: number, w: number, h: number }} */ a) =>
+    !placed.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
   for (const it of order) {
-    const a = it.box;
-    const hit = !it.forced && placed.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
-    if (hit) continue;
-    placed.push(a);
-    shown.add(it.id);
+    const boxes = it.boxes ?? (it.box ? [it.box] : []);
+    // forced labels keep their first spot; the rest take the first spot that is free
+    // `must` labels (hybrids) take a free spot when there is one, and their first spot otherwise
+    const i = it.forced ? 0 : Math.max(boxes.findIndex(free), it.must ? 0 : -1);
+    if (i < 0 || !boxes[i]) continue;
+    placed.push(boxes[i]);
+    shown.set(it.id, i);
   }
   return shown;
 }
@@ -252,4 +262,34 @@ export function syncViewState(local, seen, view) {
   if (fk !== seen.filter) { out.local.filter = f; out.seen.filter = fk; out.changed = true; }
   if (ck !== seen.collapsed) { out.local.collapsed = [...c]; out.seen.collapsed = ck; out.changed = true; }
   return out;
+}
+
+/**
+ * Did a zoom gesture really move the view? A click with a few px of jitter still fires d3-zoom
+ * 'zoom' events; only a pan beyond clickDistance, or any scale change, counts as the user moving.
+ * @param {{ x: number, y: number, k: number }} start transform when the gesture began
+ * @param {{ x: number, y: number, k: number }} t current transform
+ * @param {number} clickDistance px
+ */
+export function isUserMove(start, t, clickDistance) {
+  return Math.abs(t.k - start.k) > 1e-9 || Math.hypot(t.x - start.x, t.y - start.y) > clickDistance;
+}
+
+/**
+ * The transform to use after the view is resized, whether or not the build is still running:
+ * - the user has not moved since load / the last fit: refit the whole map to the new size;
+ * - the user has moved: keep the same map point at the center of the view, same zoom.
+ * Returns null when the new box has no size yet.
+ * @param {{ x: number, y: number, k: number }} t current transform
+ * @param {Size} prev previous view size
+ * @param {Size} box new view size
+ * @param {boolean} userMoved
+ * @param {Bounds} bounds world bounds of the visible map
+ * @param {{ minK: number, maxK: number, margin: number }} fitOpt
+ * @returns {{ x: number, y: number, k: number }|null}
+ */
+export function resizeTransform(t, prev, box, userMoved, bounds, fitOpt) {
+  if (!(box.width > 0 && box.height > 0)) return null;
+  if (!userMoved || !(prev.width > 0 && prev.height > 0)) return fitTransform(bounds, box, fitOpt);
+  return { x: t.x + (box.width - prev.width) / 2, y: t.y + (box.height - prev.height) / 2, k: t.k };
 }
