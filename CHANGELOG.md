@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Chat with your map.** A ⟦Chat⟧ panel answers questions about the whole map, citing the nodes it used and, when needed, the web. Paste or drop images to ask about them. It can suggest research but never starts a job on its own.
+- **Chat with your map.** A **Chat** pane answers questions about the whole map, citing the nodes it used and, when needed, the web. Paste or drop images to ask about them. It can suggest research but never starts a job on its own.
 - Key is checked with Anthropic before it's saved; API address pinned to api.anthropic.com unless ANTHROPIC_BASE_URL is a secure address.
 
 ## 1.1.0 (2026-11-08)

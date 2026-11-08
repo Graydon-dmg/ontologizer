@@ -36,7 +36,7 @@ Ontologizer sends requests to the Anthropic API (api.anthropic.com) through the 
 - **Explain and Sources:** the brief and the node's label path.
 - **Fuse:** the two maps' node ids and labels.
 - **Rosetta:** node ids, label paths and summaries.
-- **Chat:** your question, the earlier messages in that chat, any images you paste or drop in, and the parts of the map the model looks up to answer (labels, summaries, articles and links of the nodes it searches). It may also use web search. ⟦verify against engine.ask⟧
+- **Chat:** your question; any images attached to it; the last 10 answered exchanges of the chat; the brief (subject, scope, purpose, level); an outline of the map (every node's label, id and summary, plus its lens analog when a lens is active); and whatever the model looks up with its read-only map tools: matching nodes' labels, paths and snippets, and a node's article, sources, parent, children and links. It may also run up to 3 web searches per question.
 
 Explain, Sources and Chat use Anthropic's web search tool, so Anthropic runs searches on your behalf for those requests. See Anthropic's own terms for how it handles API data.
 

@@ -104,13 +104,18 @@ A lens re-explains your map for a persona. For each node, Claude names an **anal
 
 ### Chat: ask your map
 
-The **⟦Chat⟧** panel lets you ask questions about the whole map in plain words, for example *"Which of these tools does a beginner actually need first?"* or *"How does Gunpla connect to the manga side?"*.
+Click **Chat** in the top bar to open the chat pane beside the map. Ask anything about the map in plain words, for example *"Which of these tools does a beginner actually need first?"*. An empty chat says `Ask anything about this map. Answers point to the nodes they use.` and offers three starter questions you can click.
 
-- **How it answers.** Claude first searches your map (labels, summaries, articles and links) and answers from that. When the map doesn't cover something, it can also search the web.
-- **Citations.** Each claim is marked with where it came from. ⟦Map citation⟧ means *from your map*: click it to jump to that node. ⟦Web citation⟧ means *from the web*: the source is listed under ⟦Sources⟧ and opens in a new tab.
-- **Images.** Paste an image (or drop one onto the panel) to ask about it, for example a photo of a kit's sprue or a page you're stuck on. PNG, JPEG, WebP and GIF work; up to 4 images per message, 5 MB each. A message can be just an image. Text is limited to 4000 characters (an emoji counts as one). One answer is written at a time per map, and an answer that stalls is stopped with `The answer took too long and was stopped.`
-- **Research suggestions.** When an answer shows a gap in your map, the chat may suggest a node to research. It never starts a job by itself: a suggestion is a button (⟦Research suggestion label⟧) that you click to queue the research, and it then appears in the jobs tray like any other job.
-- **Cost.** Each question is one model call, roughly a cent or two more when it searches the web. See [Cost](#7-cost).
+Type in **Ask about this map…** and press **Send** (or Enter; Shift+Enter starts a new line). The chat is saved with the map, and the last 10 exchanges are sent along with each new question, so follow-ups work.
+
+- **How it answers.** Claude looks things up in your map first (labels, summaries, articles, sources and links). The pane shows `Searching your map…` while it does. If the map doesn't cover something, it may also search the web (at most 3 searches per question), shown as `Searching the web…`. When it searches the web, the answer's text arrives all at once at the end, after `Searching the web…`, rather than word by word. That is how Anthropic's API returns web-search answers.
+- **From your map.** Nodes the answer relies on appear in the text as buttons with the node's name. Click one to show it on the map (`Show on the map`); with several, **Show all *N* cited on the map** highlights them together. A bar then says `Cited nodes are highlighted on the map.`, and **Clear** removes the highlight. Only nodes that really exist in your map can be cited.
+- **From the web.** Facts from the web are links in the text, and every page used is listed under **From the web** at the end of the answer. Links open in a new tab.
+- **Images.** Click **Add image**, or paste or drop images onto the pane, to ask about a screenshot or photo. PNG, JPEG, WebP and GIF work; up to 4 images per message, 5 MB each. A message can be just an image. Text is limited to 4000 characters (an emoji counts as one).
+- **Research suggestions.** When your map is thin on something, an answer may end with up to three buttons such as **Research Adhesives**. The chat never starts a job by itself: a suggestion runs only when you click it. It then shows `Researching Adhesives…`, and the job appears in the jobs tray like any other research.
+- **Limits.** One answer is written at a time per map. An answer that stalls is stopped with `The answer took too long and was stopped.`
+- **Privacy.** The pane says it plainly: `Questions and images are sent to Anthropic. Images are saved with this map.` See [Privacy](#8-privacy).
+- **Cost.** Each question is one strong-model conversation: roughly a cent or two, a little more with web search or images. See [Cost](#7-cost).
 
 ### Drafts and saved maps
 
@@ -287,7 +292,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
 | **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
-| **⟦Chat⟧** | Opens the chat panel: ask questions about the map, with citations. See [Chat: ask your map](#chat-ask-your-map). |
+| **Chat** | *Ask questions about this map; add screenshots or photos* (its tooltip). Opens the chat pane. See [Chat: ask your map](#chat-ask-your-map). |
 | **Fuse** | *Make a new map that joins this one with another saved map* (its tooltip). The new draft opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
@@ -298,6 +303,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 
 - **Escape** closes the node menu.
 - In the search box, **Enter** jumps to the best match and **Escape** clears the search.
+- In the chat box, **Enter** sends and **Shift+Enter** starts a new line.
 - The 2D/3D, theme and menu buttons are ordinary buttons: Tab to them, then Enter or Space.
 
 ---
