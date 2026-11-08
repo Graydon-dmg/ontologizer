@@ -17,6 +17,7 @@ function audit(/** @type {string[]} */ files, /** @type {Record<string, string>}
       'package.json': JSON.stringify({ name: 'h-fault', version: '0.0.0', files }),
       'src/cli/index.js': '#!/usr/bin/env node\n',
       'web/shared/importmap.json': '{}\n',
+      'web/index.html': '<!doctype html>\n',
       ...extra,
     };
     for (const [p, text] of Object.entries(layout)) {
