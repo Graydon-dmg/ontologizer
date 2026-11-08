@@ -46,3 +46,21 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
 #conn { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60; padding: 8px 14px; border-radius: 8px;
   background: var(--fg); color: var(--bg); font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
 #conn[hidden] { display: none; }
+
+/* Brand symbol: symbol-dark.svg in the dark theme, symbol-light.svg in the light one.
+   An explicit pick (data-theme) wins; otherwise follow the OS. */
+.brand-mark { display: inline-flex; flex: none; width: 22px; height: 22px; }
+.brand-mark img, #loading img { display: block; }
+.brand-light { display: none !important; }
+:root[data-theme="light"] .brand-light { display: block !important; }
+:root[data-theme="light"] .brand-dark { display: none !important; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .brand-light { display: block !important; }
+  :root:not([data-theme]) .brand-dark { display: none !important; }
+}
+/* Empty / loading state: a centred symbol with a gentle pulse until the first event arrives. */
+#loading { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+#loading[hidden] { display: none; }
+#loading img { width: 64px; height: 64px; animation: onto-pulse 1.8s ease-in-out infinite; }
+@keyframes onto-pulse { 0%, 100% { opacity: .45; transform: scale(.96); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { #loading img { animation: none; opacity: .8; } }

@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <title>Ontologizer</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="/shared/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/shared/brand/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/shared/brand/apple-touch-icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!--importmap-->
 <link rel="stylesheet" href="/shell/shell.css">
@@ -13,7 +15,9 @@
 </head>
 <body>
 <div id="view"></div>
+<div id="loading" aria-label="Loading the map" role="status"><img class="brand-dark" src="/shared/brand/symbol-dark.svg" alt="" width="64" height="64"><img class="brand-light" src="/shared/brand/symbol-light.svg" alt="" width="64" height="64"></div>
 <header id="topbar">
+  <span class="brand-mark" aria-hidden="true"><img class="brand-dark" src="/shared/brand/symbol-dark.svg" alt="" width="22" height="22"><img class="brand-light" src="/shared/brand/symbol-light.svg" alt="" width="22" height="22"></span>
   <span id="map-name"></span>
   <div id="search"></div>
   <div id="filter"></div>

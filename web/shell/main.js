@@ -218,7 +218,11 @@ function publishInsets() {
 source.subscribe((event, ontology) => {
   try { feedLayout(layout, event); } catch (err) { console.error('[shell] feedLayout failed', err); }
   try { activeView?.apply(event); } catch (err) { console.error('[shell] view.apply failed', err); }
-  $('map-name').textContent = ontology?.name || source.snapshot().name || '';
+  const mapName = ontology?.name || source.snapshot().name || '';
+  $('map-name').textContent = mapName;
+  const title = mapName ? `${mapName} · Ontologizer` : 'Ontologizer';
+  if (document.title !== title) document.title = title;
+  $('loading').hidden = true; // the first event ends the loading state
   if (event.t === 'view.changed' && event.patch && activeView) {
     // Apply only what this event changed, so a filter tweak does not re-run the focus animation.
     const st = viewStateToApply(source.snapshot().view);
