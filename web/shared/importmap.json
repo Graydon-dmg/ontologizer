@@ -1,0 +1,17 @@
+{
+  "imports": {
+    "d3-color": "/vendor/d3-color/dist/d3-color.mjs",
+    "d3-dispatch": "/vendor/d3-dispatch/dist/d3-dispatch.mjs",
+    "d3-drag": "/vendor/d3-drag/dist/d3-drag.mjs",
+    "d3-ease": "/vendor/d3-ease/dist/d3-ease.mjs",
+    "d3-force": "/vendor/d3-force/dist/d3-force.mjs",
+    "d3-interpolate": "/vendor/d3-interpolate/dist/d3-interpolate.mjs",
+    "d3-quadtree": "/vendor/d3-quadtree/dist/d3-quadtree.mjs",
+    "d3-selection": "/vendor/d3-selection/dist/d3-selection.mjs",
+    "d3-timer": "/vendor/d3-timer/dist/d3-timer.mjs",
+    "d3-transition": "/vendor/d3-transition/dist/d3-transition.mjs",
+    "d3-zoom": "/vendor/d3-zoom/dist/d3-zoom.mjs",
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
