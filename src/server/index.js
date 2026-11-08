@@ -46,6 +46,13 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
   const timers = new Set();
   let boundPort = 0;
   let closed = false;
+  // Replay sessions never write view actions to the store (a rehearsal must not change the saved
+  // demo): they keep the view here and push view.changed straight to this session's open streams.
+  /** @type {Set<(ev: any) => void>} */
+  const liveSenders = new Set();
+  /** @type {any} */
+  let replayView = null;
+  const currentView = () => (replay ? (replayView ??= structuredClone(store.read(id).view)) : store.read(id).view);
 
   /** @param {http.ServerResponse} res @param {number} code @param {any} obj */
   function json(res, code, obj) {
@@ -112,6 +119,9 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     let nextIdx = from;
     /** @param {any} ev */
     const send = (ev) => { if (!conn.gone) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+    /** @param {any} ev */
+    const sendLive = (ev) => send(ev);
+    liveSenders.add(sendLive);
     // In replay, live appends (the reader's own clicks) go out at once instead of waiting for the
     // paced replay to finish; the replay loop then skips any index already sent live.
     /** @type {Set<number>} */
@@ -130,6 +140,7 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
       for (const t of conn.timers) clearTimeout(t);
       try { unsubscribe(); } catch { /* ignore */ }
       sseClients.delete(res);
+      liveSenders.delete(sendLive);
     };
     req.on('close', cleanup);
     res.on('close', cleanup);
@@ -188,12 +199,18 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     /** @param {string} error */
     const bad = (error) => json(res, 400, { ok: false, error });
     /** @param {Record<string, any>} patch */
-    const viewEvent = (patch) => store.append(id, { t: 'view.changed', at: store.now(id), patch });
+    const viewEvent = (patch) => {
+      const ev = { t: 'view.changed', at: store.now(id), patch };
+      if (!replay) return store.append(id, ev);
+      const v = currentView();
+      replayView = { ...v, ...patch, filter: patch.filter ? { ...v.filter, ...patch.filter } : v.filter };
+      for (const send of liveSenders) send(ev);
+    };
     switch (body.type) {
       case 'expand':
       case 'collapse': {
         if (!isId(body.nodeId)) return bad('nodeId must be a non-empty string');
-        const cur = /** @type {string[]} */ (store.read(id).view.collapsed || []);
+        const cur = /** @type {string[]} */ (currentView().collapsed || []);
         const rest = cur.filter((n) => n !== body.nodeId);
         const collapsed = body.type === 'collapse' ? [...rest, body.nodeId] : rest;
         viewEvent({ collapsed });
