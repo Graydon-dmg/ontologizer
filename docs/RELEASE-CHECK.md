@@ -61,7 +61,27 @@ ontologizer new
 - [ ] `ontologizer list` shows the map with its node count.
 - [ ] `ontologizer load <first letters>` (a prefix) opens it, with the research children, articles and **the depth filter you last set** all still there.
 
-## 4. Sign-off
+## 4. Fuse, on two freshly generated maps
+
+Generate two maps live (as in step 3, with a different topic each, e.g. plastic modeling and manga) and save them as `a` and `b`. Then record their fingerprints before fusing:
+
+```bash
+ontologizer list                                   # note a's and b's node counts
+shasum -a 256 "$ONTOLOGIZER_HOME"/a/events.jsonl "$ONTOLOGIZER_HOME"/b/events.jsonl > /tmp/onto-rc-before.txt
+ontologizer fuse a b --into c                      # the browser opens and the seam fills in live
+```
+
+- [ ] The terminal and the jobs panel show the fuse running, and it ends without an error.
+- [ ] **Both sources are unchanged:** `shasum -a 256 -c /tmp/onto-rc-before.txt` prints `OK` for both files, and `ontologizer list` shows the same node counts for `a` and `b` as before.
+- [ ] `c` contains every node of both maps: its node count is at least a's plus b's (plus the Hybrids group and its hybrids).
+- [ ] **Legend groups:** the legend shows three groups in this order: map `a`'s categories, then map `b`'s, then `Hybrids`. Each group's colors match its nodes in the graph.
+- [ ] **Bridges:** there are several bridges, drawn as dashed, curved, purple-pink lines that connect a node of `a` to a node of `b` (or to a hybrid). They are visibly different from ordinary cross-links.
+- [ ] **Hybrids:** 3 to 8 hybrid nodes sit under `Hybrids`, each with a double lavender outline. They read as real crossovers of the two topics, not generic words.
+- [ ] **Explain on a hybrid:** open a hybrid's node menu, then click `Explain`. A job appears, and the explain panel opens with an article about that crossover. Afterwards the menu says `Read explanation`.
+- [ ] **Fuse refuses a third map:** `ontologizer fuse a b c` (three names) is refused before any model call, with a message naming the extra argument, and no new map appears in `ontologizer list`.
+- [ ] Ctrl-C saves `c` (or it is already saved under `c`), and `ontologizer load c` reopens it with the legend groups and bridges intact.
+
+## 5. Sign-off
 
 - [ ] `npm run check` passes on this commit.
 - [ ] Every box above is ticked. Write any bug found here, with the step number, and don't publish until it's fixed and this check has been re-run from the step it affects.
