@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { registerView } from '../../shared/view.js';
-import { boundsOf, toWorld, treeDistance, arcPoints } from './math.js';
+import { boundsOf, toWorld, treeDistance, arcPoints, truncate } from './math.js';
 import { descendants, neighborhood, ringsFrom, labelVisible } from './graphmath.js';
 
 const WORLD = 600;
@@ -18,6 +18,7 @@ const TREE_LINK_Y = 0.3; // parent links lie just above the floor
 const ARC_POINTS = 24; // segments, so 25 points
 const DASH_UNIT = 1.5; // tokens' dash lengths are px; world units are about this much bigger
 const CLICK_SLOP = 5;
+const GHOST_CHARS = 30; // lens analogs are cut to this many characters until hovered
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -51,6 +52,9 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     /** @type {Map<string, { mesh: any, nodeId: string }>} */
     this.halos = new Map();
     this.hoveredId = null;
+    this.selectedId = null;
+    /** @type {Set<string>|null} */
+    this.ghostSet = null;
     this.collapsed = new Set();
     this.hiddenByCollapse = new Set();
     this.bright = null;
@@ -200,6 +204,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       if (!d || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) >= CLICK_SLOP) return;
       const nodeId = this.pick(ev.clientX, ev.clientY);
       // Same shape as the 2D view: screen x, y for a node; a background click is { nodeId: null }.
+      this.selectedId = nodeId;
       ctx.emit('select', nodeId ? { nodeId, x: ev.clientX, y: ev.clientY } : { nodeId: null });
     };
     this.onMove = (ev) => { this.pendingMove = { x: ev.clientX, y: ev.clientY }; };
@@ -325,7 +330,9 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     if (st.label.element.textContent !== n.label) st.label.element.textContent = n.label;
   }
 
-  /** Rebuild every ghost label for the current lens (none when no lens is set). */
+  /** Rebuild every ghost label for the current lens (none when no lens is set).
+   * Each ghost has a short form (analog cut to GHOST_CHARS, no warning mark) and a full form
+   * (whole analog plus where it breaks) that frame() swaps in while the node is hovered. */
   refreshGhosts() {
     for (const st of this.nodes.values()) {
       if (st.ghost) { st.mesh.remove(st.ghost); st.ghost.element.remove(); st.ghost = null; }
@@ -337,10 +344,27 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const st = this.nodes.get(id);
       if (!st || !a) continue;
       const div = document.createElement('div');
-      div.textContent = a.label + (a.breaks ? ' \u26A0' : '');
-      if (a.breaks) div.title = a.breaks;
-      div.style.cssText = 'color:var(--sky-fg);font:italic 11px system-ui,sans-serif;white-space:nowrap;' +
+      div.style.cssText = 'color:var(--sky-fg);font:italic 11px system-ui,sans-serif;' +
         'text-shadow:0 0 3px var(--sky-shadow);pointer-events:none;opacity:0.7;';
+      const short = document.createElement('span');
+      short.className = 'short';
+      short.textContent = truncate(a.label, GHOST_CHARS);
+      short.style.whiteSpace = 'nowrap';
+      const full = document.createElement('div');
+      full.className = 'full';
+      full.hidden = true;
+      full.style.cssText = 'font:italic 12px system-ui,sans-serif;max-width:260px;white-space:normal;padding:4px 7px;' +
+        'background:var(--sky-panel);border:1px solid var(--sky-muted);border-radius:6px;text-shadow:none;';
+      const head = document.createElement('div');
+      head.textContent = a.label;
+      full.append(head);
+      if (a.breaks) {
+        const br = document.createElement('div');
+        br.style.cssText = 'font-style:normal;font-size:11px;margin-top:3px;color:var(--sky-muted);';
+        br.textContent = `Breaks: ${a.breaks}`;
+        full.append(br);
+      }
+      div.append(short, full);
       const g = new CSS2DObject(div);
       g.position.set(0, -1.3, 0);
       g.visible = false;
@@ -436,10 +460,14 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     // Derived caches, rebuilt only when the node count, focus or highlight changes.
     // The ontology may be empty at mount (no root yet): fall back to the root once it exists.
     const focus = this.focusId || snap.root || '';
-    const key = `${this.nodes.size}|${snap.edges.length}|${focus}|${this.hlKey}`;
+    const key = `${this.nodes.size}|${snap.edges.length}|${focus}|${this.hlKey}|${this.selectedId}`;
     if (key !== this.cacheKey) {
       this.cacheKey = key;
       this.rings = ringsFrom(focus, snap);
+      // Lens analogs shown by default: categories, plus the focus's and selection's neighbourhoods.
+      this.ghostSet = new Set(neighborhood(focus, snap));
+      if (this.selectedId) for (const x of neighborhood(this.selectedId, snap)) this.ghostSet.add(x);
+      for (const [id, n] of Object.entries(snap.nodes)) if (n.depth === 1) this.ghostSet.add(id);
       this.bright = null;
       if (this.highlighted.length) {
         this.bright = new Set();
@@ -512,7 +540,18 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       st.label.visible = labelVisible(n, {
         k: zoomK, focus, hovered: this.hoveredId, rings: this.rings, rule: tk.LABEL_RULE,
       });
-      if (st.ghost) st.ghost.visible = true;
+      if (st.ghost) {
+        const hovered = id === this.hoveredId;
+        st.ghost.visible = hovered || !!(this.ghostSet && this.ghostSet.has(id));
+        const el = st.ghost.element;
+        if (el.dataset.open !== String(hovered)) {
+          el.dataset.open = String(hovered);
+          /** @type {HTMLElement} */ (el.querySelector('.short')).hidden = hovered;
+          /** @type {HTMLElement} */ (el.querySelector('.full')).hidden = !hovered;
+          el.style.opacity = hovered ? '1' : String(0.7 * (dimmed ? tk.MOTION.hoverDim : 1));
+          st.ghost.renderOrder = hovered ? 1 : 0;
+        }
+      }
       if (st.badge) st.badge.visible = true;
     }
     for (const st of this.nodes.values()) {
