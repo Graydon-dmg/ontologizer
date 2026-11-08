@@ -4,16 +4,21 @@ import { engineFor, rethrowAuth, serveSession } from '../serve.js';
 import { resolveName, waitForExit } from '../resolve-name.js';
 
 export default {
-  command: 'fuse <a> <b>',
+  command: 'fuse <a> <b> [more..]',
   describe: 'Fuse two maps into a new draft',
   builder: (/** @type {any} */ y) => y
     .positional('a', { type: 'string' })
     .positional('b', { type: 'string' })
+    .positional('more', { type: 'string', array: true, hidden: true })
     .option('into', { type: 'string', describe: 'Name for the fused map' })
     .option('open', { type: 'boolean', default: true, hidden: true })
     .option('exit-after', { type: 'number', hidden: true }),
   handler: async (/** @type {any} */ argv) => {
     const deps = argv.deps;
+    // Refuse a third map before any lookup, key prompt or model call.
+    if (Array.isArray(argv.more) && argv.more.length > 0) {
+      throw new CliError('fuse takes two maps; fuse the result again to add a third', 1);
+    }
     const store = deps.store();
     const a = await resolveName(deps, store, String(argv.a));
     const b = await resolveName(deps, store, String(argv.b));

@@ -128,3 +128,22 @@ test('explain with a live session posts to it instead of running', async () => {
     srv.close();
   }
 });
+
+test('fuse with a third map is refused with the contract message, before any key prompt', async () => {
+  const home = tempHome();
+  seeded(home);
+  let asked = 0;
+  const ask = async () => { asked++; return 'sk-ant-test-0000'; };
+  const r = await run(home, ['fuse', 'plastic-modeling', 'manga', 'plastic-modeling', '--no-open', '--exit-after', '50'],
+    { interactive: true, ask });
+  assert.equal(r.code, 1);
+  assert.equal(r.stderr, 'fuse takes two maps; fuse the result again to add a third\n');
+  assert.equal(asked, 0, 'asked for a key before refusing');
+  // Planted fault: without the [more..] positional, yargs' own "Unknown argument" message comes out instead.
+  const { default: yargs } = await import('yargs');
+  let msg = '';
+  await yargs(['fuse', 'a', 'b', 'c']).command('fuse <a> <b>', '', () => {}, () => {}).strict()
+    .exitProcess(false).fail((m) => { msg = m; }).parseAsync().catch(() => {});
+  assert.match(msg, /Unknown argument/);
+  assert.notEqual(msg, 'fuse takes two maps; fuse the result again to add a third');
+});
