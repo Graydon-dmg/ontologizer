@@ -120,6 +120,37 @@ export function openStore(home) {
     writeJsonAtomic(indexFile, idx);
   }
 
+  // Every read-modify-write of index.json runs under a lock file, so two processes (two `load`s
+  // importing at once, a session flushing while `save` runs) never lose each other's rows.
+  const lockFile = `${indexFile}.lock`;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  /** @template T @param {(idx: StoreIndex) => T} fn @returns {T} */
+  function updateIndex(fn) {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      try {
+        fs.closeSync(fs.openSync(lockFile, 'wx'));
+        break;
+      } catch (/** @type {any} */ err) {
+        if (err.code !== 'EEXIST') throw err;
+        // A lock older than 5 s was left by a crashed process: take it over.
+        try {
+          if (Date.now() - fs.statSync(lockFile).mtimeMs > 5000) fs.rmSync(lockFile, { force: true });
+        } catch { /* it just went away */ }
+        if (Date.now() > deadline) throw new Error('index.json is locked by another ontologizer process');
+        Atomics.wait(sleeper, 0, 0, 5);
+      }
+    }
+    try {
+      const idx = readIndex();
+      const out = fn(idx);
+      writeIndex(idx);
+      return out;
+    } finally {
+      fs.rmSync(lockFile, { force: true });
+    }
+  }
+
   /** @param {string} id @returns {Entry} */
   function load(id) {
     let e = cache.get(id);
@@ -138,15 +169,15 @@ export function openStore(home) {
   function writeSnapshotAndRow(id, e) {
     if (!fs.existsSync(dir(id))) return;
     writeJsonAtomic(path.join(dir(id), 'snapshot.json'), e.onto);
-    const idx = readIndex();
-    const row = idx.ontologies.find((r) => r.id === id);
-    if (row) {
-      row.name = e.onto.name || row.name;
-      row.root = e.onto.root;
-      row.nodes = Object.keys(e.onto.nodes).length;
-      row.updatedAt = Date.now();
-      writeIndex(idx);
-    }
+    updateIndex((idx) => {
+      const row = idx.ontologies.find((r) => r.id === id);
+      if (row) {
+        row.name = e.onto.name || row.name;
+        row.root = e.onto.root;
+        row.nodes = Object.keys(e.onto.nodes).length;
+        row.updatedAt = Date.now();
+      }
+    });
     e.dirty = false;
   }
 
@@ -216,10 +247,10 @@ export function openStore(home) {
       fs.mkdirSync(dir(id), { recursive: true });
       fs.writeFileSync(path.join(dir(id), 'brief.json'), JSON.stringify(brief ?? {}));
       fs.writeFileSync(path.join(dir(id), 'events.jsonl'), '');
-      const idx = readIndex();
-      idx.ontologies.push({ id, name: suggestedName || id, root: '', nodes: 0, updatedAt: Date.now(), draft: true });
-      idx.current = id;
-      writeIndex(idx);
+      updateIndex((idx) => {
+        idx.ontologies.push({ id, name: suggestedName || id, root: '', nodes: 0, updatedAt: Date.now(), draft: true });
+        idx.current = id;
+      });
       return id;
     },
 
@@ -286,7 +317,7 @@ export function openStore(home) {
           writeJsonAtomic(sessionsFile, all);
         }
       }
-      const idx = readIndex();
+      updateIndex((idx) => {
       const row = idx.ontologies.find((r) => r.id === id) ?? { id, name, root: '', nodes: 0, updatedAt: 0, draft: false };
       idx.ontologies = idx.ontologies.filter((r) => r.id !== id && r.id !== name);
       Object.assign(row, {
@@ -299,7 +330,7 @@ export function openStore(home) {
       });
       idx.ontologies.push(row);
       idx.current = name;
-      writeIndex(idx);
+      });
       return name;
     },
 
@@ -330,9 +361,16 @@ export function openStore(home) {
     /** @param {string} name @param {OntoEvent[]} events */
     importEvents(name, events) {
       assertName(name);
-      const idx = readIndex();
-      if (fs.existsSync(dir(name)) || idx.ontologies.some((r) => r.id === name)) {
-        throw new Error(`"${name}" already exists.`);
+      if (readIndex().ontologies.some((r) => r.id === name)) throw new Error(`"${name}" already exists.`);
+      if (fs.existsSync(path.join(dir(name), 'events.jsonl'))) {
+        // Self-heal: the folder exists but its index row was lost. Re-register it from what is on
+        // disk (its own events win over the ones offered) instead of refusing forever.
+        const onto = foldAll(readEventsFile(path.join(dir(name), 'events.jsonl')));
+        updateIndex((idx) => {
+          if (idx.ontologies.some((r) => r.id === name)) return;
+          idx.ontologies.push({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false });
+        });
+        return name;
       }
       fs.mkdirSync(dir(name), { recursive: true });
       fs.writeFileSync(path.join(dir(name), 'events.jsonl'), events.map((x) => JSON.stringify(x) + '\n').join(''));
@@ -340,8 +378,10 @@ export function openStore(home) {
       const brief = events.find((x) => x.t === 'ontology.created')?.brief ?? onto.brief;
       fs.writeFileSync(path.join(dir(name), 'brief.json'), JSON.stringify(brief));
       writeJsonAtomic(path.join(dir(name), 'snapshot.json'), onto);
-      idx.ontologies.push({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false });
-      writeIndex(idx);
+      updateIndex((idx) => {
+        idx.ontologies = idx.ontologies.filter((r) => r.id !== name);
+        idx.ontologies.push({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false });
+      });
       return name;
     },
   };
