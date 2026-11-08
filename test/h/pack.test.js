@@ -5,12 +5,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REQUIRED, REQUIRED_DIRS, packedFiles, auditPack, checkShebang } from './pack.js';
+import { REQUIRED, REQUIRED_DIRS, packedFiles, auditPack, checkShebang, checkLicense } from './pack.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** Build a throwaway package, run the real packedFiles + auditPack on it, then clean up. */
-function audit(/** @type {string[]} */ files, /** @type {Record<string, string>} */ extra = {}) {
+const LEGAL = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md'];
+/** Build a throwaway package (legal files listed in `files` unless legal: false), audit it, clean up. */
+function audit(/** @type {string[]} */ files, /** @type {Record<string, string>} */ extra = {}, { legal = true } = {}) {
+  if (legal) files = [...files, ...LEGAL];
   const dir = mkdtempSync(join(tmpdir(), 'h-fault-'));
   try {
     const layout = {
@@ -19,6 +21,7 @@ function audit(/** @type {string[]} */ files, /** @type {Record<string, string>}
       'web/shared/importmap.json': '{}\n',
       'web/index.html': '<!doctype html>\n',
       'fixtures/demo.events.jsonl': '{}\n',
+      'LICENSE': 'MIT License\n', 'THIRD_PARTY_NOTICES.md': '# t\n', 'TRADEMARKS.md': '# t\n',
       ...extra,
     };
     for (const [p, text] of Object.entries(layout)) {
@@ -100,4 +103,35 @@ test('planted fault: brand assets left out, or docs/brand shipped, are reported'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('legal files at the top level are allowed; other .md files still are not', () => {
+  const extra = { 'THIRD_PARTY_NOTICES.md': '# Third-party notices\n', 'TRADEMARKS.md': '# Trademarks\n', 'NOTES.md': '# notes\n' };
+  const problems = audit(['src', 'web', 'fixtures', 'NOTES.md'], extra);
+  assert.deepEqual(problems.sort(), ['internal doc packed: NOTES.md', 'unexpected file packed: NOTES.md']);
+});
+
+test('planted fault: a leftover Apache NOTICE file in the package is reported', () => {
+  const problems = audit(['src', 'web', 'fixtures', 'NOTICE'], { 'NOTICE': 'Ontologizer\n' });
+  assert.deepEqual(problems, ['unexpected file packed: NOTICE']);
+});
+
+test('the real package is MIT in both package.json and LICENSE', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  assert.deepEqual(checkLicense(pkg, readFileSync(join(repoRoot, 'LICENSE'), 'utf8')), []);
+});
+
+test('planted faults: Apache license field, Apache LICENSE text, legal file left out of the package', () => {
+  const mit = 'MIT License\n\nCopyright (c) 2026 Graydon Garden\n';
+  const apache = '\n                                 Apache License\n                           Version 2.0, January 2004\n';
+  assert.deepEqual(checkLicense({ license: 'MIT' }, mit), []); // positive control
+  assert.equal(checkLicense({ license: 'Apache-2.0' }, mit).length, 1);
+  assert.equal(checkLicense({ license: 'MIT' }, apache).length, 1);
+  const problems = audit(['src', 'web', 'fixtures', 'LICENSE', 'TRADEMARKS.md'], {}, { legal: false }); // THIRD_PARTY_NOTICES.md left out
+  assert.ok(problems.includes('missing required file: THIRD_PARTY_NOTICES.md'), problems.join('\n'));
+});
+
+test('planted fault: an uploaded image or chat log under fixtures/ is reported', () => {
+  const problems = audit(['src', 'web', 'fixtures'], { 'fixtures/paste-1.png': 'png\n', 'fixtures/demo.chat.jsonl': '{}\n' });
+  assert.deepEqual(problems.sort(), ['non-fixture file in fixtures/: fixtures/demo.chat.jsonl', 'non-fixture file in fixtures/: fixtures/paste-1.png']);
 });

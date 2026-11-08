@@ -17,7 +17,9 @@ import { mountFilter } from './ui/filter.js';
 import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
-import { computeInsets, sameInsets } from './insets.js';
+import { mountFuse } from './ui/fuse.js';
+import { mountTips } from './ui/tips.js';
+import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests } from './explain.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -116,7 +118,7 @@ function mountView(id) {
   activeView = null;
   activeId = null;
   slot.replaceChildren();
-  for (const c of [...mini.children]) if (!c.classList.contains('minimap-toggle')) c.remove();
+  for (const c of [...mini.children]) if (!c.classList.contains('minimap-toggle') && !c.classList.contains('info')) c.remove();
   mini.hidden = true;
   const entry = id ? getView(id) : null;
   if (!entry) {
@@ -149,12 +151,14 @@ const mounts = [
   ['theme-switcher', mountTheme],
   ['view-switcher', mountViewSwitcher], ['legend', mountLegend], ['menu', mountMenu],
   ['explain', mountExplain], ['jobs', mountJobs], ['ticker', mountTicker], ['search', mountSearch],
-  ['filter', mountFilter], ['lens-switcher', mountLens], ['minimap', mountMinimap],
+  ['filter', mountFilter], ['lens-switcher', mountLens], ['fuse', mountFuse], ['minimap', mountMinimap],
 ];
 for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
 }
+// The ⓘ tooltips go in once, after every control exists.
+try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }
 
 shell.explainRequests = createExplainRequests({
   act: (a) => shell.act(a),
@@ -192,6 +196,9 @@ function publishInsets() {
   const ex = $('explain');
   panels.push(/** @type {HTMLElement} */ (ex.querySelector('.onto-explain') || ex));
   const rects = panels.filter(shown).map((el) => el.getBoundingClientRect());
+  // The ticker gets a fixed strip at the bottom left, reserved even while it is empty, so the map
+  // never jumps when a line comes and goes (the ticker itself is not watched).
+  rects.push(tickerStrip(innerWidth, innerHeight));
   // The explain panel's scroll area ends above the jobs tray (the tray stays on top so new jobs show).
   const tray = $('jobs');
   const trayTop = shown(tray) ? tray.getBoundingClientRect().top : innerHeight;

@@ -33,7 +33,7 @@ test('the key never reaches disk, stdout, stderr or process.env', async () => {
   delete env.ANTHROPIC_API_KEY;
   const code = await main(
     ['new', '--context', 'plastic modeling for a beginner', '--yes', '--no-open', '--exit-after-build'],
-    { env, home, stdout: out, stderr: err, interactive: true, keyring: kr, ask: async () => { asks++; return KEY; }, openBrowser: async () => {}, onSignal: () => () => {} },
+    { env, home, stdout: out, stderr: err, interactive: true, keyring: kr, validateKey: async () => 'ok', ask: async () => { asks++; return KEY; }, openBrowser: async () => {}, onSignal: () => () => {} },
   );
   assert.equal(code, 0, err.s);
   assert.equal(asks, 1);

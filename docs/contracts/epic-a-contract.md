@@ -24,7 +24,7 @@ Nothing in this epic draws a real view, calls the model at run time, or touches 
 
 ## You own
 
-- `package.json`, `.gitignore`, `LICENSE` (MIT), `.claude/settings.json`, `CLAUDE.md`
+- `package.json`, `.gitignore`, `LICENSE` (MIT), `TRADEMARKS.md`, `THIRD_PARTY_NOTICES.md` (generated), `.claude/settings.json`, `CLAUDE.md`
 - `src/core/schema.js`, `src/core/events.js`, `src/core/index.js`, `src/core/vendor.js`
 - `web/shared/` (view standard, tokens, layout, import map)
 - `web/views/index.js`

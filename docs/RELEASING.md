@@ -70,6 +70,22 @@ The workflow runs two jobs:
 
 Check the result on npmjs.com: the version page shows a **Provenance** badge linking to the exact commit and workflow run.
 
+### Verifying a release
+
+**Check contents, not the checksum.** CI packs on Linux with its own npm (11.21.x), so the registry tarball's shasum will not match an `npm pack` you run locally: tar metadata and compression differ. Compare the files instead (run from the repository; replace `X.Y.Z`):
+
+```bash
+V=X.Y.Z
+D=$(mktemp -d) && mkdir "$D/pub" "$D/loc"
+(cd "$D/pub" && npm pack "ontologizer@$V" && tar -xzf "ontologizer-$V.tgz")
+git archive "v$V" | tar -x -C "$D/loc" && (cd "$D/loc" && npm pack && tar -xzf "ontologizer-$V.tgz")
+diff -r "$D/pub/package" "$D/loc/package" && echo identical
+```
+
+Then confirm provenance: `npm view ontologizer@$V dist.attestations` should show `https://slsa.dev/provenance/v1`, and `npm audit signatures` (in a project that has ontologizer installed) should report verified attestations.
+
+Checked on 1.1.0: the shasums differ, all 107 files are identical, and SLSA provenance v1 is present.
+
 **Manual re-run:** Actions → **release** → **Run workflow**, and pick the **tag** (not a branch) in the "Use workflow from" menu. Started from a branch, the run fails at the tag check by design.
 
 ## What protects the release

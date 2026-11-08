@@ -7,7 +7,8 @@ export function mountJobs(el, shell) {
   el.hidden = true;
   function render() {
     const rows = visibleJobRows(jobRows(shell.snapshot())).map((r) => (r.kind === 'rosetta' && shell.lensRequests
-      ? { ...r, label: shell.lensRequests.personaForJob(r.id) || r.label } : r));
+      ? { ...r, label: shell.lensRequests.personaForJob(r.id) || r.label }
+      : r.kind === 'fuse' && shell.mapName ? { ...r, withName: shell.mapName(/** @type {any} */ (r).with) } : r));
     el.textContent = '';
     el.hidden = rows.length === 0;
     for (const r of rows) {

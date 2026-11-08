@@ -11,6 +11,13 @@
  *  { t: 'job.queued'|'job.started'|'job.done'|'job.failed', at, job: { id, kind, nodeId?, error? } }
  *  { t: 'insight', at, text, nodeId? }
  *  { t: 'ontology.renamed', at, name }             written by save
+ *  { t: 'chat.asked', at, chatId, msgId, text, images: [{ hash, mime, w, h }] }
+ *  { t: 'chat.answered', at, chatId, msgId, replyTo, text, citations: [{ nodeId, label }],
+ *    sources: [{ title, url }], suggestions: [{ kind: 'research', nodeId, mode: 'context'|'general', label }],
+ *    usedWeb: boolean }
+ *  { t: 'chat.failed', at, chatId, replyTo, error, msgId? }   msgId defaults to 'err:' + replyTo
+ *    The three chat events append to ontology.chat in order (roles user / assistant / error).
+ *    Only the fields above are kept; unknown fields are dropped. A repeated msgId is ignored.
  *
  * Unknown event types are ignored (forward compatible). A node.added whose parent is missing is
  * still folded; views must tolerate a parent that arrives later.
@@ -49,6 +56,7 @@ export function emptyOntology() {
     },
     jobs: {},
     insights: [],
+    chat: [],
   };
 }
 
@@ -142,6 +150,14 @@ export function fold(o, e) {
       if (e.nodeId !== undefined) ins.nodeId = e.nodeId;
       return { ...o, insights: [...o.insights, ins] };
     }
+    case 'chat.asked':
+    case 'chat.answered':
+    case 'chat.failed': {
+      const m = chatMessage(e);
+      const chat = o.chat ?? [];
+      if (!m || chat.some((x) => x.msgId === m.msgId)) return o.chat ? o : { ...o, chat };
+      return { ...o, chat: [...chat, m] };
+    }
     default:
       return o; // unknown event types are ignored
   }
@@ -153,6 +169,40 @@ function copyNode(n) {
     ...n,
     sources: Array.isArray(n.sources) ? n.sources.map((/** @type {any} */ s) => ({ ...s })) : [],
     article: n.article ?? null,
+  };
+}
+
+/** @param {any[]|undefined} a @param {(x: any) => any} f */
+const mapList = (a, f) => (Array.isArray(a) ? a.map(f) : []);
+
+/**
+ * Build a chat message from a chat event, keeping only contract fields.
+ * @param {OntoEvent} e
+ * @returns {import('./schema.js').ChatMessage|null}
+ */
+function chatMessage(e) {
+  const chatId = typeof e.chatId === 'string' && e.chatId ? e.chatId : 'main';
+  if (e.t === 'chat.asked') {
+    if (!e.msgId) return null;
+    return {
+      role: 'user', chatId, msgId: e.msgId, text: String(e.text ?? ''), at: e.at,
+      images: mapList(e.images, (i) => ({ hash: i.hash, mime: i.mime, w: i.w, h: i.h })),
+    };
+  }
+  if (e.t === 'chat.answered') {
+    if (!e.msgId) return null;
+    return {
+      role: 'assistant', chatId, msgId: e.msgId, replyTo: e.replyTo, text: String(e.text ?? ''), at: e.at,
+      citations: mapList(e.citations, (c) => ({ nodeId: c.nodeId, label: c.label })),
+      sources: mapList(e.sources, (s) => ({ title: s.title, url: s.url })),
+      suggestions: mapList(e.suggestions, (s) => ({ kind: s.kind, nodeId: s.nodeId, mode: s.mode, label: s.label })),
+      usedWeb: e.usedWeb === true,
+    };
+  }
+  // chat.failed
+  return {
+    role: 'error', chatId, msgId: e.msgId || `err:${e.replyTo}`, replyTo: e.replyTo,
+    text: String(e.error ?? ''), at: e.at,
   };
 }
 

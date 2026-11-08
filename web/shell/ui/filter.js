@@ -1,5 +1,6 @@
 // @ts-check
-import { filterValue, sendFilter } from '../filter.js';
+import { filterValue, sendFilter, DEPTH_OPTIONS } from '../filter.js';
+import { createDropdown } from './dropdown.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountFilter(el, shell) {
@@ -11,17 +12,15 @@ export function mountFilter(el, shell) {
   const cats = document.createElement('div');
   cats.className = 'filter-cats';
   box.append(summary, cats);
-  const depthLabel = document.createElement('label');
-  depthLabel.textContent = 'Depth ';
-  const depth = document.createElement('select');
-  for (const v of ['Any', 1, 2, 3, 4]) {
-    const o = document.createElement('option');
-    o.value = v === 'Any' ? '' : String(v);
-    o.textContent = String(v);
-    depth.append(o);
-  }
-  depthLabel.append(depth);
-  el.append(box, depthLabel);
+  const depthLabel = document.createElement('span');
+  depthLabel.className = 'dd-label';
+  depthLabel.textContent = 'Depth';
+  const depth = createDropdown({
+    ariaLabel: 'Depth', options: DEPTH_OPTIONS, value: '',
+    onSelect: (v) => { depth.setValue(v); busy = true; send(); busy = false; },
+  });
+  depth.el.classList.add('depth-dd');
+  el.append(box, depthLabel, depth.el);
 
   /** @type {Set<string>|null} null = all */
   let selected = null;
@@ -50,10 +49,9 @@ export function mountFilter(el, shell) {
       l.append(b, ' ', c.label);
       return l;
     }));
-    depth.value = f?.maxDepth ? String(f.maxDepth) : '';
+    depth.setValue(f?.maxDepth ? String(f.maxDepth) : '');
     summary.textContent = selected ? `Categories (${selected.size})` : 'Categories';
   };
-  depth.addEventListener('change', () => { busy = true; send(); busy = false; });
   build();
   shell.on('event', (/** @type {any} */ d) => {
     const t = d?.event?.t;

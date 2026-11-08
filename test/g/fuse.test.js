@@ -298,3 +298,51 @@ test('a bridge between two things with the same name is dropped (planted: Gunpla
   const bridges = store.read(id).edges.filter((e) => e.id.startsWith('bridge-'));
   assert.deepEqual(bridges.map((e) => e.from), ['manga']);
 });
+
+test('onDraft is called once with the draft id, before any event is appended (planted: called late)', async () => {
+  const seam = [{ hybrid: 'Gunpla', summary: 's', hook: 'h' }, { from: 'manga', to: 'Gunpla', why: 'anime robots' }]
+    .map((o) => JSON.stringify(o)).join('\n');
+  /** @param {(store: any, cb: (id: string) => void) => (id: string) => void} wrap */
+  async function run(wrap) {
+    const store = fakeStore({ manga: fixtureEvents('manga'), 'plastic-modeling': fixtureEvents('plastic-modeling') });
+    /** @type {{ id: string, eventsSoFar: number }[]} */
+    const seen = [];
+    const cb = (/** @type {string} */ id) => seen.push({ id, eventsSoFar: store.logs.get(id)?.length ?? -1 });
+    const ctx = makeCtx({ store, client: fakeClient(() => seam) });
+    const id = await fuse(ctx, 'manga', 'plastic-modeling', { into: 'gunpla', onDraft: wrap(store, cb) });
+    return { id, seen };
+  }
+  /** the check: exactly one call, with the returned id, before any event */
+  const problems = (/** @type {{ id: string, seen: any[] }} */ r) =>
+    r.seen.length !== 1 ? ['not called exactly once'] : r.seen[0].id !== r.id ? ['wrong id'] : r.seen[0].eventsSoFar !== 0 ? ['called after events'] : [];
+  assert.deepEqual(problems(await run((_s, cb) => cb)), []);
+  // planted fault: a fuse that calls onDraft only after the structure is written
+  const late = await run((store, cb) => (id) => queueMicrotask(() => setTimeout(() => cb(id), 30)));
+  await new Promise((r) => setTimeout(r, 60));
+  assert.ok(problems(late).length > 0);
+});
+
+test('a throwing or rejecting onDraft never breaks the fuse; the return value is still the draft id', async () => {
+  for (const onDraft of [() => { throw new Error('boom'); }, async () => { throw new Error('async boom'); }]) {
+    const store = fakeStore({ manga: fixtureEvents('manga'), 'plastic-modeling': fixtureEvents('plastic-modeling') });
+    const ctx = makeCtx({ store, client: fakeClient(() => '{"hybrid":"Gunpla","summary":"s","hook":"h"}') });
+    const id = await fuse(ctx, 'manga', 'plastic-modeling', { into: 'gunpla', onDraft });
+    assert.match(id, /^draft-test-/);
+    assert.ok(Object.keys(store.read(id).nodes).length > 100);
+  }
+});
+
+test('a fused map starts with an empty chat, even when a source map has one (planted: copied chat)', async () => {
+  const chatty = [...fixtureEvents('manga'),
+    { t: 'chat.asked', at: 1, chatId: 'main', msgId: 'm1', text: 'What is shonen?', images: [] },
+    { t: 'chat.answered', at: 2, chatId: 'main', msgId: 'm2', replyTo: 'm1', text: 'A demographic.', citations: [], sources: [], suggestions: [], usedWeb: false }];
+  const store = fakeStore({ manga: chatty, 'plastic-modeling': fixtureEvents('plastic-modeling') });
+  assert.equal(store.read('manga').chat.length, 2, 'the source really has a chat');
+  const ctx = makeCtx({ store, client: fakeClient(() => '{"hybrid":"Gunpla","summary":"s","hook":"h"}') });
+  const id = await fuse(ctx, 'manga', 'plastic-modeling', { into: 'gunpla' });
+  const chatOf = (/** @type {object[]} */ events) => foldAll(events).chat;
+  assert.deepEqual(chatOf(store.logs.get(id)), []);
+  // planted fault: a fuse that also copied the source's chat events must be caught
+  assert.notDeepEqual(chatOf([...store.logs.get(id), ...chatty.filter((e) => e.t.startsWith('chat.'))]), []);
+  assert.equal(store.read('manga').chat.length, 2, 'the source chat is untouched');
+});

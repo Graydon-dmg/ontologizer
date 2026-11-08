@@ -102,3 +102,45 @@ test('truncate keeps short text, cuts long text to at most max characters with a
   assert.ok(long.startsWith(t.slice(0, -1)));
   assert.equal(truncate('x'.repeat(40), 30).length, 30);
 });
+
+// ---------- placeLabels (node label declutter) ----------
+import { placeLabels } from '../../web/views/sky/math.js';
+
+/** @param {typeof placeLabels} fn @returns {string[]} */
+function checkPlace(fn) {
+  const p = [];
+  const box = (id, x, tier, dist, was = false) => ({ id, x, y: 100, w: 80, h: 15, tier, dist, was });
+  // a and b overlap; c is clear. Category (tier 1) beats leaf (tier 3) even when farther away.
+  const r1 = fn([box('leaf', 110, 3, 10), box('cat', 100, 1, 99), box('far', 400, 3, 50)]);
+  if (!r1.has('cat') || r1.has('leaf') || !r1.has('far')) p.push(`priority/overlap: ${[...r1]}`);
+  // Same tier: nearer wins.
+  const r2 = fn([box('near', 100, 3, 5), box('farther', 120, 3, 50)]);
+  if (!r2.has('near') || r2.has('farther')) p.push(`distance: ${[...r2]}`);
+  // Tier 0 (hover/focus) always shows, even overlapping.
+  const r3 = fn([box('cat', 100, 1, 1), box('hover', 105, 0, 9)]);
+  if (!r3.has('hover')) p.push('hovered label hidden');
+  // Hysteresis: a label already shown keeps its place against a slightly nearer newcomer.
+  const r4 = fn([box('old', 100, 3, 20, true), box('new', 150, 3, 10)]);
+  if (!r4.has('old')) p.push('shown label lost its place to a newcomer');
+  return p;
+}
+
+test('placeLabels: priority, overlap, distance, hover always, hysteresis', () => {
+  assert.deepEqual(checkPlace(placeLabels), []);
+});
+
+test('planted fault: a placer that ignores overlap is caught', () => {
+  const all = (/** @type {any[]} */ c) => new Set(c.map((x) => x.id));
+  assert.ok(checkPlace(/** @type {any} */ (all)).length > 0);
+});
+
+test('placeLabels: a candidate whose full box collides falls back to its alt box', () => {
+  const alt = new Set();
+  const r = placeLabels([
+    { id: 'a', x: 100, y: 100, w: 80, h: 15, tier: 1, dist: 1 },
+    // full box (name + analog) reaches down into 'a'; the name-only alt box sits clear above it
+    { id: 'b', x: 100, y: 80, w: 80, h: 40, tier: 1, dist: 2, alt: { x: 100, y: 68, w: 80, h: 15 } },
+  ], { altPlaced: alt });
+  assert.ok(r.has('a') && r.has('b'));
+  assert.ok(alt.has('b') && !alt.has('a'));
+});

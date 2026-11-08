@@ -1,6 +1,6 @@
 // @ts-check
 import { CliError } from '../deps.js';
-import { engineFor, rethrowAuth, serveSession } from '../serve.js';
+import { engineFor, rethrowAuth, serveSession, checkPort } from '../serve.js';
 import { resolveName, waitForExit } from '../resolve-name.js';
 
 export default {
@@ -10,6 +10,7 @@ export default {
     .positional('map', { type: 'string', describe: 'Map name' })
     .option('as', { type: 'string', demandOption: true, describe: 'The persona, e.g. "a home chef"' })
     .option('name', { type: 'string', describe: 'Name for the lens' })
+    .option('port', { type: 'number', default: 0, describe: 'Port to serve on (default: a free one)' })
     .option('open', { type: 'boolean', default: true, hidden: true })
     .option('exit-after', { type: 'number', hidden: true }),
   handler: async (/** @type {any} */ argv) => {
@@ -17,7 +18,7 @@ export default {
     const store = deps.store();
     const id = await resolveName(deps, store, String(argv.map));
     const engine = await engineFor({ deps, store, id, needKey: true });
-    const srv = await serveSession({ deps, store, engine, id, open: argv.open });
+    const srv = await serveSession({ deps, store, engine, id, open: argv.open, port: checkPort(argv.port) });
     try {
       let lensId;
       try {

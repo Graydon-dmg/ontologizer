@@ -23,12 +23,17 @@ export async function engineFor({ deps, store, id, needKey }) {
       interactive: needKey ? deps.interactive : false,
       ask: deps.ask,
       stderr: deps.stderr,
+      validate: deps.validateKey,
     });
-    client = await makeClient(key);
+    client = await makeClient(key, { env: deps.env, stderr: deps.stderr });
   } catch (err) {
     if (/** @type {any} */ (err)?.name === 'ExitPromptError') throw err; // Ctrl-C at the prompt: exit 130 quietly
-    if (needKey) throw new CliError(/** @type {Error} */ (err).message, 1);
-    client = await noKeyClient({ keyring: deps.keyring });
+    if (needKey || /** @type {any} */ (err)?.code === 'ONTOLOGIZER_BASE_URL') throw new CliError(/** @type {Error} */ (err).message, 1);
+    try {
+      client = await noKeyClient({ keyring: deps.keyring, env: deps.env, stderr: deps.stderr });
+    } catch (e) {
+      throw new CliError(/** @type {Error} */ (e).message, 1); // a refused ANTHROPIC_BASE_URL
+    }
   }
   return loadEngine({ store, id, client, env: deps.env });
 }
@@ -39,14 +44,31 @@ export function rethrowAuth(err) {
   throw err;
 }
 
+/** A --port value: 0 (any free port) or 1024..65535. @param {unknown} v */
+export function checkPort(v) {
+  const n = v === undefined ? 0 : Number(v);
+  if (!Number.isInteger(n) || (n !== 0 && (n < 1024 || n > 65535))) {
+    throw new CliError('--port must be a whole number from 1024 to 65535.', 1);
+  }
+  return n;
+}
+
 /**
  * Start the server for `id`, print its URL, open the browser.
  * @param {{ deps: import('./deps.js').Deps, store: any, engine: any, id: string,
- *           replay?: null | { speed: number }, open?: boolean }} opts
+ *           replay?: null | { speed: number }, open?: boolean, port?: number }} opts
  * @returns {Promise<{ url: string, close: () => Promise<void> }>}
  */
-export async function serveSession({ deps, store, engine, id, replay = null, open = true }) {
-  const srv = await startServer({ store, engine, id, replay });
+export async function serveSession({ deps, store, engine, id, replay = null, open = true, port = 0 }) {
+  // Fused drafts started from the browser get their own server; their engine never prompts.
+  const makeEngine = (/** @type {string} */ draftId) => engineFor({ deps, store, id: draftId, needKey: false });
+  let srv;
+  try {
+    srv = await startServer({ store, engine, id, replay, makeEngine, port });
+  } catch (err) {
+    if (/** @type {any} */ (err)?.code === 'EADDRINUSE') throw new CliError(`Port ${port} is already in use: pick another with --port, or leave it out.`, 1);
+    throw err;
+  }
   const name = store.read(id).name || id;
   deps.stdout.write(`Serving ${name} at ${srv.url}  (Ctrl-C to stop)\n`);
   if (open) await deps.openBrowser(srv.url);

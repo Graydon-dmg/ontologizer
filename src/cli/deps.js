@@ -2,7 +2,7 @@
 // Everything a command touches in the outside world, in one injectable object, so tests can run
 // every command in-process with fakes (no TTY, no browser, no keychain, no network).
 import { spawn } from 'node:child_process';
-import { defaultKeyring } from './apikey.js';
+import { defaultKeyring, checkKey } from './apikey.js';
 import { openStore } from '../core/store.js';
 
 /** A user-facing failure: main prints the message to stderr and returns the code. */
@@ -54,6 +54,7 @@ function openUrl(url, env) {
  *   interactive: boolean,
  *   keyring: import('./apikey.js').Keyring,
  *   ask: ((opts: { message: string, mask: string }) => Promise<string>) | null,
+ *   validateKey: (key: string) => Promise<'ok'|'rejected'|'unverified'>,
  *   prompts: () => Promise<{ input: Function, select: Function, confirm: Function, search: Function, password: Function }>,
  *   openBrowser: (url: string) => Promise<void>,
  *   fetch: typeof fetch,
@@ -79,6 +80,7 @@ export function makeDeps(over = {}) {
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     keyring: over.keyring ?? defaultKeyring(env),
     ask: null,
+    validateKey: (key) => checkKey(key, { env, stderr: process.stderr }),
     prompts: async () => /** @type {any} */ (await import('@inquirer/prompts')),
     openBrowser: async (url) => {
       if (env.ONTOLOGIZER_NO_OPEN === '1') return;
