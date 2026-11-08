@@ -11,6 +11,24 @@ const MAX_PER_CATEGORY = 25;
 const MAX_EDGES = 25;
 const MAX_INSIGHTS = 3;
 
+const SMALL = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'vs', 'with']);
+
+/**
+ * A short root label: the subject without qualifiers ("(...)", ": ...", ", ...", " - ..."), at most
+ * 4 words, Title Case. Words that already carry capitals ("3D", "DNA", "iPhone") are kept as written.
+ * @param {string} subject
+ */
+export function rootLabel(subject) {
+  const head = String(subject ?? '').replace(/\s*[([{].*$/, '').split(/\s*[:;,\u2013\u2014]\s*|\s+-\s+/)[0].trim();
+  const words = (head || String(subject ?? '').trim()).split(/\s+/).filter(Boolean).slice(0, 4);
+  while (words.length > 1 && SMALL.has(words[words.length - 1].toLowerCase())) words.pop();
+  return words.map((w, i) => {
+    if (/[A-Z]/.test(w.slice(1)) || /\d/.test(w)) return w;
+    const lower = w.toLowerCase();
+    return i > 0 && SMALL.has(lower) ? lower : lower.charAt(0).toUpperCase() + lower.slice(1);
+  }).join(' ') || 'Map';
+}
+
 /** @param {any} v */
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -91,7 +109,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   const node = (p) => ({ summary: '', hook: '', sources: [], article: null, status: 'done', ...p });
   ectx.emit('node.added', {
     node: node({
-      id: root, label: subject.charAt(0).toUpperCase() + subject.slice(1), parent: null, category: '', depth: 0,
+      id: root, label: rootLabel(subject), parent: null, category: '', depth: 0,
       summary: str(brief.scope), hook: '', origin: 'seed', createdBy: 'wave0',
     }),
   });

@@ -36,10 +36,11 @@ Apply four tests to the context plus any answers already given:
 4. level: you can tell if the reader is a beginner, intermediate or expert.
 Be practical: infer what is reasonably implied. If a test is only weakly implied, pick the most likely reading and pass it.
 If all four pass, output:
-{"ready":true,"brief":{"context":"<the reader's context, verbatim>","subject":"<one clear subject>","scope":"<what is in and out>","purpose":"<why>","level":"beginner|intermediate|expert"},"name":"<short-kebab-case-name>"}
+{"ready":true,"brief":{"context":"<the reader's context, verbatim>","subject":"<one clear subject, 1 to 4 words, no parentheses>","scope":"<what is in and out>","purpose":"<why>","level":"beginner|intermediate|expert"},"name":"<short-kebab-case-name>"}
 If any test fails, output at most 3 questions, only for the tests that fail, each with 2 to 5 short answer options:
 {"ready":false,"questions":[{"id":"subject","text":"Which kind of modeling do you mean?","options":["Plastic scale models","Fashion modeling","3D modeling","Data modeling"]}]}
 Question ids are the test names: subject, scope, purpose, level.
+subject is a short title (1 to 4 words, e.g. "Scale Plastic Modeling"); put every qualifier in scope instead.
 name: 1 to 4 lowercase words joined by hyphens, naming the subject, e.g. "plastic-modeling".
 Output exactly one JSON object on one line, nothing else: no prose, no code fences.`;
   const answered = answers.length
