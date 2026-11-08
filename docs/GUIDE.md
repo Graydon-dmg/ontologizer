@@ -100,7 +100,7 @@ A lens re-explains your map for a persona. For each node, Claude names an **anal
 
 ### Fuse
 
-`fuse` takes two maps and produces a **new draft**. Both source maps are left untouched. The draft contains the categories of both maps (shown in separate colour families), a **Hybrids** category of things that exist only where the two fields meet, and **bridge** links across the seam. Hybrid nodes get a distinct outline. Fuse takes exactly two maps; to combine three, fuse the result with the third. Asking for three fails with: `fuse takes two maps; fuse the result again to add a third`.
+`fuse` takes two maps and produces a **new draft**. You can start one from a terminal (`ontologizer fuse`) or from the page with the **Fuse** button. Both source maps are left untouched. The draft contains the categories of both maps (shown in separate colour families), a **Hybrids** category of things that exist only where the two fields meet, and **bridge** links across the seam. Hybrid nodes get a distinct outline. Fuse takes exactly two maps; to combine three, fuse the result with the third. Asking for three fails with: `fuse takes two maps; fuse the result again to add a third`.
 
 ### Drafts and saved maps
 
@@ -230,6 +230,21 @@ ontologizer fuse manga plastic-modeling --into gunpla
 
 The fused draft shows the two original maps in two colour families. Look at the **Hybrids** category: that is where things live that belong to neither map alone, for example Gunpla, garage kits and figure painting. Dashed **bridge** lines run from nodes in one map to nodes in the other, each with a `why`. (The exact hybrids are chosen by Claude each time, so yours may differ.) Press Ctrl-C and say yes to save it as `gunpla`. `manga` and `plastic-modeling` are unchanged.
 
+**From the page instead.** With a map open (say `ontologizer load manga`), click **Fuse** in the top bar, next to **Rosetta**. A dialog titled **Fuse this map with…** lists your other saved maps, with node counts and a **draft** badge on drafts; the map you are on is not listed. Use **Search your maps** to narrow the list, click the map to fuse with, and optionally fill in **Name the new map (optional)** (for example `gunpla`; if your text is not already lowercase-with-hyphens, it shows `Will be saved as "<slug>"`). Click **Fuse**.
+
+A new browser tab opens on the fused map, which gets its own local page, and you watch it grow there. Back on the first map, the ticker says `Fusing with <name>…` and the jobs tray shows `Fusing with <name>` until it is done. The new map is a draft: save it with `ontologizer save`.
+
+If something goes wrong, the dialog and the ticker show `Could not fuse: <reason>` and the new tab closes again. Typical reasons:
+
+| Message | What it means |
+|---|---|
+| `fuse needs a different map than this one` | You picked the map you are on. |
+| `no map named "<x>"` | That map is no longer in your store. |
+| `into must be lowercase letters, digits and hyphens, at most 40 characters` | The name was not usable. |
+| `cannot reach the server. Is ontologizer still running?` | The terminal that served the page was stopped. |
+
+An API key problem shows as a failed job in the jobs tray, for example `Your Anthropic API key was rejected: run ontologizer key set`. If the dialog says `No other saved maps yet`, build and save a second map in a terminal first (`ontologizer new`).
+
 ### c) Rosetta for a persona
 
 ```
@@ -262,6 +277,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
 | **Categories** | A dropdown of checkboxes to show only some categories; the title shows the count when filtered. |
 | **Rosetta** | Lenses: **None**, each lens on the map, and **New lens…** to add one for a persona. |
+| **Fuse** | Fuse this map with another saved map into a new draft, which opens in a new tab. See [Fuse two interests](#b-fuse-two-interests). |
 | **Legend** | Colour key for categories; click its header to fold it. In a fused map it groups categories by source map (headed with each source map's name) and **Hybrids**, and adds a **Fusion** key for **Bridge** lines and **Hybrid** outlines. |
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
 | **Jobs tray** | Running and recent jobs (see Concepts). |
