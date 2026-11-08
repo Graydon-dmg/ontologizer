@@ -1,63 +1,69 @@
 # Ontologizer
 
-Ontologizer is an open-source command-line tool: give it a topic and it builds a live, color-coded map of everything inside that topic, streaming it into a local web page as it goes.
+Ontologizer is an open-source command-line tool: give it a topic and Claude builds a live, color-coded map of everything inside it, streaming into a local web page as it goes.
 
 ![Ontologizer's 2D graph mid-build](https://raw.githubusercontent.com/Graydon-dmg/ontologizer/main/docs/screenshot.png)
 
-## Install and first run
+## Install
+
+**Easiest:** point your coding agent (Claude Code, Codex, Cursor...) at [docs/AGENT-INSTALL.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/AGENT-INSTALL.md) and ask it to install Ontologizer.
+
+**Manual:**
 
 ```bash
 npm i -g ontologizer
+ontologizer          # start menu: pick New. The first time it needs Claude, it asks for your
+                     # Anthropic API key once and stores it in your system keychain
+ontologizer doctor   # checks that everything is in place
+```
+
+## Your first map in 30 seconds
+
+```bash
 ontologizer new
 ```
 
-The first run asks for your Anthropic API key once and keeps it in your system keychain, so no `export` is needed. Those two commands end on a live map in your browser.
+You will see a few context check questions, then the map streams in live in your browser. When you like it, save it with `ontologizer save [name]`.
 
-To try it offline, with no network and no key:
+No key or network yet? Watch the bundled demo build offline:
 
 ```bash
-ontologizer load demo --replay --speed 1
+ontologizer load demo --replay
 ```
 
 ## Commands
 
 | Command | What it does |
-|---|---|
+| --- | --- |
 | `ontologizer` | Interactive start menu |
-| `ontologizer new [--context "..."] [--yes]` | Build a new topic map |
-| `ontologizer load <name> [--replay] [--speed <n>]` | Open a saved map (add `--replay` to watch it build again) |
+| `ontologizer new` | Build a new topic map |
+| `ontologizer load <name>` | Open a saved map (add `--replay` to watch it build again) |
 | `ontologizer save [name]` | Save the current draft |
-| `ontologizer list [--drafts]` | List saved maps |
-| `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into a new draft |
-| `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona |
+| `ontologizer list` | List saved maps |
+| `ontologizer fuse <a> <b>` | Fuse two maps into a new draft |
+| `ontologizer rosetta <map>` | Add a lens that re-explains the map for a persona |
 | `ontologizer explain <name> <node>` | Write an article for one node |
-| `ontologizer research <name> <node> [--general]` | Grow the map under one node |
-| `ontologizer key [set\|clear]` | Show, set or clear the Anthropic API key |
-| `ontologizer doctor` | Check that everything ontologizer needs is in place |
-| `ontologizer completion [zsh\|bash\|fish]` | Print a shell completion script |
+| `ontologizer research <name> <node>` | Grow the map under one node |
 | `ontologizer update` | Update ontologizer to the latest version |
+| `ontologizer key [action]` | Show, set or clear the Anthropic API key |
+| `ontologizer doctor` | Check that everything ontologizer needs is in place |
+| `ontologizer completion [shell]` | Print a shell completion script (zsh, bash or fish) |
 
-Map names accept a prefix. `ontologizer <command> --help` shows every option.
-
-## How it works
-
-- **Context check.** Before building, it asks a few questions to pin down what you mean by the topic.
-- **Streaming waves.** The map is built in waves: top-level categories first, then their children, then cross-links. Nodes stream into the page as they arrive.
-- **Event log.** Every change is an append-only event, so maps can be saved, loaded and replayed.
-- **Views.** A 2D graph, with an optional 3D view.
-- **Fuse and Rosetta.** Fuse merges two maps into one and adds bridges between them. Rosetta explains a map through an analogy to a field you already know, and marks where the analogy breaks.
+Every command takes `--help`. Full detail is in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md).
 
 ## Requirements
 
-- Node 20 or newer.
-- An Anthropic API key. It is asked for on first run and kept in your system keychain. `ANTHROPIC_API_KEY` overrides it. Use `ontologizer key set` or `ontologizer key clear` to change it.
+- Node 20+
+- An Anthropic API key
 
-### Cost and privacy
+## Cost and privacy
 
-- Each map makes a dozen or so model calls, billed to your Anthropic account.
-- Your topics and maps are sent to the Anthropic API.
-- Maps are stored locally in `~/.ontologizer/`.
+- Model calls go to Anthropic's API using your own key. A map costs a few cents of API usage; Explain, Research and Sources (in the node menu or as commands), `fuse` and `rosetta` each make extra calls.
+- Maps are stored locally in `~/.ontologizer`.
+- The page is served only on 127.0.0.1 (your own machine).
 
-## License
+See [SECURITY.md](https://github.com/Graydon-dmg/ontologizer/blob/main/SECURITY.md).
 
-MIT
+## Licence
+
+MIT, see [LICENSE](https://github.com/Graydon-dmg/ontologizer/blob/main/LICENSE). Contributions welcome: see [CONTRIBUTING.md](https://github.com/Graydon-dmg/ontologizer/blob/main/CONTRIBUTING.md).

@@ -165,3 +165,11 @@ test('empty persona or empty ontology throws', async () => {
   const store = fakeStore({ e: [seed()[0]] });
   await assert.rejects(rosetta(makeCtx({ store, client: fakeClient(goodModel) }), 'e', 'a chef'), /no nodes/);
 });
+
+test('a lens name from the browser is slugged; an overlong persona is refused (planted: raw name kept)', async () => {
+  const store = fakeStore({ pm: fixtureEvents('plastic-modeling') });
+  const ctx = makeCtx({ store, client: fakeClient(() => '') });
+  const id = await rosetta(ctx, 'pm', 'a home chef', { name: '  My Kitchen!!/../x ' }).catch((e) => e);
+  assert.equal(id instanceof Error ? 'error' : id, 'my-kitchen-x');
+  await assert.rejects(rosetta(ctx, 'pm', 'x'.repeat(201)), /too long/);
+});
