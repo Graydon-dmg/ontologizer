@@ -20,7 +20,7 @@ Follow these steps in order. Do not skip ahead.
    ontologizer doctor
    ```
 
-   Each row starts with `ok`, `warn` or `fail`; problems add a `fix:` line. Example output:
+   Run it on its own, not piped into `head` or similar (its output is only a few lines). Each row starts with `ok`, `warn` or `fail`; problems add a `fix:` line. Example output:
 
    ```
    ok   Node 26.0.0
@@ -33,19 +33,31 @@ Follow these steps in order. Do not skip ahead.
    warn Version 1.0.0 (could not check for updates)
    ```
 
-   "API key not set" is expected to fail until step 4. Anything else that fails: see Troubleshooting.
+   - The API key row may show `not set` until step 4.
+   - The two `warn` rows, Completion and Version (the update check), need no action for the install.
+   - Any other `fail`: see Troubleshooting.
 
-4. **Hand the key off to the human.** Say exactly this:
+4. **Hand the key off to the human.** If `ontologizer doctor` already shows the API key row as `ok`, skip to step 5. Otherwise, say exactly this:
 
    > I can't handle your Anthropic API key, and shouldn't see it. Please open your own terminal and run `ontologizer key set`, then paste your key at the masked prompt (it starts with `sk-ant-`). It will be saved to your system keychain. Tell me when you're done.
 
    Wait for the human to confirm. Do not run `ontologizer key set` yourself.
 
-5. **Verify.** Run `ontologizer key`. It prints only where the key comes from, never the key itself: `env`, `keychain` or `none` (when none it says `none: run ontologizer key set`). Then run `ontologizer doctor` again; the API key row should now be `ok`.
+5. **Verify.** Run `ontologizer key`. It prints only where the key comes from, never the key itself. It prints exactly one of:
 
-6. **Suggest a first run to the human:**
+   ```
+   keychain (service ontologizer, account anthropic-api-key)
+   ANTHROPIC_API_KEY (environment)
+   none: run ontologizer key set
+   ```
+
+   (`none` also exits with code 1.) Then run `ontologizer doctor` again; the API key row should now be `ok`.
+
+6. **Suggest a first run to the human.** Don't run these yourself in the foreground: each starts a local web server that keeps running until Ctrl-C. Tell the human to run them in their own terminal:
    - `ontologizer load demo --replay` (offline, no key needed)
    - `ontologizer new` (builds a new map with Claude)
+
+   If you want to confirm the demo starts, run it in the background for a few seconds, check that it prints `Serving … at http://127.0.0.1:<port>/`, then stop it.
 
 ## Optional: shell completion
 
