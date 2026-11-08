@@ -1,0 +1,7 @@
+html, body { margin: 0; height: 100%; background: #0b0d12; color: #cfd6e4; font: 12px/1.4 ui-monospace, Menlo, monospace; overflow: hidden; }
+#stage { position: fixed; inset: 0; }
+#stage > * { display: block; width: 100%; height: 100%; }
+#overlay, #emit { position: fixed; padding: 4px 8px; background: rgba(0,0,0,.6); border-radius: 4px; pointer-events: none; z-index: 10; }
+#overlay { top: 8px; left: 8px; white-space: pre; }
+#emit { bottom: 8px; right: 8px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#message { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 16px; color: #ffb4a8; z-index: 10; }
