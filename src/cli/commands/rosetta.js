@@ -26,7 +26,7 @@ export default {
         try { rethrowAuth(err); } catch (e) { if (e instanceof CliError) throw e; }
         throw new CliError(/** @type {Error} */ (err).message, 1);
       }
-      deps.stdout.write(`Lens "${lensId}" added. Pick it under "See as" in the page.\n`);
+      deps.stdout.write(`Lens "${lensId}" added. Pick it under "Rosetta" in the page.\n`);
       await waitForExit(deps, argv.exitAfter);
     } finally {
       await srv.close();

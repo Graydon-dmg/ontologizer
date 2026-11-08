@@ -103,3 +103,14 @@ test('start menu "New map" keeps deps (non-enumerable on argv) when it calls the
   assert.equal(code, 0, out.out);
   assert.match(out.out, /Suggested name: plastic-modeling/);
 });
+
+test('doctor Node row: ok on 22+, fail with "install Node 22+" below', async () => {
+  const { nodeRow } = await import('../../src/cli/commands/doctor.js');
+  assert.equal(nodeRow('22.0.0').s, 'ok');
+  assert.equal(nodeRow('26.0.0').s, 'ok');
+  const old = nodeRow('20.19.0');
+  assert.equal(old.s, 'fail');
+  assert.equal(old.fix, 'install Node 22+');
+  // Planted fault: the old threshold (20) would pass 20.19 and 21.x.
+  assert.equal(nodeRow('21.7.3').s, 'fail');
+});
