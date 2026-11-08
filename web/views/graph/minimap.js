@@ -2,7 +2,7 @@
 // The minimap: a small SVG of the whole graph (dots only) with the main view's viewport rectangle.
 // Click or drag pans the main view. No DOM access at module top level.
 import { select } from 'd3-selection';
-import { THEME } from '../../shared/tokens.js';
+import { th } from './theme.js';
 import { worldBounds, miniScale, viewportRect, panFromMinimap } from './math.js';
 
 const DEFAULT_W = 200;
@@ -52,11 +52,11 @@ export function createMinimap(el, host) {
     .style('position', 'absolute').style('inset', '0').style('display', 'block')
     .style('touch-action', 'none').style('cursor', 'crosshair')
     .style('border-radius', '6px').style('box-sizing', 'border-box');
-  const bg = svg.append('rect').attr('rx', 6).attr('fill', THEME.dark.panel).attr('fill-opacity', 0.85)
-    .attr('stroke', THEME.dark.muted).attr('stroke-width', 1);
+  const bg = svg.append('rect').attr('rx', 6).attr('fill', th().panel).attr('fill-opacity', 0.85)
+    .attr('stroke', th().muted).attr('stroke-width', 1);
   const dots = svg.append('g').style('pointer-events', 'none');
-  const rect = svg.append('rect').attr('fill', '#fff').attr('fill-opacity', 0.06)
-    .attr('stroke', THEME.dark.fg).attr('stroke-width', 1).style('pointer-events', 'none');
+  const rect = svg.append('rect').attr('fill', th().fg).attr('fill-opacity', 0.06)
+    .attr('stroke', th().fg).attr('stroke-width', 1).style('pointer-events', 'none');
 
   /** World bounds from the last dot redraw; shared by the rect and by pan so they agree. */
   let bounds = worldBounds(new Map());

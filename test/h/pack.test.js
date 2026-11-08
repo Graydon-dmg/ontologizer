@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,12 +40,12 @@ test('planted fault: files field leaves out web/ is reported', () => {
   assert.deepEqual(audit(['src', 'web']), []); // positive control
 });
 
-test('planted fault: test/.env with sk-ant-test gives three separate problems', () => {
+test('planted fault: test/.env with sk-ant-test is reported as env, test/ and key problems', () => {
   const problems = audit(['src', 'web', 'test'], { 'test/.env': 'KEY=sk-ant-test\n' });
   assert.ok(problems.some((p) => p.includes('.env')), 'env file');
   assert.ok(problems.some((p) => p.includes('test/')), 'test/ file');
   assert.ok(problems.some((p) => p.includes('sk-ant-')), 'key content');
-  assert.equal(problems.length, 3);
+  assert.equal(problems.length, 4); // the three above plus "unexpected file" (test/ is not allowed)
   assert.ok(problems.every((p) => !p.includes('sk-ant-test')), 'must not print matched text');
 });
 
@@ -66,4 +66,11 @@ test('planted fault: shebang removed or wrong is reported', () => {
   assert.ok(checkShebang('#!/usr/bin/node\n'));
 });
 
-// The lead adds the real check here when Epic B lands: checkShebang(readFileSync('src/cli/index.js', 'utf8')) === null.
+test('real src/cli/index.js starts with the node shebang', () => {
+  assert.equal(checkShebang(readFileSync(join(repoRoot, 'src/cli/index.js'), 'utf8')), null);
+});
+
+test('planted fault: a stray .playwright-mcp/ folder in files is reported', () => {
+  const problems = audit(['src', 'web', '.playwright-mcp'], { '.playwright-mcp/page.yml': 'x: 1\n' });
+  assert.deepEqual(problems, ['unexpected file packed: .playwright-mcp/page.yml']);
+});

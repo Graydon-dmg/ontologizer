@@ -2,6 +2,21 @@
   "name": "ontologizer",
   "version": "0.1.0",
   "description": "Give it a topic and watch the whole field draw itself: a live, color-coded map of any topic, built by an LLM.",
+  "keywords": [
+    "ontology",
+    "knowledge-map",
+    "mind-map",
+    "graph",
+    "llm",
+    "anthropic",
+    "claude",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Graydon-dmg/ontologizer.git"
+  },
+  "homepage": "https://github.com/Graydon-dmg/ontologizer#readme",
   "type": "module",
   "bin": {
     "ontologizer": "src/cli/index.js"
