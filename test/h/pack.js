@@ -37,6 +37,8 @@ export function auditPack(dir, files, required, requiredDirs = []) {
     if (base === '.env' || base.startsWith('.env.')) problems.push(`env file packed: ${f}`);
     if (f.startsWith('test/')) problems.push(`test file packed: ${f}`);
     if (f.startsWith('web/dev/')) problems.push(`dev harness packed: ${f}`);
+    // fixtures/ ships bundled replay logs only: no uploaded images, chat logs or other user data.
+    if (f.startsWith('fixtures/') && !/^fixtures\/[a-z0-9-]+\.events\.jsonl$/.test(f)) problems.push(`non-fixture file in fixtures/: ${f}`);
     if (f.endsWith('.md') && !ALLOWED_FILES.includes(f)) problems.push(`internal doc packed: ${f}`);
     if (!ALLOWED_FILES.includes(f) && !ALLOWED_DIRS.some((d) => f.startsWith(d))) problems.push(`unexpected file packed: ${f}`);
     if (KEY_SHAPE.test(readFileSync(join(dir, f), 'utf8'))) problems.push(`API key pattern (sk-ant-) found in: ${f}`);

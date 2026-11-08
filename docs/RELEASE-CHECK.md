@@ -93,7 +93,22 @@ ontologizer fuse a b --into c                      # the browser opens and the s
 - [ ] **README on GitHub:** the repository page renders the logo lockup (light and dark GitHub themes), and the ASCII art sits in a code block with its columns aligned.
 - [ ] **Package contents:** `npm pack --dry-run` lists the files under `web/shared/brand/` and nothing under `docs/brand/` (`npm run check:h` enforces both).
 
-## 6. Sign-off
+## 6. Ask the map (chat panel)
+
+Use a live map (step 3), plus G's "frontier AI coding harnesses" map for the example question.
+
+- [ ] **Text question:** open the chat panel and ask "What should a beginner learn first?". The answer streams in (words arrive as it writes, not all at once at the end), and it cites map nodes as clickable chips or links.
+- [ ] **Citations focus and highlight:** click a cited node. The map focuses it, beside the open panels rather than behind them, and highlights it. Click a second citation and the highlight moves.
+- [ ] **The example question:** on the coding-harnesses map, ask: "give me some examples of the world's best coding harnesses and statistics to show how effective they are". The answer cites map nodes and gives web-sourced statistics, each with a source link that opens the right page in a new tab. No statistic appears without a link.
+- [ ] **Image input:** paste a screenshot (Cmd/Ctrl-V) into the chat box, or attach one, and ask about it ("what's in this picture and where does it fit on the map?"). A thumbnail shows before sending, and the answer is clearly about that image.
+- [ ] **Bad uploads are refused:** attaching a file that is not an image (a `.txt` or `.pdf`), or an image over the size limit, is refused with a clear message and nothing is sent.
+- [ ] **Reload keeps the chat:** reload the page. The conversation, citations and image thumbnails are still there. `ontologizer load <map>` in a new session shows the same chat.
+- [ ] **Nothing runs without a click:** when an answer suggests growing the map, it shows a **Research** suggestion button. No job appears in the jobs tray until you click it. Clicking it runs exactly one Research job, on the node it names.
+- [ ] **Light and Dark:** the chat panel, citations, thumbnails and suggestion buttons are readable in both themes.
+- [ ] **2D and 3D:** clicking a citation highlights the node in 2D, and again after switching to 3D.
+- [ ] **Uploads stay private:** pasted images live only in the map's own folder under `~/.ontologizer/`, and `npm pack --dry-run` lists no uploaded or chat files (`npm run check:h` enforces the package side).
+
+## 7. Sign-off
 
 - [ ] `npm run check` passes on this commit.
 - [ ] Every box above is ticked. Write any bug found here, with the step number, and don't publish until it's fixed and this check has been re-run from the step it affects.

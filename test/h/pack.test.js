@@ -9,7 +9,6 @@ import { REQUIRED, REQUIRED_DIRS, packedFiles, auditPack, checkShebang, checkLic
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** Build a throwaway package, run the real packedFiles + auditPack on it, then clean up. */
 const LEGAL = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md'];
 /** Build a throwaway package (legal files listed in `files` unless legal: false), audit it, clean up. */
 function audit(/** @type {string[]} */ files, /** @type {Record<string, string>} */ extra = {}, { legal = true } = {}) {
@@ -130,4 +129,9 @@ test('planted faults: Apache license field, Apache LICENSE text, legal file left
   assert.equal(checkLicense({ license: 'MIT' }, apache).length, 1);
   const problems = audit(['src', 'web', 'fixtures', 'LICENSE', 'TRADEMARKS.md'], {}, { legal: false }); // THIRD_PARTY_NOTICES.md left out
   assert.ok(problems.includes('missing required file: THIRD_PARTY_NOTICES.md'), problems.join('\n'));
+});
+
+test('planted fault: an uploaded image or chat log under fixtures/ is reported', () => {
+  const problems = audit(['src', 'web', 'fixtures'], { 'fixtures/paste-1.png': 'png\n', 'fixtures/demo.chat.jsonl': '{}\n' });
+  assert.deepEqual(problems.sort(), ['non-fixture file in fixtures/: fixtures/demo.chat.jsonl', 'non-fixture file in fixtures/: fixtures/paste-1.png']);
 });
