@@ -1,0 +1,2 @@
+{ "permissions": { "allow": ["Bash(npm:*)", "Bash(node:*)", "Bash(npx:*)", "Bash(git:*)",
+                             "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Edit", "Write"] } }

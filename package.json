@@ -1,0 +1,58 @@
+{
+  "name": "ontologizer",
+  "version": "0.1.0",
+  "description": "Give it a topic and watch the whole field draw itself: a live, color-coded map of any topic, built by an LLM.",
+  "type": "module",
+  "bin": {
+    "ontologizer": "src/cli/index.js"
+  },
+  "exports": {
+    ".": "./src/core/index.js",
+    "./core": "./src/core/index.js",
+    "./views": "./web/views/index.js"
+  },
+  "files": [
+    "src",
+    "web",
+    "fixtures",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "scripts": {
+    "check": "node scripts/test.js test",
+    "check:a": "node scripts/test.js test/a",
+    "check:b": "node scripts/test.js test/b",
+    "check:c": "node scripts/test.js test/c",
+    "check:c:live": "LIVE=1 node scripts/test.js test/c/live",
+    "check:d": "node scripts/test.js test/d",
+    "check:e": "node scripts/test.js test/e",
+    "check:f": "node scripts/test.js test/f",
+    "check:g": "node scripts/test.js test/g",
+    "check:h": "node scripts/test.js test/h",
+    "dev": "node scripts/dev-server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@inquirer/prompts": "^8.7.5",
+    "@napi-rs/keyring": "^2.1.2",
+    "open": "^11.0.4",
+    "p-queue": "^10.0.0",
+    "yargs": "^18.2.0",
+    "d3-color": "^3.1.1",
+    "d3-dispatch": "^3.0.2",
+    "d3-drag": "^3.0.1",
+    "d3-ease": "^3.0.2",
+    "d3-force": "^3.0.1",
+    "d3-interpolate": "^3.0.2",
+    "d3-quadtree": "^3.0.2",
+    "d3-selection": "^3.0.1",
+    "d3-timer": "^3.0.2",
+    "d3-transition": "^3.0.2",
+    "d3-zoom": "^3.0.1",
+    "three": "^0.187.0"
+  }
+}
