@@ -191,3 +191,27 @@ export function hiddenIds(ontology, collapsed, filter) {
   }
   return out;
 }
+
+/**
+ * Greedy label placement in screen space. Forced labels (focus, hovered, the first rings) always
+ * show; the rest are tried parents before children, then larger nodes before smaller, and a label
+ * is skipped when its box overlaps one already placed.
+ * @param {Array<{ id: string, forced: boolean, depth: number, r: number,
+ *                 box: { x: number, y: number, w: number, h: number } }>} items
+ * @returns {Set<string>} ids whose label is drawn
+ */
+export function placeLabels(items) {
+  const order = [...items].sort((a, b) =>
+    (Number(b.forced) - Number(a.forced)) || (a.depth - b.depth) || (b.r - a.r) || (a.id < b.id ? -1 : 1));
+  /** @type {Array<{ x: number, y: number, w: number, h: number }>} */
+  const placed = [];
+  const shown = new Set();
+  for (const it of order) {
+    const a = it.box;
+    const hit = !it.forced && placed.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
+    if (hit) continue;
+    placed.push(a);
+    shown.add(it.id);
+  }
+  return shown;
+}
