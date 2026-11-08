@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { registerView } from '../../shared/view.js';
-import { boundsOf, toWorld, treeDistance, arcPoints, truncate, placeLabels } from './math.js';
+import { boundsOf, toWorld, treeDistance, arcPoints, truncate, placeLabels, citedSets, centroid, allOffscreen } from './math.js';
 import { descendants, neighborhood, ringsFrom, labelVisible } from './graphmath.js';
 
 const WORLD = 600;
@@ -54,6 +54,14 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.halos = new Map();
     this.hoveredId = null;
     this.selectedId = null;
+    /** @type {string[]|null} */
+    this.citeIds = null;
+    this.citeKey = 0;
+    this.citePending = false;
+    /** @type {{ nodes: Set<string>, edges: Set<string> }|null} */
+    this.cited = null;
+    /** @type {Map<string, any>} */
+    this.citeHalos = new Map();
     /** @type {Set<string>|null} */
     this.ghostSet = null;
     this.collapsed = new Set();
@@ -284,7 +292,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const t = top ? top.y - 8 : /** @type {{y:number}} */ (bot).y - 8;
       const b = bot ? bot.y + 8 : /** @type {{y:number}} */ (top).y + 8;
       const x = (top || /** @type {{x:number}} */ (bot)).x;
-      const tier = id === this.hoveredId || id === focus ? 0
+      const tier = id === this.hoveredId || id === focus || (this.cited && this.cited.nodes.has(id)) ? 0
         : n.depth <= 1 ? 1
         : (this.ghostSet && this.ghostSet.has(id)) || (this.bright && this.bright.has(id)) ? 2 : 3;
       // Fallback when the pair has no room: the name alone (the analog waits for hover or room).
@@ -364,7 +372,8 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     if (!st || !n) return;
     st.base = n.status === 'pending' ? 0.45 : 1;
     const mat = st.mesh.material;
-    if (n.article) { mat.emissive.copy(mat.color); mat.emissiveIntensity = 0.6; }
+    if (st.citedOn) { mat.emissive.copy(mat.color); mat.emissiveIntensity = 0.9; } // chat citation glow
+    else if (n.article) { mat.emissive.copy(mat.color); mat.emissiveIntensity = 0.6; }
     else { mat.emissive.setRGB(0, 0, 0); mat.emissiveIntensity = 1; }
     const noSources = !(n.sources && n.sources.length) && n.origin !== 'seed';
     if (noSources && !st.ring) { st.ring = this.srcRing.clone(); st.mesh.add(st.ring); }
@@ -502,9 +511,12 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     // Derived caches, rebuilt only when the node count, focus or highlight changes.
     // The ontology may be empty at mount (no root yet): fall back to the root once it exists.
     const focus = this.focusId || snap.root || '';
-    const key = `${this.nodes.size}|${snap.edges.length}|${focus}|${this.hlKey}|${this.selectedId}`;
+    const key = `${this.nodes.size}|${snap.edges.length}|${focus}|${this.hlKey}|${this.selectedId}|${this.citeKey}`;
     if (key !== this.cacheKey) {
       this.cacheKey = key;
+      // Chat citations: recomputed as nodes and links arrive, so they survive incoming events.
+      this.cited = citedSets(this.citeIds, snap);
+      this.syncCiteHalos();
       this.rings = ringsFrom(focus, snap);
       // Lens analogs shown by default: categories, plus the focus's and selection's neighbourhoods.
       this.ghostSet = new Set(neighborhood(focus, snap));
@@ -567,7 +579,11 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       st.mesh.position.set(x, r, z);
       st.mesh.scale.setScalar(r);
       st.r = r;
-      const dimmed = this.bright && !this.bright.has(id);
+      const isCited = !!(this.cited && this.cited.nodes.has(id));
+      if (isCited !== !!st.citedOn) { st.citedOn = isCited; this.restyle(id); }
+      // Cite wins on its nodes: a cited node is never dimmed, even by a search highlight.
+      // Elsewhere an active search highlight decides; with no search, a citation dims the rest.
+      const dimmed = !isCited && (this.bright ? !this.bright.has(id) : !!this.cited);
       const op = dimmed ? Math.min(st.base, dim) : st.base;
       if (op !== st.lastOp) {
         st.lastOp = op;
@@ -579,12 +595,12 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       }
       // Label is a child of the mesh, so its offset is in unit-sphere space.
       st.label.position.set(0, 1.6, 0);
-      st.wantLabel = labelVisible(n, {
+      st.wantLabel = isCited || labelVisible(n, {
         k: zoomK, focus, hovered: this.hoveredId, rings: this.rings, rule: tk.LABEL_RULE,
       });
       // Declutter: the hovered and focused labels always show; others only if placeLabels gave them room.
       st.label.visible = st.wantLabel &&
-        (id === this.hoveredId || id === focus || !this.labelRoom || this.labelRoom.has(id));
+        (isCited || id === this.hoveredId || id === focus || !this.labelRoom || this.labelRoom.has(id));
       if (st.ghost) {
         const hovered = id === this.hoveredId;
         // Shown by default only when placeLabels gave the node's combined box room.
@@ -628,7 +644,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     }
     tp.needsUpdate = true;
     this.treeGeo.setDrawRange(0, seg * 2);
-    this.treeMat.opacity = this.bright ? 0.55 * dim : 0.55;
+    this.treeMat.opacity = this.bright || this.cited ? 0.55 * dim : 0.55;
 
     // Arcs: endpoints at sphere centers; rewrite points in place only when an end moved.
     for (const arc of this.arcs.values()) {
@@ -653,7 +669,10 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
         else count = Math.max(2, Math.ceil((ARC_POINTS + 1) * easeOutCubic(Math.max(0, t))));
       }
       arc.line.geometry.setDrawRange(0, count);
-      const op = this.bright && !(this.bright.has(arc.edge.from) && this.bright.has(arc.edge.to)) ? dim : 0.85;
+      const citedArc = !!(this.cited && this.cited.edges.has(arc.edge.id));
+      const op = citedArc ? 1
+        : this.bright ? (this.bright.has(arc.edge.from) && this.bright.has(arc.edge.to) ? 0.85 : dim)
+        : this.cited ? dim : 0.85;
       if (op !== arc.lastOp) { arc.lastOp = op; arc.line.material.opacity = op; }
     }
 
@@ -668,14 +687,45 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       h.mesh.material.opacity = 0.25 + 0.5 * (1 - pulse);
     }
 
-    // Camera glide toward the focus node, keeping the view angle (camera moves by the target's offset).
+    // Cited nodes: a steady glow ring, breathing slowly (job halos pulse faster).
+    const breathe = 0.5 + 0.5 * Math.sin(now / 700);
+    for (const [nid, mesh] of this.citeHalos) {
+      const st = this.nodes.get(nid);
+      mesh.visible = !!(st && st.vis);
+      if (!mesh.visible) continue;
+      mesh.position.set(st.mesh.position.x, 0.7, st.mesh.position.z);
+      mesh.scale.setScalar(st.r * (1.15 + 0.1 * breathe));
+      mesh.material.opacity = 0.55 + 0.3 * breathe;
+    }
+
+    // Once per cite() call: if every cited node is off-screen, ease the camera to their centroid.
+    if (this.citePending && this.cited) {
+      const pts = [], ndc = [];
+      for (const nid of this.cited.nodes) {
+        const st = this.nodes.get(nid);
+        if (!st || !st.vis) continue;
+        pts.push(/** @type {[number, number, number]} */ ([st.mesh.position.x, st.mesh.position.y, st.mesh.position.z]));
+        const q = st.mesh.position.clone().project(this.camera);
+        ndc.push({ x: q.x, y: q.y, z: q.z });
+      }
+      if (pts.length) {
+        this.citePending = false;
+        const c = centroid(pts);
+        if (c && allOffscreen(ndc)) {
+          this.glide = { id: null, point: new THREE.Vector3(c[0], c[1], c[2]), from: this.controls.target.clone(), start: now };
+        }
+      }
+    }
+
+    // Camera glide toward the focus node (or a cited centroid), keeping the view angle (camera moves by the target's offset).
     if (this.glide) {
       const g = this.glide;
-      const st = this.nodes.get(g.id);
-      if (!st || !st.vis) this.glide = null;
+      const st = g.id ? this.nodes.get(g.id) : null;
+      const dest = g.point || (st && st.vis ? st.mesh.position : null);
+      if (!dest) this.glide = null;
       else {
         const t = Math.min(1, (now - g.start) / tk.MOTION.focusMs);
-        const next = g.from.clone().lerp(st.mesh.position, easeInOut(t));
+        const next = g.from.clone().lerp(dest, easeInOut(t));
         const delta = next.clone().sub(this.controls.target);
         this.camera.position.add(delta);
         this.controls.target.copy(next);
@@ -760,6 +810,33 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
   }
   setFilter(f) { this.filter = f; }
   /** @param {string[]} ids */
+  /** Chat citations: exactly these nodes and the links between them stay bright, their labels
+   * always show, everything else dims. null or [] clears. Independent of highlight() (search).
+   * @param {string[]|null} ids */
+  cite(ids) {
+    this.citeIds = ids && ids.length ? [...ids] : null;
+    this.citeKey = (this.citeKey || 0) + 1;
+    this.citePending = !!this.citeIds;
+  }
+
+  /** Keep one glow ring per cited node. */
+  syncCiteHalos() {
+    const want = this.cited ? this.cited.nodes : new Set();
+    for (const [nid, mesh] of this.citeHalos) {
+      if (want.has(nid)) continue;
+      this.scene.remove(mesh); mesh.material.dispose(); this.citeHalos.delete(nid);
+    }
+    for (const nid of want) {
+      if (this.citeHalos.has(nid)) continue;
+      const mat = new THREE.MeshBasicMaterial({ color: 0xf2b84b, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(this.haloGeo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.citeHalos.set(nid, mesh);
+    }
+  }
+
   highlight(ids) {
     this.highlighted = ids || [];
     this.hlKey = (this.hlKey || 0) + 1;
@@ -786,6 +863,8 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     }
     this.arcs.clear();
     for (const id of [...this.halos.keys()]) this.removeHalo(id);
+    for (const mesh of this.citeHalos.values()) { this.scene.remove(mesh); mesh.material.dispose(); }
+    this.citeHalos.clear();
     this.haloGeo.dispose();
     this.srcGeo.dispose();
     this.srcMat.dispose();
