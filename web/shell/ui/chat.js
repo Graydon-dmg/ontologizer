@@ -270,12 +270,17 @@ export function mountChat(el, shell) {
   paint();
 }
 
-/** The top-bar "Chat" button: toggles the Chat pane. @param {HTMLElement} el @param {any} shell */
+const BUBBLE = '<svg class="chat-btn-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">'
+  + '<path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5H2.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+
+/** The top-bar "Ask the map" button, right of Search: toggles the Chat pane. @param {HTMLElement} el @param {any} shell */
 export function mountChatButton(el, shell) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'chat-btn';
-  b.textContent = 'Chat';
+  // "Ask" at narrow widths (CSS picks the label); the accessible name is always the full one
+  b.innerHTML = `${BUBBLE}<span class="chat-btn-long">Ask the map</span><span class="chat-btn-short" aria-hidden="true">Ask</span>`;
+  b.setAttribute('aria-label', 'Ask the map');
   b.setAttribute('aria-controls', 'chat');
   b.setAttribute('aria-pressed', 'false');
   b.addEventListener('click', () => shell.side.toggle('chat'));
