@@ -147,3 +147,32 @@ test('fuse with a third map is refused with the contract message, before any key
   assert.match(msg, /Unknown argument/);
   assert.notEqual(msg, 'fuse takes two maps; fuse the result again to add a third');
 });
+
+test('an unknown flag exits 1 before the command runs (no server); --port serves on that port', async () => {
+  const home = tempHome();
+  seeded(home);
+  const bad = await run(home, ['load', 'plastic-modeling', '--bogus', '1', '--no-open', '--exit-after', '50']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.stderr, /Unknown argument: bogus/);
+  // Planted fault: the old behaviour printed the error AND served the map.
+  assert.doesNotMatch(bad.stdout, /Serving/);
+
+  const net = await import('node:net');
+  const port = await new Promise((resolve) => {
+    const s = net.createServer().listen(0, '127.0.0.1', () => { const p = /** @type {any} */ (s.address()).port; s.close(() => resolve(p)); });
+  });
+  const ok = await run(home, ['load', 'plastic-modeling', '--port', String(port), '--no-open', '--exit-after', '50']);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.match(ok.stdout, new RegExp(`http://127\\.0\\.0\\.1:${port}/`));
+
+  const blocker = net.createServer().listen(port, '127.0.0.1');
+  await new Promise((r) => blocker.once('listening', r));
+  const busy = await run(home, ['load', 'plastic-modeling', '--port', String(port), '--no-open', '--exit-after', '50']);
+  blocker.close();
+  assert.equal(busy.code, 1);
+  assert.match(busy.stderr, /already in use/);
+  for (const p of ['80', '70000', 'abc', '1.5']) {
+    const r = await run(home, ['load', 'plastic-modeling', '--port', p, '--no-open', '--exit-after', '50']);
+    assert.equal(r.code, 1, p);
+  }
+});
