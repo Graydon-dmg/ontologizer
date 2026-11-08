@@ -53,7 +53,7 @@ ontologizer new
   - [ ] `Research (in context)`: a job appears in the jobs panel, and new child nodes appear under that node.
   - [ ] `Research (general)`: same as above, with children that are broader rather than tied to your brief.
   - [ ] `Explain` on a node with no article: the **explain panel** opens at once with the node's summary and "Writing an explanation…", then the article replaces it. Afterwards the same node's menu says `Read explanation`, which reopens it.
-  - [ ] The panel's own **Write an explanation** button (opened on a node with no article, e.g. from `Read explanation` on another node, then picking a node without one) writes the article in place.
+  - [ ] **See also → Write an explanation:** in an open article, click a `See also` link. The panel switches to that node and the map focuses it, beside the panel rather than behind it. If that node has no article, the panel shows a **Write an explanation** button. Click it: "Writing an explanation…", then the article. (After a failed or unanswered Explain, the same button reads **Try again**.)
   - [ ] `Sources`: a job appears, then sources (links) show up for the node, in the explain panel or wherever the shell shows them.
   - [ ] `Expand` / `Collapse`: as in step 1.
   - [ ] No item silently does nothing. If one fails, an error is shown in the page or jobs panel rather than nothing happening.
