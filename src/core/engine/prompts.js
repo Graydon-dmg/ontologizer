@@ -128,17 +128,24 @@ Already under ${node}: ${existing.length ? existing.join(', ') : '(nothing yet)'
 }
 
 /**
- * Research in general: only the node's own label, no brief. Deliberately broad.
- * @param {string} label @param {string[]} existing
+ * Research in general: a broader ANGLE on the same subject, not a broader subject. It carries the
+ * map's subject and the node's label path (so an ambiguous label is read through its parents), but
+ * not the reader's purpose or level, and asks for the encyclopedic picture rather than practical steps.
+ * @param {string} subject @param {string[]} labelPath  root first, the researched node last
+ * @param {string[]} existing
  */
-export function researchGeneralPrompt(label, existing) {
+export function researchGeneralPrompt(subject, labelPath, existing) {
+  const node = labelPath[labelPath.length - 1];
   const system = `${MAPPER}
-Task: a reader has met a term and wants the general picture across every field it belongs to, not just one hobby or niche. List 4 to 8 concepts that sit directly under the term in general, as an encyclopedia or textbook would organise it. Do not repeat what is already listed.
+Task: give the general, reference-book picture of one node of a map, for any curious reader rather than one reader's goal. Stay strictly inside the map's subject: the node means what it means under its parents in that subject, and nothing else (if the label could mean something in another field, ignore that field).
+Organise it the way a specialist reference would: kinds and classifications, how it works, history and origins, standards, notable makers or figures, debates. Avoid practical how-to steps, shopping advice and beginner tips.
+List 4 to 8 concepts that belong directly under the node. Do not repeat what is already listed.
 ${LINES}
 Each line: {"label":"…","summary":"…","hook":"…"}
-Example line: {"label":"Epoxies","summary":"Two-part resins that cure into strong, rigid bonds.","hook":"Aircraft are held together with them in places once riveted."}`;
-  const prompt = `The term: ${label}
-Already listed: ${existing.length ? existing.join(', ') : '(nothing yet)'}`;
+Example line: {"label":"Solvent Welding","summary":"Joining plastics by dissolving both surfaces so they fuse as the solvent evaporates.","hook":"The same chemistry joins PVC water pipes."}`;
+  const prompt = `The map's subject: ${subject}
+The node, as a path in the map: ${labelPath.join(' > ')}
+Already under ${node}: ${existing.length ? existing.join(', ') : '(nothing yet)'}`;
   return { system, prompt };
 }
 
@@ -158,10 +165,12 @@ Explain this node: ${labelPath.join(' > ')}`;
 /** Sources: find good references with web search. @param {any} brief @param {string[]} labelPath */
 export function sourcesPrompt(brief, labelPath) {
   const system = `You find the best sources on one node of a topic map, for the reader described in the brief.
-Search the web (at most 3 searches). Choose 3 to 6 sources that are reliable and useful for this reader: guides, references, respected publications. No shops, no spam.
+Search the web (at most 3 searches). Choose 3 to 6 sources, at most one per website.
+Prefer primary, authoritative and community sources: manufacturers and makers, specialist magazines and publications, well-known enthusiast forums and wikis, academic, museum, standards and official pages, and Wikipedia.
+Never choose marketplaces or shops (Amazon, eBay, Alibaba, AliExpress, Temu, Etsy), listicle and tips farms, content farms, SEO pages, Pinterest, or Q&A aggregators.
 ${LINES}
 Each line: {"title":"…","url":"<a URL that appeared in your search results>"}
-Example line: {"title":"Choosing Plastic Cement","url":"https://example.org/plastic-cement"}`;
+Example line: {"title":"Plastic cement (Wikipedia)","url":"https://en.wikipedia.org/wiki/Plastic_cement"}`;
   const prompt = `${briefText(brief)}
 
 Find sources for: ${labelPath.join(' > ')}`;

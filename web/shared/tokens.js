@@ -104,3 +104,14 @@ export const THEME = {
   dark: { bg: '#0f1115', fg: '#e6e8ee', muted: '#8b92a3', panel: '#181b22' },
   light: { bg: '#fafafc', fg: '#1b1e26', muted: '#667085', panel: '#ffffff' },
 };
+
+/**
+ * Brand colors from the logo (web/shared/brand/). `nodes` are the 8 symbol dots in clockwise
+ * order from the top, exactly as in the SVGs; `core` is the centre dot per theme; `spoke` is the
+ * line color. For the CLI, the shell and anything that should look like the logo.
+ */
+export const BRAND = Object.freeze({
+  nodes: Object.freeze(['#36a9cf', '#249eaa', '#f2b21c', '#f2a23b', '#e98756', '#d98287', '#e88368', '#648ec5']),
+  core: Object.freeze({ light: '#171b22', dark: '#f4f6fa' }),
+  spoke: '#a6abb2',
+});
