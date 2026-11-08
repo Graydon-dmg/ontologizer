@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Licence changed from Apache-2.0 to MIT.
+
 ## 1.0.0 (2026-11-08)
 
 First release.
