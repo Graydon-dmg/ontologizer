@@ -5,11 +5,12 @@ import { basename, join } from 'node:path';
 
 // Required in the published tarball.
 // No "skip if missing" logic on purpose: a skip would hide a missing file at publish time.
-export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json', 'fixtures/demo.events.jsonl'];
+export const REQUIRED = ['src/cli/index.js', 'web/index.html', 'web/shared/importmap.json', 'fixtures/demo.events.jsonl',
+  'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md'];
 
 // Everything packed must be one of these files or live under one of these folders.
 // Keeps stray folders (.playwright-mcp/, docs/, .claude/) out even if `files` grows by mistake.
-export const ALLOWED_FILES = ['package.json', 'README.md', 'LICENSE'];
+export const ALLOWED_FILES = ['package.json', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md'];
 
 // Folders that must ship with at least one file in them (the brand assets the page and favicon use).
 export const REQUIRED_DIRS = ['web/shared/brand/'];
@@ -36,7 +37,7 @@ export function auditPack(dir, files, required, requiredDirs = []) {
     if (base === '.env' || base.startsWith('.env.')) problems.push(`env file packed: ${f}`);
     if (f.startsWith('test/')) problems.push(`test file packed: ${f}`);
     if (f.startsWith('web/dev/')) problems.push(`dev harness packed: ${f}`);
-    if (f.endsWith('.md') && f !== 'README.md') problems.push(`internal doc packed: ${f}`);
+    if (f.endsWith('.md') && !ALLOWED_FILES.includes(f)) problems.push(`internal doc packed: ${f}`);
     if (!ALLOWED_FILES.includes(f) && !ALLOWED_DIRS.some((d) => f.startsWith(d))) problems.push(`unexpected file packed: ${f}`);
     if (KEY_SHAPE.test(readFileSync(join(dir, f), 'utf8'))) problems.push(`API key pattern (sk-ant-) found in: ${f}`);
   }
@@ -46,4 +47,13 @@ export function auditPack(dir, files, required, requiredDirs = []) {
 /** @param {string} text @returns {string | null} problem, or null if OK */
 export function checkShebang(text) {
   return text.startsWith('#!/usr/bin/env node') ? null : 'missing "#!/usr/bin/env node" shebang';
+}
+
+/** The package is Apache-2.0: the license field and the LICENSE text must agree. @param {any} pkg @param {string} licenseText @returns {string[]} */
+export function checkLicense(pkg, licenseText) {
+  const problems = [];
+  if (pkg.license !== 'Apache-2.0') problems.push(`package.json license is ${JSON.stringify(pkg.license)}, not "Apache-2.0"`);
+  // The canonical Apache text starts with a blank line and indentation.
+  if (!licenseText.trimStart().startsWith('Apache License')) problems.push('LICENSE does not start with "Apache License"');
+  return problems;
 }
