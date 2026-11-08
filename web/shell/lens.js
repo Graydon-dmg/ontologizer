@@ -93,3 +93,23 @@ export function createLensRequests({ act, snapshot, select, notice = () => {} })
     onEvent(event) { if (event && event.t === 'lens.added' && waiting.length) trySelect(); },
   };
 }
+
+/** The Rosetta dropdown's value for "New lens…". */
+export const NEW_LENS = '__new__';
+
+/** Rosetta options: None, every lens, then "New lens…". @param {Ontology} ontology */
+export function lensMenuOptions(ontology) {
+  return [
+    ...lensOptions(ontology).map((x) => ({ value: x.value ?? 'none', label: x.label })),
+    { value: NEW_LENS, label: 'New lens…' },
+  ];
+}
+
+/**
+ * A pick in the Rosetta dropdown: "New lens…" opens the popover; anything else is a lens choice.
+ * @param {string} value @param {{ choose: (v: string) => void, openNew: () => void }} on
+ */
+export function pickLens(value, on) {
+  if (value === NEW_LENS) on.openNew();
+  else on.choose(value);
+}

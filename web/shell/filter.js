@@ -24,3 +24,9 @@ export function sendFilter(shell, value) {
   if (v && typeof v.setFilter === 'function') v.setFilter(value);
   return shell.act({ type: 'filter', value });
 }
+
+/** The Depth dropdown's options ('' = any depth). */
+export const DEPTH_OPTIONS = [
+  { value: '', label: 'Any' }, { value: '1', label: '1' }, { value: '2', label: '2' },
+  { value: '3', label: '3' }, { value: '4', label: '4' },
+];

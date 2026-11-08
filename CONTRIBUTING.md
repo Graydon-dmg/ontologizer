@@ -2,6 +2,8 @@
 
 Thanks for helping. Pull requests are welcome. In the description, say what changed and how you checked it.
 
+**Licence of contributions.** Ontologizer is licensed under [Apache-2.0](LICENSE). Anything you submit is licensed under the same terms (Apache-2.0, section 5: inbound = outbound). There is no CLA to sign. The Ontologizer name and logo are trademarks, not covered by the code licence; see [TRADEMARKS.md](TRADEMARKS.md).
+
 ## Set up
 
 You need Node 22 or newer.

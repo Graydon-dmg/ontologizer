@@ -20,7 +20,7 @@ Follow these steps in order. Do not skip ahead.
    ontologizer doctor
    ```
 
-   Run it on its own, not piped into `head` or similar (its output is only a few lines). Each row starts with `ok`, `warn` or `fail`; problems add a `fix:` line. Example output:
+   Its output is only a few lines; piping it (for example `ontologizer doctor | head`) is safe. Each row starts with `ok`, `warn` or `fail`; problems add a `fix:` line. Example output:
 
    ```
    ok   Node 26.0.0

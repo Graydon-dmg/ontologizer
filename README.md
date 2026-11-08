@@ -93,4 +93,4 @@ See [SECURITY.md](https://github.com/Graydon-dmg/ontologizer/blob/main/SECURITY.
 
 ## Licence
 
-MIT, see [LICENSE](https://github.com/Graydon-dmg/ontologizer/blob/main/LICENSE). Contributions welcome: see [CONTRIBUTING.md](https://github.com/Graydon-dmg/ontologizer/blob/main/CONTRIBUTING.md).
+Apache-2.0: see [LICENSE](https://github.com/Graydon-dmg/ontologizer/blob/main/LICENSE) and [NOTICE](https://github.com/Graydon-dmg/ontologizer/blob/main/NOTICE). The Ontologizer name and logo are trademarks; see [TRADEMARKS.md](https://github.com/Graydon-dmg/ontologizer/blob/main/TRADEMARKS.md). Third-party licences are listed in [THIRD_PARTY_NOTICES.md](https://github.com/Graydon-dmg/ontologizer/blob/main/THIRD_PARTY_NOTICES.md). Contributions welcome: see [CONTRIBUTING.md](https://github.com/Graydon-dmg/ontologizer/blob/main/CONTRIBUTING.md).
