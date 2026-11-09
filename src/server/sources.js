@@ -133,39 +133,83 @@ async function defaultConnect(entry, headers) {
 
 /**
  * @param {SourceEntry[]} entries
- * @param {{ connect?: (entry: SourceEntry, headers: Record<string, string>) => Promise<any>, log?: (line: string) => void, timeoutMs?: number }} [opts]
+ * @param {{ connect?: (entry: SourceEntry, headers: Record<string, string>) => Promise<any>, log?: (line: string) => void, timeoutMs?: number, maxClients?: number }} [opts]
  */
-export function createSources(entries, { connect = defaultConnect, log = () => {}, timeoutMs = 10000 } = {}) {
-  /** @type {Map<string, Promise<any>>} */
+export function createSources(entries, { connect = defaultConnect, log = () => {}, timeoutMs = 10000, maxClients = 32 } = {}) {
+  /** @typedef {{ key: string, promise: Promise<any>, refs: number, used: number, forgotten: boolean, closed: boolean }} Rec */
+  /** The cache, by (source, headers). @type {Map<string, Rec>} */
   const clients = new Map();
+  /** Every client not yet closed, including forgotten ones still in use. @type {Set<Rec>} */
+  const live = new Set();
+  let tick = 0;
+
+  /** @param {Rec} rec */
+  async function closeRec(rec) {
+    if (rec.closed) return;
+    rec.closed = true;
+    live.delete(rec);
+    try { await (await rec.promise).close?.(); } catch { /* already gone */ }
+  }
+
+  /** Remove from the cache; close now only when nothing is using it. @param {Rec} rec */
+  function forgetRec(rec) {
+    if (clients.get(rec.key) === rec) clients.delete(rec.key);
+    rec.forgotten = true;
+    if (rec.refs === 0) void closeRec(rec);
+  }
+
+  /** Close least recently used idle clients while over the cap. */
+  function trim() {
+    while (clients.size > maxClients) {
+      /** @type {Rec|undefined} */ let lru;
+      for (const rec of clients.values()) if (rec.refs === 0 && (!lru || rec.used < lru.used)) lru = rec;
+      if (!lru) return; // all in use: over the cap for now
+      forgetRec(lru);
+    }
+  }
+
   /** Forget a cached client (a stdio child that exited, a dropped connection): the next call reconnects. @param {SourceEntry} entry @param {any} principal */
   function forget(entry, principal) {
     let headers;
     try { headers = entry.headers?.(principal) ?? {}; } catch { return; }
-    const key = `${entry.name}${JSON.stringify(headers)}`;
-    const p = clients.get(key);
-    clients.delete(key);
-    p?.then((c) => c.close?.()).catch(() => {});
+    const rec = clients.get(`${entry.name}${JSON.stringify(headers)}`);
+    if (rec) forgetRec(rec);
   }
 
-  /** @param {SourceEntry} entry @param {any} principal */
-  function clientFor(entry, principal) {
+  /** Take a reference on the client for this source and principal. @param {SourceEntry} entry @param {any} principal */
+  async function acquire(entry, principal) {
     const headers = entry.headers?.(principal) ?? {}; // a throwing headers function propagates: unreachable
     const key = `${entry.name}${JSON.stringify(headers)}`;
-    let p = clients.get(key);
-    if (!p) {
-      p = withTimeout(connect(entry, headers), timeoutMs, 'connect');
-      clients.set(key, p);
-      p.catch(() => { if (clients.get(key) === p) clients.delete(key); });
+    let rec = clients.get(key);
+    if (!rec) {
+      /** @type {Rec} */
+      const fresh = { key, promise: withTimeout(connect(entry, headers), timeoutMs, 'connect'), refs: 0, used: 0, forgotten: false, closed: false };
+      rec = fresh;
+      clients.set(key, fresh);
+      live.add(fresh);
+      fresh.promise.catch(() => { if (clients.get(key) === fresh) clients.delete(key); live.delete(fresh); });
     }
-    return p;
+    const held = rec;
+    held.refs++;
+    held.used = ++tick;
+    trim();
+    let done = false;
+    const release = () => {
+      if (done) return;
+      done = true;
+      held.refs--;
+      if (held.refs === 0) { if (held.forgotten) void closeRec(held); else trim(); }
+    };
+    try { return { client: await held.promise, rec: held, release }; } catch (err) { release(); throw err; }
   }
 
   /** @param {SourceEntry} entry @param {any} principal */
   async function listTools(entry, principal) {
-    const client = await clientFor(entry, principal);
-    const res = await withTimeout(client.listTools(), timeoutMs, 'listTools');
-    return /** @type {any[]} */ (res?.tools ?? []);
+    const h = await acquire(entry, principal);
+    try {
+      const res = await withTimeout(h.client.listTools(), timeoutMs, 'listTools');
+      return /** @type {any[]} */ (res?.tools ?? []);
+    } finally { h.release(); }
   }
 
   return {
@@ -214,22 +258,28 @@ export function createSources(entries, { connect = defaultConnect, log = () => {
           if (!hit) return { isError: true, text: 'That tool is not offered.', source: String(name).split(SEP)[0], visibility: 'public', refs: [] };
           const { entry, tool } = hit;
           const base = { source: entry.name, visibility: entry.visibility };
+          /** @type {Awaited<ReturnType<typeof acquire>>|undefined} */
+          let h;
+          const priv = entry.visibility === 'private';
+          const hidden = { ...base, isError: true, text: `The source ${entry.name} returned an error.`, refs: [] };
           try {
-            const client = await clientFor(entry, principal);
-            const res = await withTimeout(client.callTool({ name: tool, arguments: input ?? {} }), CALL_TIMEOUT_MS, 'callTool');
+            h = await acquire(entry, principal);
+            const res = await withTimeout(h.client.callTool({ name: tool, arguments: input ?? {} }), CALL_TIMEOUT_MS, 'callTool');
+            if (priv && res?.isError === true) return hidden;
             return { ...base, isError: res?.isError === true, text: resultText(res), refs: refsFrom(entry.name, res) };
           } catch (err) {
-            forget(entry, principal);
+            if (h) forgetRec(h.rec);
+            if (priv) { log(`source ${entry.name} call failed: ${msg(err)}`); return hidden; }
             return { ...base, isError: true, text: `The ${entry.name} source failed: ${msg(err)}`, refs: [] };
-          }
+          } finally { h?.release(); }
         },
       };
     },
 
     async close() {
-      const all = [...clients.values()];
+      const all = [...live];
       clients.clear();
-      await Promise.all(all.map(async (p) => { try { await (await p).close(); } catch { /* already gone */ } }));
+      await Promise.all(all.map((rec) => closeRec(rec)));
     },
   };
 }
