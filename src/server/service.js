@@ -16,6 +16,11 @@ import { defaultPolicy, actionFor, ACTION_SCOPE } from './policy.js';
 import { createSources, heldSources } from './sources.js';
 import { portNames } from './config.js';
 import { slug } from '../core/engine/ids.js';
+import { openApi } from '../ops.js';
+import { outline, buildIndex, runTool } from '../core/engine/chat.js';
+import { exportMap } from '../core/export/index.js';
+import { handleMcpHttp, loopbackCaller } from './mcp.js';
+import { createUsage } from './usage.js';
 
 export const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 export const COOKIE = 'ontologizer_session';
@@ -38,6 +43,8 @@ const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
 const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
 const SAVING = 'The map is being saved under a new name: open it by its new name.';
+const BUILD_TIMEOUT_MS = 15 * 60 * 1000; // --build-timeout's default (15 minutes)
+const EXPORT_FORMATS = ['json', 'context', 'html', 'embed'];
 
 /** A --host that is loopback. @param {string} host */
 export const isLoopback = (host) => LOOPBACK.includes(String(host).replace(/^\[|\]$/g, ''));
@@ -87,7 +94,8 @@ function refusal(message) {
  *   idleMs?: number, pingMs?: number,
  *   makeEngine: (o: { store: any, id: string, tenant: string, clientFor?: any }) => Promise<any>,
  *   version?: string, webDir?: string, log?: (line: string) => void,
- *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null }} opts
+ *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null,
+ *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any }} opts
  *   tokensFile: the tokens to load; null (or no rows) means none: loopback only, open, no --allow-host.
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
  *   maxBuilds: builds running at once. maxQueued: builds waiting per tenant (more: 429).
@@ -97,12 +105,25 @@ function refusal(message) {
  *   config's model port, when it has one.
  *   config: the loaded ontologizer.config.js (or null: exactly I1). configPath: shown to admins.
  *   sources: a createSources() instance (tests inject one); default: made from config.sources.
+ *   limitCalls, limitTokens: per tenant per UTC day (null: no limit); counted in <home>/usage.json.
+ *   buildTimeoutMs: a build running longer is aborted and marked failed, and its slot freed.
+ *   usage: a createUsage() instance (tests inject one); default: made from home and the limits.
+ *   makeEngine also gets `meter`: wrap every model client of that engine with it (usage counting, the
+ *   daily limits, and the build timeout's abort all live in the wrapper).
  */
 export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
   maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
+  limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null,
 }) {
+  // Model calls and tokens per tenant per UTC day, from the SDK's usage fields (never dollars).
+  const usage = givenUsage ?? createUsage({ home, limitCalls, limitTokens, log });
+  /**
+   * Each engine's abort, by tenant/id: a build timeout aborts every model call of that engine (in flight
+   * and later ones) and drops the engine, so the next request gets a fresh one. @type {Map<string, AbortController>}
+   */
+  const aborts = new Map();
   // ---- ports: each one is the config's, or I1's own behaviour ----
   const identity = config?.identity ?? null;
   const policy = config?.policy ?? defaultPolicy;
@@ -288,7 +309,11 @@ export async function startService({
     lastUsed.set(key, Date.now());
     let e = engines.get(key);
     if (!e) {
-      e = makeEngine({ store: storeFor(tenant, true), id, tenant, ...(config?.model ? { clientFor: config.model } : {}) });
+      // Every model client this engine gets is metered (usage, limits) and abortable (build timeout).
+      const ctl = new AbortController();
+      aborts.set(key, ctl);
+      const meter = (/** @type {any} */ client) => usage.wrap(client, { tenant, signal: () => ctl.signal });
+      e = makeEngine({ store: storeFor(tenant, true), id, tenant, meter, ...(config?.model ? { clientFor: config.model } : {}) });
       e.catch(() => engines.delete(key));
       engines.set(key, e);
     }
@@ -350,6 +375,7 @@ export async function startService({
     const h = handlers.get(key);
     handlers.delete(key);
     engines.delete(key);
+    aborts.delete(key);
     live.delete(key);
     lastUsed.delete(key);
     if (h) await (await h.catch(() => null))?.close();
@@ -393,14 +419,30 @@ export async function startService({
     builds.set(key, b);
     (async () => {
       await slot(tenant);
+      // A build past --build-timeout is aborted (its engine's model calls, through the meter's signal),
+      // marked failed and its slot freed at once, even if the engine never returns.
+      let expired = false;
+      /** @type {ReturnType<typeof setTimeout>|undefined} */
+      let timer;
       try {
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
         const engine = await engineFor(tenant, id);
         const principal = publicPrincipal(p, tenant);
         const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
+        const minutes = buildTimeoutMs / 60000;
+        const timedOut = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            expired = true;
+            aborts.get(key)?.abort();
+            reject(new Error(`Timed out after ${Number.isInteger(minutes) ? minutes : minutes.toFixed(2)} ${minutes === 1 ? 'minute' : 'minutes'}`));
+          }, Math.max(1, buildTimeoutMs));
+          timer.unref?.();
+        });
         // picked: the sources chosen in New map (the build is told to search them for every category).
-        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
+        const run = engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
+        Promise.resolve(run).catch(() => {}); // after a timeout its rejection is expected, never unhandled
+        await Promise.race([run, timedOut]);
         b.state = 'done';
       } catch (err) {
         b.state = 'failed';
@@ -409,7 +451,10 @@ export async function startService({
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
         try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error }, actor: p.actor }); } catch { /* gone */ }
+        // A timed-out engine is dropped: whatever it still does is no longer this map's build.
+        if (expired) drop(key).catch(() => {});
       } finally {
+        clearTimeout(timer);
         lastUsed.set(key, Date.now());
         release();
         try { Promise.resolve(storeFor(tenant, true).flush(id)).catch(() => {}); } catch { /* renamed or gone */ }
@@ -764,7 +809,21 @@ export async function startService({
         ...(sourceRows ? { sources: sourceRows } : {}),
       });
     }
+    // Usage: the same rule as status (your own tenant; any tenant only for an admin of tenant default).
+    if (rest.length === 1 && rest[0] === 'usage') {
+      if (!ownsTenant(p, tenant) && !(admin && p.tenant === 'default')) return fail(res, 404, 'not found');
+      if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
+      if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
+      return json(res, 200, usage.today(tenant));
+    }
     if (!ownsTenant(p, tenant)) return fail(res, 404, 'not found'); // never reveal another tenant's maps
+    /** Over the tenant's daily limit: 429 with Retry-After (the next UTC day), or false. */
+    const overLimit = () => {
+      const over = usage.over(tenant);
+      if (!over) return false;
+      fail(res, 429, over.error, { 'Retry-After': String(over.retryAfter) });
+      return true;
+    };
     /** @param {import('./policy.js').Action} action */
     const needs = (action) => `This token needs the ${ACTION_SCOPE[action] ?? action} scope.`;
 
@@ -808,6 +867,7 @@ export async function startService({
         if (notHeld.length) return fail(res, 400, `You do not hold the source "${String(notHeld[0]).slice(0, 40)}".`);
         const names = body.sources ? [...new Set(/** @type {string[]} */ (body.sources))] : [...p.sources];
         if (closing) return fail(res, 503, 'the server is stopping');
+        if (overLimit()) return;
         if (running >= Math.max(1, maxBuilds) && waiting(tenant) >= maxQueued) {
           return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
         }
@@ -842,6 +902,7 @@ export async function startService({
       if (!context || context.length > 4000) return fail(res, 400, 'context must be a non-empty string of at most 4000 characters');
       const answers = body.answers === undefined ? [] : body.answers;
       if (!Array.isArray(answers) || answers.length > 30) return fail(res, 400, 'answers must be a list');
+      if (overLimit()) return;
       if (checksRunning >= Math.max(1, maxChecks)) return fail(res, 429, 'Too many context checks at once: try again shortly.', { 'Retry-After': '5' });
       const key = `${tenant}/${CHECK_KEY}`;
       checksRunning++;
@@ -930,6 +991,45 @@ export async function startService({
         saving.delete(key);
       }
     }
+    // Read-only views of the map for agents and apps: text and JSON made from the folded map. They go
+    // through every check above (the read rule included), like the snapshot.
+    if (sub === 'outline' || sub === 'search' || sub === 'context' || sub === 'export' || rest[2] === 'nodes') {
+      if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
+      if (saving.has(key)) return fail(res, 409, SAVING);
+      if (sub === 'outline') return text(res, 'text/markdown', `# ${map.name || id}\n\n${outline(map)}\n`);
+      if (sub === 'search') {
+        const q = String(query.get('q') ?? '').trim();
+        if (!q || q.length > 500) return fail(res, 400, 'q must be non-empty, at most 500 characters');
+        const lim = Number.parseInt(query.get('limit') ?? '8', 10);
+        const k = Number.isInteger(lim) ? Math.min(50, Math.max(1, lim)) : 8;
+        return json(res, 200, { results: buildIndex(map).search(q, k) });
+      }
+      if (rest[2] === 'nodes') {
+        if (rest.length !== 4) return fail(res, 404, 'not found');
+        let nid = '';
+        try { nid = decodeURIComponent(rest[3]); } catch { return fail(res, 400, 'bad node id'); }
+        const r = runTool('get_node', { id: nid }, map, buildIndex(map), null);
+        return r.error ? json(res, 404, { ok: false, ...r.result }) : json(res, 200, r.result);
+      }
+      const format = sub === 'context' ? 'context' : String(query.get('format') ?? '');
+      if (!EXPORT_FORMATS.includes(format)) return fail(res, 400, `format must be one of ${EXPORT_FORMATS.join(', ')}`);
+      const b = Number.parseInt(query.get('budget') ?? '4000', 10);
+      if (!Number.isInteger(b) || b < 300 || b > 200000) return fail(res, 400, 'budget must be a whole number from 300 to 200000');
+      // A page or embed carries no chat and no unfinished jobs (I4); the bundle is the built one.
+      let bundle;
+      if (format === 'html' || format === 'embed') {
+        const three = query.get('threeD') === 'true';
+        try { bundle = fs.readFileSync(path.join(webRoot, 'dist', three ? 'embed-3d.js' : 'embed.js'), 'utf8'); } catch {
+          return fail(res, 503, 'The embed bundle is missing: run `npm run build` in the ontologizer folder.');
+        }
+      }
+      let out;
+      try { out = exportMap(map, { format: /** @type {any} */ (format), bundle, budget: b }); } catch (err) {
+        return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err));
+      }
+      if (format === 'json') return text(res, 'application/json', out);
+      return text(res, format === 'context' ? 'text/markdown' : 'text/html', out, format === 'context' ? {} : { 'Content-Disposition': `attachment; filename="${id}.${format === 'html' ? 'html' : 'embed.html'}"` });
+    }
     // The map's own routes: today's /api/* under its base, and their /v1 names.
     /** @type {Record<string, string>} */
     const alias = { snapshot: '/api/snapshot', events: '/api/events', actions: '/api/action', chat: '/api/chat' };
@@ -962,6 +1062,8 @@ export async function startService({
           const row = store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other);
           return row ? can(p, 'read', { tenant, mapId: other, map: visibilityOf(tenant, other, row) }) : false;
         },
+        // The tenant's daily limit: a model-calling action or a chat answers 429 when it is reached.
+        limit: () => usage.over(tenant),
         // Whether a map is private (fuse keeps a private map's id out of another map's log).
         isPrivate: (/** @type {string} */ other) => visibilityOf(tenant, other, store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other)).visibility === 'private',
       });
@@ -969,6 +1071,41 @@ export async function startService({
       if (handled) return;
     }
     return fail(res, 404, 'not found');
+  }
+
+  /**
+   * A text response (outline, context pack, exports). @param {http.ServerResponse} res @param {string} type
+   * @param {string} body @param {Record<string, string>} [headers]
+   */
+  function text(res, type, body, headers = {}) {
+    res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
+    res.end(body);
+  }
+
+  /**
+   * /v1/mcp: MCP over streamable HTTP. The caller is checked as on every /v1/t/ route (401, then a
+   * foreign Origin 403); then each tool call becomes an HTTP request to this same router carrying the
+   * caller's own headers, so every check (tenant, scope, read rule, limits) applies to it unchanged.
+   * @param {http.IncomingMessage} req @param {http.ServerResponse} res @param {string} method
+   */
+  async function mcpRoute(req, res, method) {
+    const p = await authenticate(req);
+    if (p === null || p === 'bad') return fail(res, 401, p === null ? 'Sign in with a token.' : 'That token was not accepted.', { 'WWW-Authenticate': 'Bearer' });
+    if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req)
+      : req.headers.origin !== undefined && !originMatches(req))) {
+      return fail(res, 403, 'forbidden origin');
+    }
+    // Stateless: no sessions to resume, no server-initiated stream.
+    if (method !== 'POST') return fail(res, 405, 'method not allowed', { Allow: 'POST' });
+    const viaProxy = allowedName(req.headers.host) && String(req.headers['x-forwarded-proto'] ?? '').toLowerCase() === 'https';
+    const call = loopbackCaller({ host: loopTarget(), port: boundPort, headers: req.headers });
+    return handleMcpHttp(req, res, { call, version, baseUrl: `${viaProxy ? 'https' : 'http'}://${req.headers.host}` });
+  }
+  /** Where this server answers on this machine (for MCP's internal requests). */
+  function loopTarget() {
+    if (host === '0.0.0.0' || host === 'localhost') return '127.0.0.1';
+    if (host === '::') return '::1';
+    return host.replace(/^\[|\]$/g, '');
   }
 
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res */
@@ -986,6 +1123,14 @@ export async function startService({
 
     if (rawPath.startsWith('/v1/t/')) return tenantRoute(req, res, rawPath, query);
     if (rawPath === '/v1/session') return session(req, res, method);
+    // The API's own description: made from src/ops.js, no secrets, no auth.
+    if (rawPath === '/v1/openapi.json') {
+      if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
+      return json(res, 200, openApi({ version }));
+    }
+    if (rawPath === '/v1/mcp') return mcpRoute(req, res, method);
+    // Health answers GET and HEAD only (every route has one op per method: src/ops.js).
+    if ((rawPath === '/v1/health/live' || rawPath === '/v1/health/ready') && method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
     if (rawPath === '/v1/health/live') return json(res, 200, { ok: true });
     if (rawPath === '/v1/health/ready') {
       // Not ready while any open store has failed (its tenant answers 503 until a restart).
@@ -1040,6 +1185,8 @@ export async function startService({
     tokensLoaded: authRequired,
     /** For tests: how many engines and handlers are held, and a sweep now. */
     stats: () => ({ engines: engines.size, handlers: handlers.size, sessions: sessions.size }),
+    /** The usage counters (for `serve` to flush on exit, and tests). */
+    usage,
     sweep,
     /** Stop accepting, end the streams and chats, flush the stores. */
     async close() {
@@ -1055,6 +1202,7 @@ export async function startService({
         try { await s.close?.(); } catch { /* best effort */ }
       }
       try { await srcs?.close(); } catch { /* best effort */ }
+      try { usage.flush(); } catch { /* best effort */ }
       server.closeAllConnections?.();
       await done;
     },

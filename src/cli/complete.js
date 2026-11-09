@@ -13,11 +13,13 @@ const FLAGS = {
   fuse: ['--into'],
   rosetta: ['--as', '--name'],
   research: ['--general'],
-  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open', '--config'],
+  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open', '--config', '--limit-calls', '--limit-tokens', '--build-timeout'],
   status: ['--home', '--json', '--config'],
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
   export: ['--format', '--3d', '--budget', '--out', '--live-url'],
+  mcp: ['--url', '--token-file', '--home'],
+  usage: ['--home', '--days', '--json'],
 };
 const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export']);
 // `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:
