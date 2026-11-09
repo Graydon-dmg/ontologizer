@@ -22,7 +22,7 @@ import { mountTips } from './ui/tips.js';
 import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
-import { createExplainRequests } from './explain.js';
+import { createExplainRequests, privateBadge } from './explain.js';
 import { TENANT, api } from './base.js';
 import { connBanner, stillSignedIn } from './conn.js';
 import { mountServerPanel } from './ui/server.js';
@@ -249,6 +249,10 @@ function publishInsets() {
   bus.on('side', schedule);
 }
 
+let badge = privateBadge(source.snapshot(), []);
+$('private-badge').hidden = !badge.show;
+$('private-badge').title = badge.title;
+
 // Subscribe before mounting the view, so the layout is always fed before any view sees an event.
 source.subscribe((event, ontology) => {
   try { feedLayout(layout, event); } catch (err) { console.error('[shell] feedLayout failed', err); }
@@ -258,6 +262,9 @@ source.subscribe((event, ontology) => {
   $('map-name').title = mapName; // the full name when it is truncated
   const title = mapName ? `${mapName} · Ontologizer` : 'Ontologizer';
   if (document.title !== title) document.title = title;
+  badge = privateBadge(ontology, [event], badge);
+  $('private-badge').hidden = !badge.show;
+  $('private-badge').title = badge.title;
   $('loading').hidden = true; // the first event ends the loading state
   if (event.t === 'view.changed' && event.patch && activeView) {
     // Apply only what this event changed, so a filter tweak does not re-run the focus animation.

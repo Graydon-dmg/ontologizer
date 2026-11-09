@@ -10,6 +10,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); o
   border-radius: 8px; box-sizing: border-box; pointer-events: auto; }
 #map-name { font-weight: 600; margin-right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   flex: 0 1 auto; min-width: 3rem; max-width: 10rem; }
+#private-badge { flex: 0 0 auto; font-size: 11px; font-weight: 600; line-height: 1; padding: 3px 6px; margin-right: 4px;
+  border: 1px solid var(--muted); border-radius: 999px; color: var(--muted); background: var(--panel); white-space: nowrap; }
+#private-badge[hidden] { display: none; }
 #filter { margin-left: auto; }
 #topbar > div { display: flex; align-items: center; gap: 4px; }
 /* compact ⓘ in the bar so everything fits one row from 1280px */

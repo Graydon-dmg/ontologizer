@@ -87,6 +87,21 @@ export function mountExplain(el, shell) {
       }
       el.appendChild(ul);
     }
+    if (m.refs.length) {
+      el.appendChild(mk('h3', 'From sources'));
+      const ul = mk('ul');
+      ul.id = 'node-sources';
+      for (const r of m.refs) {
+        const li = mk('li');
+        if (r.href) {
+          const link = /** @type {HTMLAnchorElement} */ (mk('a', r.text));
+          link.href = r.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          li.appendChild(link);
+        } else li.textContent = r.text;
+        ul.appendChild(li);
+      }
+      el.appendChild(ul);
+    }
     // The side panel decides which pane shows (Explain | Chat).
     el.hidden = !!shell.side && shell.side.active !== 'explain';
   }
@@ -99,7 +114,7 @@ export function mountExplain(el, shell) {
     const n = o.nodes[openId];
     const jobs = Object.values(o.jobs).filter((/** @type {any} */ j) => j.nodeId === openId).map((/** @type {any} */ j) => j.id + j.state).join(',');
     const q = shell.explainRequests && shell.explainRequests.get(openId);
-    return JSON.stringify([n && n.article, n && n.summary, jobs, o.view.lens, o.lenses, q && q.state, q && q.error]);
+    return JSON.stringify([n && n.article, n && n.summary, n && n.sources, jobs, o.view.lens, o.lenses, q && q.state, q && q.error]);
   }
 
   shell.on('explain', (/** @type {any} */ d) => { if (d && d.nodeId) open(d.nodeId); });
