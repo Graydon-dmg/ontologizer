@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 (2026-11-09)
+
+- **Service mode.** `ontologizer serve` runs one server for every map in a folder: on your laptop, a Linux host or in Docker. A maps home page lists your maps and has a **New map** button (it asks the same questions as `ontologizer new`, then opens the live map). Thanks to Alex Garden ([#2](https://github.com/Graydon-dmg/ontologizer/pull/2)).
+- **Access tokens.** `ontologizer token create / list / revoke` lets other people use your server. Each token has a level (read < ask < build < admin) and can be limited to its own space of maps (a tenant). Only a hash of each token is stored. Browsers sign in once and get a cookie, never the token.
+- **Server panel and status.** `ontologizer status` and a read-only **Server** panel show what is running and which tokens exist (names and levels only).
+- **Safe by default.** `serve` listens on this machine only. It refuses to listen on the network without tokens, warns that its traffic is plain HTTP (put an HTTPS proxy in front), and every page refuses to be framed by another site.
+- **Laptop use is unchanged.** `new`, `load` and the one-map page work as before.
+- **Layout polish.** The top bar fits on one row from 1280 px wide, "Ask the map" never shrinks to an icon, long map names truncate with a tooltip, labels stay on screen and off the panels, popovers stay inside the window, and clicking a link clears a citation highlight.
+
 ## 1.2.0 (2026-11-08)
 
 - **Ask the map.** A new **Ask the map** button opens a Chat pane. Ask in words or with images (paste, drop or add up to 4), and the answer cites the map's nodes (click one to see it) and lists web sources for anything the map lacks. It can suggest research, but never starts a job on its own.
