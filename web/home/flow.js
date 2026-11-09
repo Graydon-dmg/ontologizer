@@ -82,6 +82,29 @@ export function nextStep({ round, result, context }) {
  * @param {{ id: string, answer: string }[]} list @returns {{ id: string, answer: string }[]} */
 export const cleanAnswers = (list) => list.map((a) => ({ id: a.id, answer: String(a.answer ?? '').trim() })).filter((a) => a.answer);
 
+/** Add a round of answers to the earlier ones: all of `prev`, then the cleaned `next`.
+ * A question answered again keeps its place and takes the newer answer.
+ * @param {{ id: string, answer: string }[]} prev @param {{ id: string, answer: string }[]} next
+ * @returns {{ id: string, answer: string }[]} */
+export function addAnswers(prev, next) {
+  const out = prev.map((a) => ({ ...a }));
+  for (const a of cleanAnswers(next)) {
+    const i = out.findIndex((o) => o.id === a.id);
+    if (i >= 0) out[i] = a; else out.push(a);
+  }
+  return out;
+}
+
+const NEXT_PATH = /^\/v1\/t\/[a-z0-9][a-z0-9-]{0,62}\/maps\/[a-z0-9][a-z0-9-]*\/view$/;
+
+/** The page to return to after sign in: the decoded `next` value of `location.search`, only when it
+ * is a same-origin map page path; anything else is null.
+ * @param {string} search @returns {string|null} */
+export function safeNext(search) {
+  const v = new URLSearchParams(String(search ?? '')).get('next');
+  return v !== null && NEXT_PATH.test(v) ? v : null;
+}
+
 /** Message for a failed response; `kind: 'auth'` means show the token form.
  * @param {Res} r @returns {{ kind: 'auth'|'message', text: string }} */
 export function describeFailure(r) {

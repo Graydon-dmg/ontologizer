@@ -136,3 +136,88 @@ test('sign in posts the token; list and session are plain GETs', async () => {
   await flow.listMaps(f, 't');
   assert.deepEqual(seen, [['/v1/session', 'POST', '{"token":"tok"}'], ['/v1/session', 'GET', undefined], ['/v1/t/t/maps', 'GET', undefined]]);
 });
+
+/** Problems for a `safeNext` implementation: good paths must pass, hostile values must give null.
+ * @param {(search: string) => string|null} fn @returns {string[]} */
+function checkSafeNext(fn) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const p of ['/v1/t/default/maps/demo/view', '/v1/t/a-b9/maps/m-1/view']) {
+    const got = fn('?next=' + encodeURIComponent(p));
+    if (got !== p) problems.push(`good path ${p} gave ${got}`);
+  }
+  const hostile = [
+    '//evil.example/x', '/\\evil.example', 'https://evil.example/v1/t/default/maps/demo/view', 'javascript:alert(1)',
+    '/v1/t/default/maps/demo/view/extra', '/v1/t/default/maps/demo/view?x=1', '/v1/t/default/maps/demo/view#h',
+    '/v1/t/default/maps/demo', '/v1/t/default/maps/demo/view\n', '/v1/t/../maps/demo/view', '/v1/t/default/maps//view',
+    '%2F%2Fevil.example', '/v1/t/default/maps/demo%2Fview', '/v1/t/default%2Fx/maps/demo/view', '/V1/t/default/maps/demo/view', '',
+  ];
+  for (const h of hostile) {
+    for (const search of ['?next=' + encodeURIComponent(h), '?next=' + encodeURIComponent(encodeURIComponent(h))]) {
+      const got = fn(search);
+      if (got !== null) problems.push(`hostile ${JSON.stringify(h)} gave ${got}`);
+    }
+  }
+  if (fn('') !== null || fn('?other=1') !== null) problems.push('missing next gave a path');
+  return problems;
+}
+
+test('safeNext accepts only same-origin map page paths', () => {
+  assert.deepEqual(checkSafeNext(flow.safeNext), []);
+});
+
+test('planted fault: a safeNext that only checks for a leading slash is reported', () => {
+  const naive = (/** @type {string} */ s) => { const v = new URLSearchParams(s).get('next'); return v && v.startsWith('/') ? v : null; };
+  const problems = checkSafeNext(naive);
+  assert.ok(problems.some((p) => p.includes('//evil.example/x')));
+});
+
+/** Run three rounds through nextStep + checkContext; returns the bodies the server saw and the answers carried.
+ * @param {(prev: any[], next: any[]) => any[]} add @returns {Promise<any[]>} */
+async function threeRounds(add) {
+  /** @type {any[]} */ const bodies = [];
+  /** @type {any} */
+  const fn = async (/** @type {string} */ _u, /** @type {any} */ init) => {
+    bodies.push(JSON.parse(init.body));
+    return { status: 200, json: async () => NOT_READY.body };
+  };
+  /** @type {{ id: string, answer: string }[]} */
+  let answers = [];
+  let round = 0;
+  for (let i = 0; i < 3; i++) {
+    const r = await flow.checkContext(fn, 'default', 'ctx', answers);
+    const step = flow.nextStep({ round, result: r.body, context: 'ctx' });
+    if (step.kind !== 'questions') break;
+    round = step.round;
+    answers = add(answers, [{ id: `q${i + 1}`, answer: ` a${i + 1} ` }, { id: 'skip', answer: '  ' }]);
+  }
+  return bodies;
+}
+
+/** @param {any[]} bodies @returns {string[]} */
+function checkCarried(bodies) {
+  /** @type {string[]} */
+  const problems = [];
+  if (bodies.length !== 3) problems.push(`${bodies.length} check calls`);
+  const ids = (bodies[2]?.answers ?? []).map((/** @type {any} */ a) => a.id);
+  if (JSON.stringify(ids) !== '["q1","q2"]') problems.push(`third check carried ${JSON.stringify(ids)}`);
+  return problems;
+}
+
+test('answers add up across three rounds: the third check carries rounds 1 and 2', async () => {
+  const bodies = await threeRounds(flow.addAnswers);
+  assert.deepEqual(checkCarried(bodies), []);
+  assert.deepEqual(bodies[2].answers, [{ id: 'q1', answer: 'a1' }, { id: 'q2', answer: 'a2' }]);
+});
+
+test('planted fault: an addAnswers that replaces is reported', async () => {
+  const bodies = await threeRounds((_prev, next) => flow.cleanAnswers(next));
+  assert.ok(checkCarried(bodies).length > 0);
+});
+
+test('addAnswers keeps order, replaces a repeated id in place and does not mutate', () => {
+  const prev = [{ id: 'a', answer: '1' }, { id: 'b', answer: '2' }];
+  const out = flow.addAnswers(prev, [{ id: 'a', answer: ' 9 ' }, { id: 'c', answer: '3' }, { id: 'd', answer: '' }]);
+  assert.deepEqual(out, [{ id: 'a', answer: '9' }, { id: 'b', answer: '2' }, { id: 'c', answer: '3' }]);
+  assert.deepEqual(prev, [{ id: 'a', answer: '1' }, { id: 'b', answer: '2' }]);
+});

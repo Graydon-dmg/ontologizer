@@ -1,5 +1,5 @@
 // @ts-check
-import { panelRows, tokenLines, NO_TOKENS, HELP, failureText } from '../server-panel.js';
+import { panelRows, tokenLines, NO_TOKENS, HELP, failureText, noteText } from '../server-panel.js';
 
 const STYLE_ID = 'server-panel-style';
 const CSS = `
@@ -59,10 +59,13 @@ export function mountServerPanel(el, opts) {
   const code = document.createElement('code');
   code.textContent = parts[1] ?? '';
   help.append(code, parts[2] ?? '');
-  body.append(msg, dl, tokHead, list, help);
+  const note = document.createElement('p');
+  note.className = 'server-msg';
+  note.hidden = true;
+  body.append(msg, dl, note, tokHead, list, help);
 
   /** @param {string} text */
-  const fail = (text) => { msg.textContent = text; msg.hidden = false; dl.replaceChildren(); list.replaceChildren(); tokHead.hidden = true; };
+  const fail = (text) => { msg.textContent = text; msg.hidden = false; dl.replaceChildren(); list.replaceChildren(); tokHead.hidden = true; note.hidden = true; };
 
   async function load() {
     msg.hidden = false;
@@ -83,6 +86,8 @@ export function mountServerPanel(el, opts) {
         dd.textContent = row.value;
         dl.append(dt, dd);
       }
+      note.textContent = noteText(s);
+      note.hidden = !note.textContent;
       const lines = tokenLines(s.tokens);
       list.replaceChildren();
       if (!lines.length) {

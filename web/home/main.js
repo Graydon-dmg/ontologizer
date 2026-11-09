@@ -2,7 +2,7 @@
 import * as tokens from '../shared/tokens.js';
 import { loadChoice, applyTheme } from '../shell/theme.js';
 import { mountServerPanel } from '../shell/ui/server.js';
-import { getSession, signIn, listMaps, checkContext, startBuild, nextStep, cleanAnswers, describeFailure, relTime } from './flow.js';
+import { getSession, signIn, listMaps, checkContext, startBuild, nextStep, cleanAnswers, addAnswers, safeNext, describeFailure, relTime } from './flow.js';
 
 const $ = (/** @type {string} */ id) => /** @type {any} */ (document.getElementById(id));
 const f = globalThis.fetch.bind(globalThis);
@@ -210,7 +210,7 @@ $('new-form').addEventListener('submit', async (/** @type {Event} */ e) => {
     st.answers = [];
   } else if (st.step === 'questions') {
     // Answers add up over the rounds, as in the CLI.
-    st.answers = [...st.answers, ...readAnswers()];
+    st.answers = addAnswers(st.answers, readAnswers());
   }
   setBusy(form, true);
   try {
@@ -226,6 +226,8 @@ async function boot() {
   if (s.status === 401) { needSignIn(boot); return; }
   if (!s.ok) { $('maps-msg').textContent = describeFailure(s).text; return; }
   tenant = s.body.tenant;
+  const back = safeNext(location.search);
+  if (back) { location.replace(back); return; }
   mountServerPanel($('server-panel'), { tenant, fetch: f, popover: false });
   loadMaps();
 }
