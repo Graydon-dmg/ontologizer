@@ -15,7 +15,6 @@
 // Tables (created if missing), every query scoped by tenant:
 //   ontologizer_events (tenant, map_id, seq, event jsonb)            primary key (tenant, map_id, seq)
 //   ontologizer_maps   (tenant, id, name, root, nodes, updated_at, draft, brief jsonb, is_current)
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { foldAll, fold } from '../core/events.js';
@@ -67,8 +66,9 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
   if (typeof tenant !== 'string' || !TENANT_RE.test(tenant)) {
     throw new Error(`Invalid tenant "${tenant}": use lowercase letters, digits and hyphens (at most 63 characters).`);
   }
+  // Chat image attachments live here. Nothing is created at open: the folder appears with the first
+  // attachment (storeAttachment makes it), so a store that never stores an image leaves no trace on disk.
   const localRoot = root ?? path.join(process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer'), 'pg', tenant);
-  fs.mkdirSync(localRoot, { recursive: true });
 
   /** @type {any} */
   let pool = givenPool ?? null;
@@ -509,11 +509,12 @@ export async function postgresTenantExists({ url, pool, tenant }) {
 
 /**
  * The config store port for Postgres, with `exists` set: `store: postgresStorePort({ url })`.
- * @param {{ url: string }} o
+ * root: a folder for chat image attachments, one subfolder per tenant (default <home>/pg/<tenant>).
+ * @param {{ url: string, root?: string }} o
  */
-export function postgresStorePort({ url }) {
+export function postgresStorePort({ url, root }) {
   /** @param {string} tenant */
-  const port = (tenant) => openPostgresStore({ url, tenant });
+  const port = (tenant) => openPostgresStore({ url, tenant, ...(root ? { root: path.join(root, tenant) } : {}) });
   port.exists = (/** @type {string} */ tenant) => postgresTenantExists({ url, tenant });
   return port;
 }

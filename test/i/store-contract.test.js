@@ -413,7 +413,7 @@ test('postgres store: a failed write rejects flush and goes to log', async () =>
 
 test('postgres store: an invalid tenant is refused', () => {
   const { pool } = fakePool();
-  assert.throws(() => openPostgresStore({ pool, tenant: 'Bad Tenant' }), /Invalid tenant "Bad Tenant": use lowercase letters, digits and hyphens \(at most 63 characters\)\./);
+  assert.throws(() => openPostgresStore({ pool, tenant: 'Bad Tenant', root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) }), /Invalid tenant "Bad Tenant": use lowercase letters, digits and hyphens \(at most 63 characters\)\./);
 });
 
 // ---- fail-stop, sync, transactions, lock and row visibility, without a server ----

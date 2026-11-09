@@ -176,7 +176,7 @@ test('N1 (Postgres): 110 ghost tenants add at most 4 connections', pgOpts, async
   const pg = await import('pg');
   const admin = new pg.default.Pool({ connectionString: PG_URL, max: 2 });
   const conns = async () => Number((await admin.query("SELECT count(*) AS n FROM pg_stat_activity WHERE datname = 'postgres'")).rows[0].n);
-  const { srv, secrets, url } = await start({ tokens: { boss: { scopes: ['admin'] } }, config: { store: postgresStorePort({ url: /** @type {string} */ (PG_URL) }) } });
+  const { srv, secrets, url } = await start({ tokens: { boss: { scopes: ['admin'] } }, config: { store: postgresStorePort({ url: /** @type {string} */ (PG_URL), root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-rec-pg-')) }) } });
   try {
     const before = await conns();
     const statuses = [];
@@ -244,7 +244,8 @@ test('N2 (Postgres): terminating the lock backend fails the tenant (503) without
   const pg = await import('pg');
   const admin = new pg.default.Pool({ connectionString: PG_URL, max: 2 });
   const ta = `t${rnd()}`; const tb = `t${rnd()}`;
-  const { srv, url } = await start({ config: { store: (/** @type {string} */ tenant) => openPostgresStore({ url: /** @type {string} */ (PG_URL), tenant }) } });
+  const pgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-rec-pg-'));
+  const { srv, url } = await start({ config: { store: (/** @type {string} */ tenant) => openPostgresStore({ url: /** @type {string} */ (PG_URL), tenant, root: path.join(pgRoot, tenant) }) } });
   const crashed = [];
   const spy = (/** @type {any} */ e) => crashed.push(e);
   process.on('uncaughtException', spy);
