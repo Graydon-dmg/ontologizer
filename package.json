@@ -56,6 +56,7 @@
     "check:f": "node scripts/test.js test/f",
     "check:g": "node scripts/test.js test/g",
     "check:h": "node scripts/test.js test/h",
+    "check:i": "node scripts/test.js test/i",
     "dev": "node scripts/dev-server.js"
   },
   "dependencies": {

@@ -58,6 +58,18 @@ When you open a map, Ontologizer starts a web server on `127.0.0.1` (your own ma
 - Chat images are served back only at `/api/attachments/<hash>` for an exact 64-character hex hash, with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`; no part of the request path reaches the file system.
 - Static files are served only from `web/shell`, `web/shared`, `web/views`, `web/dev`, `fixtures/`, `src/core/` and the vendored packages. A path that escapes those folders gets 404.
 
+## Network mode
+
+`ontologizer serve` (service mode) is off unless you run it. It listens on `127.0.0.1` by default and is then open to your own machine only, like the one-map server. It never listens on another address without tokens:
+
+- **Loopback unless tokens are loaded.** A `--host` that is not `127.0.0.1`, `::1` or `localhost`, with no tokens, exits 1 before it opens a port. Revoking every token while it runs closes it to everyone; it never opens it.
+- **Tokens.** `ontologizer token create` prints a token once. `<home>/tokens.json` stores only its SHA-256 hash, is written atomically with mode 0600, and is compared in constant time. No response, log line or page contains a token: the Server panel and `ontologizer status` show names, tenants and scopes only. `token revoke` takes effect on the next request, and ends that token's browser sessions.
+- **Every `/v1/t/` route needs a token** (`Authorization: Bearer <token>`, or the session cookie): none or a wrong one gets 401, another tenant's map gets 404 (its existence is not revealed), a missing scope gets 403. Health checks and the page's static files need none.
+- **Browser sessions.** Signing in on the maps home sets `ontologizer_session` (`HttpOnly`, `SameSite=Strict`, `Path=/`), a random id that is not the token and lives only in the server's memory (12 hours, or until the server stops). A `POST` or `DELETE` that uses the cookie must carry an `Origin` matching the server's own, or it gets 403. Bearer requests need no `Origin`.
+- **Host check.** The `Host` header must name the bound address and port (and, when bound to loopback or every interface, `127.0.0.1`, `localhost` or `[::1]` on that port), or a name given with `--allow-host`. Anything else gets 403, which blocks DNS rebinding.
+- **Plain HTTP.** Service mode serves HTTP. On a network you do not trust, put it behind a reverse proxy that terminates TLS, and pass `--allow-host` with the proxy's name.
+- **The API key** stays in the server's environment or keychain. Service mode never prompts for it and never sends it to a browser.
+
 ## Data at rest
 
 Images you attach in the chat are saved in the map's folder as `attachments/<sha256>.<ext>`. The chat transcript in `events.jsonl` records only each image's hash, type and size, never its bytes. Delete `attachments/` (or single files in it) to remove the images; the chat still loads without them.
