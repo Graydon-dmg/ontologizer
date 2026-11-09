@@ -2,6 +2,7 @@
 // "Export" in the top bar: the page's side of `ontologizer export`. It runs the same exportMap on the
 // map the page is showing; the page and embed formats inline the built bundle from /dist/embed.js.
 import { exportMap, estimateTokens } from '../../../src/core/export/index.js';
+import { placeList } from '../dropdown.js';
 
 /** The menu items, in order. `id` is the element id; `#export-context` is "Copy for an agent". */
 export const EXPORT_ITEMS = /** @type {const} */ ([
@@ -10,6 +11,26 @@ export const EXPORT_ITEMS = /** @type {const} */ ([
   { id: 'export-json', label: 'Download JSON', format: 'json', action: 'download' },
   { id: 'export-context', label: 'Copy for an agent', format: 'context', action: 'copy' },
 ]);
+
+/** Popovers keep this far from every edge of the window. */
+export const EDGE = 8;
+
+/**
+ * Where the menu goes: under its button (above it when there is no room), fully inside the window
+ * with an EDGE margin. The shell's placeList keeps 4 px from the edges, so it runs in a frame
+ * shrunk by the difference. `pop` is the menu's size after capping it to the window.
+ * @param {{ left: number, top: number, bottom: number, width: number }} btn
+ * @param {{ width: number, height: number }} pop
+ * @param {{ w: number, h: number }} vp
+ */
+export function placeMenu(btn, pop, vp) {
+  const d = EDGE - 4;
+  const shifted = { left: btn.left - d, top: btn.top - d, bottom: btn.bottom - d, width: btn.width };
+  // Right-align the menu with its button, as the stylesheet did, then let placeList clamp it.
+  shifted.left = btn.left + btn.width - pop.width - d;
+  const p = placeList(shifted, pop, { w: vp.w - 2 * d, h: vp.h - 2 * d }, 6);
+  return { left: p.left + d, top: p.top + d };
+}
 
 /** The context pack size the menu copies, in estimated tokens. */
 export const MENU_BUDGET = 4000;
@@ -137,35 +158,50 @@ export function mountExport(el, shell) {
     list.append(b);
   }
 
+  // Placed in window coordinates, so a narrow window or a wrapped top bar never pushes it off
+  // an edge; capped to the window, with its own scroll; placed again on resize.
+  const place = () => {
+    if (pop.hidden) return;
+    Object.assign(pop.style, {
+      position: 'fixed', right: 'auto', boxSizing: 'border-box',
+      maxWidth: `${innerWidth - 2 * EDGE}px`, maxHeight: `${innerHeight - 2 * EDGE}px`, overflowY: 'auto',
+    });
+    const p = placeMenu(btn.getBoundingClientRect(), { width: pop.offsetWidth, height: pop.offsetHeight }, { w: innerWidth, h: innerHeight });
+    pop.style.left = `${p.left}px`;
+    pop.style.top = `${p.top}px`;
+  };
+  addEventListener('resize', place);
+  /** A status line changes the menu's height: place it again. @param {string} text */
+  const say = (text) => { msg.textContent = text; place(); };
   const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
-  const open = () => { pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); msg.textContent = ''; /** @type {HTMLElement|null} */ (list.firstElementChild)?.focus(); };
+  const open = () => { pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); msg.textContent = ''; place(); /** @type {HTMLElement|null} */ (list.firstElementChild)?.focus(); };
   btn.addEventListener('click', () => (pop.hidden ? open() : close()));
   pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); btn.focus(); } });
   document.addEventListener('mousedown', (e) => { if (!pop.hidden && !el.contains(/** @type {Node} */ (e.target))) close(); }, true);
 
   /** @param {typeof EXPORT_ITEMS[number]} item */
   async function run(item) {
-    msg.textContent = 'Working…';
+    say('Working…');
     try {
       const snap = shell.snapshot();
       const bundle = item.format === 'html' || item.format === 'embed' ? await loadBundle() : undefined;
       const text = exportMap(snap, { format: item.format, bundle, budget: MENU_BUDGET, liveUrl: location.href });
       if (item.format === 'html') {
         download(text, exportFileName(snap.name, 'html'), 'text/html');
-        msg.textContent = 'Downloaded a page that works offline.';
+        say('Downloaded a page that works offline.');
       } else if (item.format === 'json') {
         download(text, exportFileName(snap.name, 'json'), 'application/json');
-        msg.textContent = 'Downloaded the map as JSON.';
+        say('Downloaded the map as JSON.');
       } else if (item.format === 'embed') {
         await copyText(text);
-        msg.textContent = 'Copied the embed: paste it into any page.';
+        say('Copied the embed: paste it into any page.');
       } else {
         await copyText(text);
-        msg.textContent = `Copied the map for an agent (about ${estimateTokens(text).toLocaleString()} tokens).`;
+        say(`Copied the map for an agent (about ${estimateTokens(text).toLocaleString()} tokens).`);
       }
     } catch (err) {
       const text = `Could not export: ${err && /** @type {any} */ (err).message ? /** @type {any} */ (err).message : err}`;
-      msg.textContent = text;
+      say(text);
       shell.emit('notice', { text });
     }
   }

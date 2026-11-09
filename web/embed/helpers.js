@@ -96,3 +96,12 @@ export function revealPatch(ontology, ids) {
   const open = ancestorsToExpand(ontology, ids, collapsed);
   return open.length ? { collapsed: collapsed.filter((/** @type {string} */ c) => !open.includes(c)) } : null;
 }
+
+/**
+ * Whether the details panel must go below the top bar: true when, placed at the right edge, it
+ * would reach over the bar (so it would cover the search box).
+ * @param {{ hostWidth: number, barWidth: number, panelWidth: number, margin: number }} o
+ */
+export function panelBelowBar({ hostWidth, barWidth, panelWidth, margin }) {
+  return hostWidth - margin - panelWidth < margin + barWidth + margin;
+}

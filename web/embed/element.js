@@ -8,7 +8,7 @@ import { fold } from '../../src/core/events.js';
 import { feedLayout } from '../shell/feed.js';
 import { viewStateToApply, applyViewState } from '../shell/viewstate.js';
 import { readMapData } from './data.js';
-import { searchNodes, safeHref, nodeDetails, toggleCollapsed, revealPatch } from './helpers.js';
+import { searchNodes, safeHref, nodeDetails, toggleCollapsed, revealPatch, panelBelowBar } from './helpers.js';
 
 const TAG = 'ontologizer-map';
 const MARGIN = 12;
@@ -171,7 +171,9 @@ class OntologizerMap extends Base {
     refreshBanner();
     if (typeof ResizeObserver !== 'undefined') {
       this.ro = new ResizeObserver(() => this.publishInsets());
-      this.ro.observe(this.bar || this);
+      // Placed again whenever the bar wraps or the element itself changes size.
+      if (this.bar) this.ro.observe(this.bar);
+      this.ro.observe(this);
     }
     this.publishInsets();
   }
@@ -388,7 +390,13 @@ class OntologizerMap extends Base {
     const top = (bar ? bar.offsetHeight : 0) + MARGIN * 2 + bannerH;
     if (bar) bar.style.top = `${bannerH + MARGIN}px`;
     const panel = this.panel;
-    if (panel) panel.style.top = `${bannerH + MARGIN}px`;
+    if (panel) {
+      // Beside the bar when there is room, below it when the element is too narrow for both, so
+      // the details never cover the search box; its own scroll takes what does not fit.
+      const below = !panel.hidden && bar !== null
+        && panelBelowBar({ hostWidth: this.clientWidth, barWidth: bar.offsetWidth, panelWidth: panel.offsetWidth || 300, margin: MARGIN });
+      panel.style.top = `${below ? top : bannerH + MARGIN}px`;
+    }
     const right = panel && !panel.hidden ? (panel.offsetWidth || 300) + MARGIN * 2 : 0;
     const ins = { top, right, bottom: 0, left: 0 };
     for (const k of /** @type {const} */ (['top', 'right', 'bottom', 'left'])) stage.style.setProperty(`--onto-inset-${k}`, `${ins[k]}px`);
