@@ -348,7 +348,8 @@ exportMap(ontology, {
 ## Thin areas     uncovered branches; one line when nothing is explained or sourced yet
 ## Sources        the web sources the map cites, deduplicated
 ```
-  Trimmed to `budget`, in this order: (1) summaries, from the deepest level up (the root's children keep theirs longest); (2) Bridges and Sources shortened; (3) only then the deepest labels, never depth 1, refilling Bridges and Sources after each level; (4) Thin-area node lines and Insights; the Brief last. A last line says exactly what was trimmed. Labels are cheap and are what an agent needs most, so they outlive summaries.
+  Trimmed to `budget`, in this order: (1) summaries, from the deepest level up, and within a level one at a time from the end of the outline, only as many as needed (the root's children keep theirs longest); (2) Bridges and Sources shortened; (3) only then the deepest labels, never depth 1, refilling Bridges and Sources after each level; (4) Thin-area node lines and Insights; the Brief last. A last line says exactly what was trimmed. Labels are cheap and are what an agent needs most, so they outlive summaries.
+- **Same-name nodes:** where the pack names a node whose label another node also uses (Bridges, Thin areas, insight references), it adds the node's category in parentheses, or "Category, under Parent" when both are in one category. Unique labels are unchanged.
 - **Private maps:** once I2 lands, `ontology.visibility === 'private'` puts a "Private" mark in every format (a banner in html and embed, a first line in context, a top-level `"visibility"` in json). The hook reads `ontology.visibility` if present.
 
 ### Escaping
@@ -383,6 +384,7 @@ Items: **Download page** (`html`), **Copy embed** (`embed`, to the clipboard), *
 - **W1 · Context pack.** `src/core/export/context.js` and its tests (pure, no bundle needed).
 - **W2 · Bundle.** `web/embed/`, `scripts/build-embed.js`, package.json scripts, `.gitignore`, the licence header, the notices generator.
 - **W3 · Formats.** `src/core/export/index.js`, `html.js`, and the `export` command.
+- **Search fix (shell and embed).** Search opens the collapsed branches that hold a match, so the highlight is visible.
 - **W4 · Export menu.** `web/shell/ui/export.js`, the static `dist` word, the mount point, the features rows, the release workflow.
 
 ## Checks (each with its planted fault)
@@ -393,6 +395,7 @@ Items: **Download page** (`html`), **Copy embed** (`embed`, to the clipboard), *
 | `web/dist/embed.js` contains none of `fetch(`, `XMLHttpRequest`, `EventSource`, `WebSocket`, `import(`. | A bundle that pings for updates. |
 | The 2D `html` export of the demo is under 400 KB. | A 2D export that bundles three.js. |
 | A context pack's estimate is at or under its budget, its headings are exactly the six above, in order, and at a budget that fits labels but not summaries every node label is present. | The old depth-first trim, which fits the budget but drops every leaf label. |
+| A bridge between two same-label nodes names each with its category. | A pack that qualifies labels only when both ends share a category. |
 | Swept from 4,000 down to 300 tokens, nothing comes back as the budget shrinks, deeper summaries go before shallower ones, and labels go only after every summary. | A trim that drops labels while summaries remain. |
 | With `ontology.visibility = 'private'`, every format carries the mark. | A `json` path that skips it. |
 | A label that tries to close the data tag, and a bundle containing `<!--<script>`, are both handled: the first escaped, the second refused by the build and by `exportMap`. | An unescaped data tag; a guard that only checks `</script`. |
