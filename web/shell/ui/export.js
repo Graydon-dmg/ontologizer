@@ -64,15 +64,49 @@ function download(text, file, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** A small "download" glyph drawn in the button's own text color. */
+function exportIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13h10');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.6');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.append(path);
+  return svg;
+}
+
 /** @param {HTMLElement} el @param {any} shell */
 export function mountExport(el, shell) {
   el.classList.add('fuse'); // the Fuse popover's look: same button, same panel
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'fuse-btn';
-  btn.textContent = 'Export';
+  btn.setAttribute('aria-label', 'Export');
+  btn.title = 'Export this map';
   btn.setAttribute('aria-haspopup', 'menu');
   btn.setAttribute('aria-expanded', 'false');
+  const text = document.createElement('span');
+  text.textContent = 'Export';
+  btn.append(text, exportIcon());
+  // Between 1280 and 1366 px the top bar fits on one row only if Export is an icon (as the search
+  // box and map name give way there too); everywhere else it says "Export".
+  const band = globalThis.matchMedia?.('(min-width: 1280px) and (max-width: 1366px)');
+  const fit = () => {
+    const small = Boolean(band?.matches);
+    text.hidden = small;
+    /** @type {SVGElement} */ (btn.lastElementChild).style.display = small ? 'block' : 'none';
+    btn.style.padding = small ? '3px 6px' : '';
+  };
+  band?.addEventListener?.('change', fit);
+  fit();
 
   const pop = document.createElement('div');
   pop.className = 'fuse-pop';
