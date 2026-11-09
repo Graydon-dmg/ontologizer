@@ -87,5 +87,5 @@ test('the Export menu has the four contract items, Copy for an agent at 4000 tok
 
 test('the page mounts the Export menu and the server serves the bundle at /dist/', () => {
   assert.match(read('web/shell/main.js'), /\['export', mountExport\]/);
-  assert.match(read('src/server/index.js'), /rawPath\.startsWith\('\/dist\/'\)/);
+  assert.match(read('src/server/index.js'), /\['shell', 'shared', 'views', 'dev', 'dist'\]/);
 });
