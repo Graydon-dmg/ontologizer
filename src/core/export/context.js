@@ -34,8 +34,9 @@ function oneLine(s, max = FIELD_MAX) {
   let t = String(s ?? '').replace(/[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]+/g, ' ').trim();
   // No hidden HTML (a comment a person reviewing the rendered pack would not see) and no script links.
   // Any run of backslashes before '<' becomes exactly one, so running this twice changes nothing
-  // (a second pass must never turn '\\<' into an escaped backslash and a live '<').
-  t = t.replace(/\\*</g, '\\<').replace(/\]\s*\(/g, '] (');
+  // (a second pass must never turn '\\<' into an escaped backslash and a live '<'). '[' too, so no
+  // value can define or use a link reference ('[x]: javascript:...' then '[x]').
+  t = t.replace(/\\*([<[])/g, '\\$1').replace(/\]\s*\(/g, '] (');
   // ...and no inline link at all ('](' is split), so no scheme or entity trick can make one.
   if (t.length > max) t = t.slice(0, max - 1).trimEnd().replace(/\\+$/, '') + '…';
   return LEAD.test(t) ? `\\${t}` : t;
@@ -45,7 +46,9 @@ function oneLine(s, max = FIELD_MAX) {
 function webUrl(url) {
   try {
     const u = new URL(String(url ?? '').trim());
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : '';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    // Brackets and parentheses percent-encoded, so a url can never close or open markdown link syntax.
+    return u.href.replace(/[()[\]<>]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   } catch {
     return '';
   }

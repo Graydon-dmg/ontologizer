@@ -161,3 +161,23 @@ test('entity-encoded schemes cannot form a link: map text never makes an inline 
   assert.doesNotMatch(pack, /\[f\]\(/);
   assert.match(pack, /\[f\] \(java&#115;cript:x\)/);
 });
+
+test('no link references: an insight cannot define a target that a label then uses', () => {
+  const o = load('plastic-modeling');
+  const id = Object.keys(o.nodes).find((k) => o.nodes[k].depth === 1);
+  o.nodes[id].label = 'click [pwn] now ![img]';
+  o.insights = [{ text: '[pwn]: javascript:alert(1)', at: 0 }, { text: '[img]: https://evil.example/x.png', at: 0 }, ...(o.insights || [])];
+  const pack = contextPack(o, { budget: 100000 });
+  assert.doesNotMatch(pack, /(^|[^\\])\[(pwn|img)\]/, 'an unescaped link reference survived');
+  assert.match(pack, /\\\[pwn\]: javascript:alert\(1\)/);
+});
+
+test('reviewer case: a source title and url cannot assemble a live link', () => {
+  const o = load('plastic-modeling');
+  const id = Object.keys(o.nodes).find((k) => o.nodes[k].depth === 1);
+  o.nodes[id].article = { ...(o.nodes[id].article || {}), summary: 's', sources: [{ title: '[click', url: 'https://a.example/](javascript:alert(1))' }] };
+  const pack = contextPack(o, { budget: 100000 });
+  assert.doesNotMatch(pack, /\]\(javascript:/i);
+  assert.doesNotMatch(pack, /(^|[^\\])\[click/);
+  assert.match(pack, /a\.example\/%5D%28javascript:alert%281%29%29/);
+});
