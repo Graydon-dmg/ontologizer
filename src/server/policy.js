@@ -14,14 +14,17 @@ export const ACTION_SCOPE = { read: 'read', export: 'read', ask: 'ask', build: '
 
 /**
  * Whether a principal may read a map: always for a public map; for a private map only if it holds
- * every private source the map used, or is admin.
- * @param {Principal} principal @param {any} map a folded ontology (or null: no map yet)
+ * every private source the map used, or is admin. A private map with no named source: admin only.
+ * @param {Principal} principal @param {any} map a folded ontology, an index row's { visibility, privateSources }, or null
  */
 export function canRead(principal, map) {
   if (!map || map.visibility !== 'private') return true;
   if (hasScope(principal.scopes, 'admin')) return true;
+  const names = Array.isArray(map.privateSources) ? map.privateSources : [];
+  // A private map that names no source (a fused or damaged one) cannot be checked by sources: admin only.
+  if (!names.length) return false;
   const held = new Set(Array.isArray(principal.sources) ? principal.sources : []);
-  return (Array.isArray(map.privateSources) ? map.privateSources : []).every((name) => held.has(name));
+  return names.every((name) => held.has(name));
 }
 
 export const defaultPolicy = {

@@ -213,17 +213,21 @@ export function findAttachment(home, id, hash) {
  * away aborts the model call (the engine then records chat.failed "Stopped."). The engine appends
  * chat.asked / chat.answered / chat.failed itself; the server appends nothing.
  * @param {{ engine: any, req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse,
- *           input: { text: string, images: any[], lens?: string|null }, askOpts?: any, idleMs?: number, totalMs?: number }} o
+ *           input: { text: string, images: any[], lens?: string|null }, askOpts?: any, sync?: () => Promise<void>,
+ *           idleMs?: number, totalMs?: number }} o
  *   askOpts: the run options for engine.ask (actor, principal, tools) in service mode; none on the one-map server.
+ *   sync: service mode with a store that writes behind (Postgres): the question (chat.asked) is stored
+ *   before the stream's 200 goes out; a store that cannot store it answers 503 instead.
  */
-export async function relayAsk({ engine, req, res, input, askOpts = {}, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+export async function relayAsk({ engine, req, res, input, askOpts = {}, sync, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
+  const head = () => { if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' }); };
+  if (!sync) head();
   const ctl = new AbortController();
   const onClose = () => ctl.abort();
   res.on('close', onClose);
   /** @param {any} item */
   const send = (item) => {
-    if (!ctl.signal.aborted && !res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(item)}\n\n`);
+    if (!ctl.signal.aborted && !res.destroyed && !res.writableEnded) { head(); res.write(`data: ${JSON.stringify(item)}\n\n`); }
   };
   const started = Date.now();
   let ended = false; // a done or error item went out
@@ -232,6 +236,14 @@ export async function relayAsk({ engine, req, res, input, askOpts = {}, idleMs =
   try {
     if (typeof engine.ask !== 'function') throw new Error('chat: not built yet');
     it = engine.ask(input, { signal: ctl.signal, ...askOpts })[Symbol.asyncIterator]();
+    if (sync) {
+      try { await sync(); } catch {
+        ctl.abort();
+        if (!res.headersSent) { res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ ok: false, error: 'the store is not available' })); }
+        return;
+      }
+      head();
+    }
     for (;;) {
       // Never wait forever on an engine: no item for idleMs, or totalMs in all, stops the answer.
       const wait = Math.min(idleMs, totalMs - (Date.now() - started));

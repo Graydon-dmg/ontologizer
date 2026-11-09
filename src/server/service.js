@@ -29,6 +29,8 @@ const MAP_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const VIEW_RE = /^\/v1\/t\/[a-z0-9][a-z0-9-]{0,62}\/maps\/[a-z0-9][a-z0-9-]*\/view$/;
 const CHECK_KEY = 'draft-pending'; // the engine that answers maps/check (it writes nothing)
 const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
+const MAX_STORES = 256;          // tenants with an open store at once
+const REACH_MS = 30000;          // how long a source's reachability is remembered for status
 
 /** A --host that is loopback. @param {string} host */
 export const isLoopback = (host) => LOOPBACK.includes(String(host).replace(/^\[|\]$/g, ''));
@@ -158,11 +160,17 @@ export async function startService({
   // ---- stores, engines and map handlers, by tenant ----
   /** @type {Map<string, any>} */
   const stores = new Map();
-  /** @param {string} tenant @param {boolean} create */
+  /**
+   * A tenant's store, opened on first use. Without `create`, a tenant that does not exist is null and
+   * opens nothing: for files, a tenant folder that is not there; for a config store, its optional
+   * `store.exists(tenant)` saying false.
+   * @param {string} tenant @param {boolean} create
+   */
   function storeFor(tenant, create) {
     let s = stores.get(tenant);
     if (s) return s;
     if (config?.store) {
+      if (!create && typeof config.store.exists === 'function' && !config.store.exists(tenant)) return null;
       s = config.store(tenant);
       if (!s) return null;
       stores.set(tenant, s);
@@ -179,6 +187,8 @@ export async function startService({
    * @param {string} tenant @param {boolean} create @returns {Promise<any>}
    */
   async function readyStore(tenant, create) {
+    // At most MAX_STORES tenants open at once: one more is refused, never opened.
+    if (!stores.has(tenant) && stores.size >= MAX_STORES) { log(`too many tenants open (${MAX_STORES}): ${tenant} refused`); return 'down'; }
     const s = storeFor(tenant, create);
     if (!s || !s.ready) return s;
     try { await s.ready; return s; } catch (err) {
@@ -186,6 +196,32 @@ export async function startService({
       return 'down';
     }
   }
+  /** Wait until every write so far is stored (a Postgres store's sync; the file store has none). @param {any} store */
+  const durable = async (store) => { if (store && typeof store.sync === 'function') await store.sync(); };
+
+  /**
+   * Builds that picked private sources and have not written their raise yet (still queued): their
+   * maps count as private for those sources from the moment the draft exists. By "tenant/id".
+   * @type {Map<string, string[]>}
+   */
+  const pendingPrivate = new Map();
+  /**
+   * What the read rule sees of a map: from its index row (no fold), or the folded map, with a
+   * pending build's private sources added.
+   * @param {string} tenant @param {string} id @param {any} m an index row or a folded map
+   */
+  function visibilityOf(tenant, id, m) {
+    const pend = pendingPrivate.get(`${tenant}/${id}`);
+    const own = m?.visibility === 'private' ? (Array.isArray(m.privateSources) ? m.privateSources : []) : null;
+    if (!pend && !own) return { visibility: 'public', privateSources: [] };
+    return { visibility: 'private', privateSources: [...new Set([...(own ?? []), ...(pend ?? [])])].sort() };
+  }
+  /** The map as policies see it on a map route: the folded map with a pending raise applied. @param {string} tenant @param {string} id @param {any} store */
+  function mapFor(tenant, id, store) {
+    const map = store.read(id);
+    return pendingPrivate.has(`${tenant}/${id}`) ? { ...map, ...visibilityOf(tenant, id, map) } : map;
+  }
+
   /** Last use of each map's engine or handler, for idle eviction. @type {Map<string, number>} */
   const lastUsed = new Map();
   /** Requests using an engine right now (checks), so it is not evicted under them. @type {Map<string, number>} */
@@ -282,7 +318,8 @@ export async function startService({
         const engine = await engineFor(tenant, id);
         const principal = publicPrincipal(p, tenant);
         const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
-        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools });
+        const privateSources = pendingPrivate.get(key) ?? [];
+        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(privateSources.length ? { privateSources } : {}) });
         b.state = 'done';
       } catch (err) {
         b.state = 'failed';
@@ -451,6 +488,64 @@ export async function startService({
     }
   }
   /**
+   * The principal as it stands now: its token row re-read (a revoke, or sources rewritten in
+   * tokens.json, take effect here), or null when it no longer stands.
+   * @param {Principal} p @returns {Principal|null}
+   */
+  function currentPrincipal(p) {
+    if (!stillValid(p)) return null;
+    if (p.via !== 'bearer' && p.via !== 'cookie') return p;
+    const row = currentTokens().find((r) => r.name === p.name && r.hash === p.hash);
+    return row ? { ...p, ...tokenPrincipal(row) } : null;
+  }
+  /**
+   * Whether a stream (or a chat) may go on: called on every ping and before every event. It re-checks
+   * the principal and the read rule against the map as it is now. A policy that answers with a Promise
+   * is checked in the background (its last answer stands meanwhile), but a visibility.raised event is
+   * never sent until a synchronous answer allows it.
+   * @param {Principal} p @param {string} tenant @param {string} id @param {any} store
+   * @returns {(ev?: any) => boolean}
+   */
+  function streamValid(p, tenant, id, store) {
+    let last = true;
+    let checking = false;
+    return (ev) => {
+      const cur = currentPrincipal(p);
+      if (!cur) return false;
+      let r;
+      try { r = policy.can(publicPrincipal(cur, tenant), 'read', { tenant, mapId: id, map: mapFor(tenant, id, store) }); } catch { return false; }
+      if (r && typeof (/** @type {any} */ (r)).then === 'function') {
+        if (!checking) {
+          checking = true;
+          /** @type {Promise<any>} */ (r).then((v) => { last = v === true; }, () => { last = false; }).finally(() => { checking = false; });
+        }
+        return last && !(ev && ev.t === 'visibility.raised');
+      }
+      last = r === true;
+      return last;
+    };
+  }
+  /** Reachability of sources for status, remembered for 30 s per source. @type {Map<string, { at: number, reachable: boolean }>} */
+  const reach = new Map();
+  /** @param {string[]} names @param {any} principal */
+  async function reachability(names, principal) {
+    if (!srcs) return [];
+    const now = Date.now();
+    const stale = names.filter((n) => !(reach.get(n) && now - /** @type {any} */ (reach.get(n)).at < REACH_MS));
+    if (stale.length) {
+      for (const s of await srcs.status({ names: stale, principal })) reach.set(s.name, { at: now, reachable: s.reachable });
+    }
+    return entries.filter((e) => names.includes(e.name))
+      .map((e) => ({ name: e.name, visibility: e.visibility, reachable: Boolean(reach.get(e.name)?.reachable) }));
+  }
+  /** The page a browser gets for a map it cannot see: no name, no hint whether it exists. @param {http.ServerResponse} res */
+  function sendNotFoundPage(res) {
+    let html;
+    try { html = fs.readFileSync(path.join(webRoot, 'home', 'not-found.html')); } catch { return plain(res, 404, 'not found'); }
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.end(html);
+  }
+  /**
    * The sources a run on a map may use: a build's picks; for a job or ask, the principal's public
    * sources plus the private ones the map is already private for (a click never adds a private source).
    * @param {Principal} p @param {any} map
@@ -555,8 +650,12 @@ export async function startService({
       const note = checkOpenNote();
       // Sources: every configured one for an admin, the ones it holds for anyone else. Names only.
       const shown = srcs ? (admin ? srcs.names() : p.sources) : [];
-      const sourceRows = srcs ? (await srcs.status({ names: shown, principal: publicPrincipal(p, tenant) }))
-        .map((s) => ({ name: s.name, visibility: s.visibility, reachable: s.reachable })) : null;
+      const sourceRows = srcs ? await reachability(shown, publicPrincipal(p, tenant)) : null;
+      // Only the maps this caller may read are counted.
+      let count = 0;
+      for (const m of store ? store.list({ drafts: true }) : []) {
+        if (await can(p, 'read', { tenant, mapId: m.id, map: visibilityOf(tenant, m.id, m) })) count++;
+      }
       return json(res, 200, {
         tenant,
         // The server's own paths are for admins only.
@@ -565,7 +664,7 @@ export async function startService({
         store: ports.store,
         auth: identity ? 'identity' : authRequired ? 'tokens' : 'open',
         ...(note ? { note } : {}),
-        maps: store ? store.list({ drafts: true }).length : 0,
+        maps: count,
         tokens: currentTokens().filter((r) => r.tenant === tenant)
           .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], ...(r.sources ? { sources: [...r.sources] } : {}) })),
         server: { version, startedAt },
@@ -594,8 +693,8 @@ export async function startService({
         /** @type {any[]} */
         const rows = [];
         for (const m of store ? store.list({ drafts: true }) : []) {
-          const map = store.read(m.id);
-          // A map the caller may not read is left out, as if it did not exist.
+          // From the index row (no fold per map). A map the caller may not read is left out.
+          const map = visibilityOf(tenant, m.id, m);
           if (!await can(p, 'read', { tenant, mapId: m.id, map })) continue;
           rows.push({ id: m.id, name: m.name, root: m.root, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft),
             ...(map?.visibility === 'private' ? { visibility: 'private' } : srcs ? { visibility: 'public' } : {}) });
@@ -622,7 +721,12 @@ export async function startService({
         }
         const store = await readyStore(tenant, true);
         if (store === 'down' || !store) return fail(res, 503, 'the store is not available');
-        const id = store.createDraft(body.brief, body.name || undefined);
+        // A build that picks a private source is private from the moment its draft exists: the draft
+        // takes no display name (the name would show while it waits), and the engine raises it first thing.
+        const picked = names.filter((n) => entries.find((e) => e.name === n)?.visibility === 'private').sort();
+        const id = store.createDraft(body.brief, picked.length ? undefined : (body.name || undefined));
+        if (picked.length) pendingPrivate.set(`${tenant}/${id}`, picked);
+        try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
         startBuild(tenant, id, body.brief, body.depth, p, names);
         const base = mapBase(tenant, id);
         return json(res, 202, { id, viewUrl: `${base}/view`, eventsUrl: `${base}/events` });
@@ -668,12 +772,13 @@ export async function startService({
     if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));
     const store = await readyStore(tenant, false);
     if (store === 'down') return fail(res, 503, 'the store is not available');
-    if (!store || !MAP_ID_RE.test(id) || !store.list({ drafts: true }).some((/** @type {any} */ m) => m.id === id)) {
-      return fail(res, 404, 'not found');
-    }
+    // A browser opening a map it cannot see gets a small page, never JSON; the same 404 either way.
+    const notFound = () => (sub === 'view' && (method === 'GET' || method === 'HEAD') && String(req.headers.accept ?? '').includes('text/html')
+      ? sendNotFoundPage(res) : fail(res, 404, 'not found'));
+    if (!store || !MAP_ID_RE.test(id) || !store.list({ drafts: true }).some((/** @type {any} */ m) => m.id === id)) return notFound();
     // The read rule: a map the caller may not read does not exist for it (404, never 403).
-    const map = store.read(id);
-    if (!await can(p, 'read', { tenant, mapId: id, map })) return fail(res, 404, 'not found');
+    const map = mapFor(tenant, id, store);
+    if (!await can(p, 'read', { tenant, mapId: id, map })) return notFound();
     if (action !== 'read' && !await can(p, action, { tenant, mapId: id, map })) return fail(res, 403, needs(action));
     const key = `${tenant}/${id}`;
     const base = mapBase(tenant, id);
@@ -711,10 +816,14 @@ export async function startService({
       builds.delete(key);
       try {
         const saved = store.save(id, body.name, { actor: p.actor });
+        try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
         return json(res, 200, { ok: true, id: saved, viewUrl: `${mapBase(tenant, saved)}/view` });
       } catch (err) {
+        if (/** @type {any} */ (err)?.code === 'STORE_FAILED' || store.failed) return fail(res, 503, 'the store is not available');
         const msg = String(/** @type {Error} */ (err).message);
-        return fail(res, /already exists/.test(msg) ? 409 : 400, msg);
+        // Never say whether another map holds the name (it may be one this caller cannot see).
+        if (/already exists/.test(msg)) return fail(res, 409, 'That name is not available.');
+        return fail(res, 400, msg);
       }
     }
     // The map's own routes: today's /api/* under its base, and their /v1 names.
@@ -727,16 +836,24 @@ export async function startService({
       const h = await handlerFor(tenant, id);
       const principal = publicPrincipal(p, tenant);
       const handled = await h.handleApi(req, res, apiPath, query, {
-        valid: () => stillValid(p),
+        // Re-checked on every ping and before every event sent: the token (or session), its current
+        // sources, and the read rule on the map as it is now (a raise ends the stream before it is sent).
+        valid: streamValid(p, tenant, id, store),
+        sync: () => durable(store),
         actor: p.actor,
         principal,
         // A job's or an ask's source tools, made only when one runs.
         tools: async () => {
-          const names = srcs ? jobSources(p, store.read(id)) : [];
+          const names = srcs ? jobSources(p, mapFor(tenant, id, store)) : [];
           return names.length && srcs ? srcs.toolset(principal, names) : null;
         },
         // Other maps this caller may read (the fuse picker and fuse's `with`).
-        canRead: async (/** @type {string} */ other) => can(p, 'read', { tenant, mapId: other, map: store.read(other) }),
+        canRead: async (/** @type {string} */ other) => {
+          const row = store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other);
+          return row ? can(p, 'read', { tenant, mapId: other, map: visibilityOf(tenant, other, row) }) : false;
+        },
+        // Whether a map is private (fuse keeps a private map's id out of another map's log).
+        isPrivate: (/** @type {string} */ other) => visibilityOf(tenant, other, store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other)).visibility === 'private',
       });
       lastUsed.set(key, Date.now());
       if (handled) return;
@@ -786,7 +903,10 @@ export async function startService({
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       log(`request failed: ${req.method} ${String(req.url).split('?')[0]}: ${/** @type {Error} */ (err)?.message ?? err}`);
-      if (!res.headersSent) plain(res, 500, 'server error');
+      if (!res.headersSent) {
+        if (/** @type {any} */ (err)?.code === 'STORE_FAILED') fail(res, 503, 'the store is not available');
+        else plain(res, 500, 'server error');
+      }
       else res.end();
     });
   });

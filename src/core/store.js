@@ -13,7 +13,10 @@ import { foldAll, fold } from './events.js';
 
 /** @typedef {import('./schema.js').Ontology} Ontology */
 /** @typedef {import('./events.js').OntoEvent} OntoEvent */
-/** @typedef {{ id: string, name: string, root: string, nodes: number, updatedAt: number, draft: boolean }} IndexRow */
+/** @typedef {{ id: string, name: string, root: string, nodes: number, updatedAt: number, draft: boolean,
+ *             visibility?: 'private', privateSources?: string[] }} IndexRow
+ *   visibility and privateSources are present only on a private map's row (a public row is as before),
+ *   so service mode can filter the list without folding every map. */
 /** @typedef {{ current: string|null, ontologies: IndexRow[] }} StoreIndex */
 /** @typedef {{ onto: Ontology, count: number, lastAt: number, startedAt: number, dirty: boolean,
  *             timer: any, subs: Set<(e: OntoEvent, i: number) => void> }} Entry */
@@ -95,6 +98,21 @@ function assertName(name) {
   if (RESERVED_NAMES.includes(name)) {
     throw new Error(`"${name}" is a reserved name (it holds service mode's tenants). Pick another name.`);
   }
+}
+
+/**
+ * Keep a row's visibility keys in step with its map: only a private map carries them.
+ * @param {any} row @param {import('./schema.js').Ontology} onto
+ */
+function rowVisibility(row, onto) {
+  if (onto.visibility === 'private') {
+    row.visibility = 'private';
+    row.privateSources = [...(onto.privateSources ?? [])].sort();
+  } else {
+    delete row.visibility;
+    delete row.privateSources;
+  }
+  return row;
 }
 
 /** Valid tenant names: 'default' is the home itself; others live under <home>/tenants/<tenant>/. */
@@ -189,6 +207,7 @@ export function openStore(home, { tenant = 'default' } = {}) {
         row.root = e.onto.root;
         row.nodes = Object.keys(e.onto.nodes).length;
         row.updatedAt = Date.now();
+        rowVisibility(row, e.onto);
       }
     });
     e.dirty = false;
@@ -283,6 +302,11 @@ export function openStore(home, { tenant = 'default' } = {}) {
         }, THROTTLE_MS);
         if (e.timer.unref) e.timer.unref();
       }
+      // A raise reaches the index at once (not on the throttle), so the list is never stale about it.
+      if (event.t === 'visibility.raised') {
+        if (e.timer) { clearTimeout(e.timer); e.timer = null; }
+        try { writeSnapshotAndRow(id, e); } catch { /* dir may have moved */ }
+      }
       for (const fn of [...e.subs]) fn(event, index);
     },
 
@@ -342,6 +366,7 @@ export function openStore(home, { tenant = 'default' } = {}) {
         updatedAt: Date.now(),
         draft: false,
       });
+      rowVisibility(row, e.onto);
       idx.ontologies.push(row);
       idx.current = name;
       });
@@ -382,7 +407,7 @@ export function openStore(home, { tenant = 'default' } = {}) {
         const onto = foldAll(readEventsFile(path.join(dir(name), 'events.jsonl')));
         updateIndex((idx) => {
           if (idx.ontologies.some((r) => r.id === name)) return;
-          idx.ontologies.push({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false });
+          idx.ontologies.push(rowVisibility({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false }, onto));
         });
         return name;
       }
@@ -394,7 +419,7 @@ export function openStore(home, { tenant = 'default' } = {}) {
       writeJsonAtomic(path.join(dir(name), 'snapshot.json'), onto);
       updateIndex((idx) => {
         idx.ontologies = idx.ontologies.filter((r) => r.id !== name);
-        idx.ontologies.push({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false });
+        idx.ontologies.push(rowVisibility({ id: name, name: onto.name || name, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft: false }, onto));
       });
       return name;
     },

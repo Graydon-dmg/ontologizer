@@ -50,3 +50,4 @@ dialog .row { display: flex; gap: 6px; justify-content: flex-end; }
 #sources-picker label.src { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; color: var(--fg); }
 #sources-picker label.src input { width: auto; margin: 0; padding: 0; }
 #sources-picker p { margin: 0; font-size: 12px; }
+#not-found a { color: var(--fg); }
