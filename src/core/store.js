@@ -118,8 +118,13 @@ function rowVisibility(row, onto) {
 /** Valid tenant names: 'default' is the home itself; others live under <home>/tenants/<tenant>/. */
 export const TENANT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-/** @param {string} [home] @param {{ tenant?: string }} [opts] */
-export function openStore(home, { tenant = 'default' } = {}) {
+/**
+ * @param {string} [home]
+ * @param {{ tenant?: string, repair?: boolean, log?: (line: string) => void }} [opts]
+ *   repair (service mode): on open, give any index row that lacks it the visibility its events say
+ *   (a crash between a raise and its index write). log: where index-write errors go (default stderr).
+ */
+export function openStore(home, { tenant = 'default', repair = false, log = (line) => { try { process.stderr.write(`${line}\n`); } catch { /* closed */ } } } = {}) {
   if (typeof tenant !== 'string' || !TENANT_RE.test(tenant)) {
     throw new Error(`Invalid tenant "${tenant}": use lowercase letters, digits and hyphens (at most 63 characters).`);
   }
@@ -197,6 +202,18 @@ export function openStore(home, { tenant = 'default' } = {}) {
   }
 
   /** @param {string} id @param {Entry} e */
+  /**
+   * Write a map's snapshot and index row now. An error is logged (never swallowed) and the map stays
+   * dirty, so the next write (or the next flush) tries again.
+   * @param {string} id @param {Entry} e
+   */
+  function writeRow(id, e) {
+    try { writeSnapshotAndRow(id, e); } catch (err) {
+      e.dirty = true;
+      log(`ontologizer: could not update the index for ${id} (will retry on the next write): ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`);
+    }
+  }
+  /** @param {string} id @param {Entry} e */
   function writeSnapshotAndRow(id, e) {
     if (!fs.existsSync(dir(id))) return;
     writeJsonAtomic(path.join(dir(id), 'snapshot.json'), e.onto);
@@ -230,6 +247,23 @@ export function openStore(home, { tenant = 'default' } = {}) {
   const self = { flushDirty };
   liveStores.add(self);
   hookExit();
+
+  // Repair: a row that lacks the visibility its events record (a crash between the raise and the
+  // index write) is fixed from the events. Only maps whose log mentions a raise are folded.
+  if (repair) {
+    try {
+      const rows = readIndex().ontologies.filter((r) => r.visibility !== 'private');
+      for (const r of rows) {
+        let text = '';
+        try { text = fs.readFileSync(path.join(dir(r.id), 'events.jsonl'), 'utf8'); } catch { continue; }
+        if (!text.includes('"visibility.raised"')) continue;
+        const onto = foldAll(readEventsFile(path.join(dir(r.id), 'events.jsonl')));
+        if (onto.visibility !== 'private') continue;
+        updateIndex((idx) => { const row = idx.ontologies.find((x) => x.id === r.id); if (row) rowVisibility(row, onto); });
+        log(`ontologizer: repaired the index row of ${r.id} (private)`);
+      }
+    } catch (err) { log(`ontologizer: index repair failed: ${/** @type {any} */ (err)?.message ?? err}`); }
+  }
 
   /** @param {string} id */
   function now(id) {
@@ -271,16 +305,23 @@ export function openStore(home, { tenant = 'default' } = {}) {
     now,
     flush,
 
-    /** @param {any} brief @param {string} [suggestedName] @returns {string} */
-    createDraft(brief, suggestedName) {
+    /**
+     * @param {any} brief @param {string} [suggestedName]
+     * @param {{ events?: OntoEvent[] }} [opts] events written with the draft, in the same single file write
+     *   (service mode: ontology.created and a picked private source's raise, so the draft is never public)
+     * @returns {string}
+     */
+    createDraft(brief, suggestedName, { events = [] } = {}) {
       const base = `draft-${stamp(new Date())}`;
       let id = base;
       for (let n = 2; fs.existsSync(dir(id)); n++) id = `${base}-${n}`;
       fs.mkdirSync(dir(id), { recursive: true });
       fs.writeFileSync(path.join(dir(id), 'brief.json'), JSON.stringify(brief ?? {}));
-      fs.writeFileSync(path.join(dir(id), 'events.jsonl'), '');
+      fs.writeFileSync(path.join(dir(id), 'events.jsonl'), events.map((x) => JSON.stringify(x) + '\n').join(''));
+      const onto = events.length ? foldAll(events) : null;
       updateIndex((idx) => {
-        idx.ontologies.push({ id, name: suggestedName || id, root: '', nodes: 0, updatedAt: Date.now(), draft: true });
+        const row = { id, name: (onto && onto.name) || suggestedName || id, root: onto ? onto.root : '', nodes: onto ? Object.keys(onto.nodes).length : 0, updatedAt: Date.now(), draft: true };
+        idx.ontologies.push(onto ? rowVisibility(row, onto) : row);
         idx.current = id;
       });
       return id;
@@ -298,14 +339,14 @@ export function openStore(home, { tenant = 'default' } = {}) {
       if (!e.timer) {
         e.timer = setTimeout(() => {
           e.timer = null;
-          try { writeSnapshotAndRow(id, e); } catch { /* dir may have moved */ }
+          writeRow(id, e);
         }, THROTTLE_MS);
         if (e.timer.unref) e.timer.unref();
       }
       // A raise reaches the index at once (not on the throttle), so the list is never stale about it.
       if (event.t === 'visibility.raised') {
         if (e.timer) { clearTimeout(e.timer); e.timer = null; }
-        try { writeSnapshotAndRow(id, e); } catch { /* dir may have moved */ }
+        writeRow(id, e);
       }
       for (const fn of [...e.subs]) fn(event, index);
     },
@@ -377,6 +418,9 @@ export function openStore(home, { tenant = 'default' } = {}) {
     list({ drafts = false } = {}) {
       return readIndex()
         .ontologies.filter((r) => drafts || !r.draft)
+        // A map this store has in memory is shown as it is now, even if its row write is still due
+        // (or failed and waits for a retry): visibility is never stale in the list.
+        .map((r) => { const e = cache.get(r.id); return e ? rowVisibility({ ...r }, e.onto) : r; })
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 

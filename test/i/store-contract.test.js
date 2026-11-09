@@ -445,11 +445,13 @@ test('postgres store: after a failed write nothing else is written and every mut
   assert.equal(log.filter((q) => /INSERT INTO ontologizer_events/.test(q.sql)).length, 2);
   assert.equal(s.failed?.message, 'boom');
   assert.equal(lines.length, 1);
-  const n = Object.keys(s.read(d).nodes).length;
-  for (const fn of [() => s.append(d, node('n4', 4)), () => s.createDraft({}), () => s.save(d, 'a'), () => s.importEvents('b', [created('B')])]) {
+  // Every mutator, and every read too: memory may hold events Postgres never stored, so a failed
+  // store serves nothing. Planted fault: a read that still answers from memory (the failed write's node).
+  for (const fn of [() => s.append(d, node('n4', 4)), () => s.createDraft({}), () => s.save(d, 'a'), () => s.importEvents('b', [created('B')]),
+    () => s.read(d), () => s.list({ drafts: true }), () => s.resolve('a')]) {
     assert.throws(fn, (/** @type {any} */ e) => e.code === 'STORE_FAILED' && /^The Postgres store stopped after a write failed:/.test(e.message));
   }
-  assert.equal(Object.keys(s.read(d).nodes).length, n);
+  await assert.rejects(async () => { for await (const _ of s.events(d)) { /* nothing */ } }, (/** @type {any} */ e) => e.code === 'STORE_FAILED');
   await assert.rejects(s.flush(), (/** @type {any} */ e) => e.code === 'STORE_FAILED');
 });
 

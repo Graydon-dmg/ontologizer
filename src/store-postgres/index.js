@@ -173,6 +173,8 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       const Pool = pg.Pool ?? pg.default?.Pool;
       pool = new Pool({ connectionString: url, max: 4 });
       ownPool = true;
+      // An idle pooled connection that dies emits 'error' on the pool: never let it crash the host.
+      pool.on('error', (/** @type {any} */ err) => { if (log) log(`postgres pool connection lost: ${err?.code ?? err?.name ?? 'error'}`); });
     }
     // One writer per tenant: a session-level advisory lock on a dedicated client, held until close().
     // A pool without `connect` (a test double with only `query`) cannot pin a session, so no lock there.
@@ -192,6 +194,17 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
         throw new Error(`Another process already has the Postgres store for tenant "${tenant}" open (one server per tenant).`);
       }
       lockClient = client;
+      // The lock lives on this connection. If it dies (pg_terminate_backend, a restart, a proxy idle
+      // timeout), the lock is gone and another process may open the tenant: this store stops at once
+      // (every write, and every read, is refused) and the host never crashes.
+      if (typeof client.on === 'function') client.on('error', (/** @type {any} */ err) => {
+        if (!firstError) {
+          firstError = new Error(`the tenant lock connection was lost (${err?.code ?? err?.name ?? 'error'})`);
+          if (log) log(`postgres store write failed: ${firstError.message}`);
+        }
+        // Give the dead connection back, destroyed, so close() (pool.end) never waits on it.
+        if (lockClient === client) { lockClient = null; try { client.release(err instanceof Error ? err : new Error('lost')); } catch { /* already released */ } }
+      });
     }
     for (const sql of SCHEMA) await pool.query(sql);
     const maps = await pool.query(
@@ -285,22 +298,37 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
     },
 
     /** @param {any} brief @param {string} [suggestedName] @returns {string} */
-    createDraft(brief, suggestedName) {
+    /**
+     * @param {any} brief @param {string} [suggestedName]
+     * @param {{ events?: OntoEvent[] }} [opts] events stored with the draft in the same transaction
+     *   (ontology.created and a picked private source's raise: a crash can never leave it public)
+     */
+    createDraft(brief, suggestedName, { events = [] } = {}) {
       assertWritable();
       const base = `draft-${stamp(new Date())}`;
       let id = base;
       for (let n = 2; rowOf(id) || cache.has(id); n++) id = `${base}-${n}`;
-      const row = { id, name: suggestedName || id, root: '', nodes: 0, updatedAt: Date.now(), draft: true };
+      const entry = makeEntry(events.slice());
+      /** @type {IndexRow} */
+      const row = { id, name: entry.onto.name || suggestedName || id, root: entry.onto.root || '', nodes: countNodes(entry.onto), updatedAt: Date.now(), draft: true };
+      applyVisibility(row, entry.onto);
       rows.push(row);
-      cache.set(id, makeEntry([]));
+      cache.set(id, entry);
       currentId = id;
       const b = JSON.stringify(brief ?? {});
+      const evJson = JSON.stringify(events);
       enqueue(() => inTx(async (db) => {
         await db.query('UPDATE ontologizer_maps SET is_current = false WHERE tenant = $1 AND is_current', [tenant]);
         await db.query(
           `INSERT INTO ontologizer_maps (tenant, id, name, root, nodes, updated_at, draft, brief, is_current)
-           VALUES ($1, $2, $3, '', 0, $4, true, $5::jsonb, true)`,
-          [tenant, id, row.name, row.updatedAt, b]);
+           VALUES ($1, $2, $3, $4, $5, $6, true, $7::jsonb, true)`,
+          [tenant, id, row.name, row.root, row.nodes, row.updatedAt, b]);
+        if (events.length) {
+          await db.query(
+            `INSERT INTO ontologizer_events (tenant, map_id, seq, event)
+             SELECT $1, $2, (t.n - 1)::integer, t.e FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS t(e, n)`,
+            [tenant, id, evJson]);
+        }
       }));
       return id;
     },
@@ -331,11 +359,13 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
 
     /** @param {string} id @returns {Ontology} */
     read(id) {
+      assertWritable(); // a failed store serves nothing: memory may hold an event Postgres never stored
       return load(id).onto;
     },
 
     /** @param {string} id @param {{ from?: number }} [opts] */
     async *events(id, { from = 0 } = {}) {
+      assertWritable();
       const all = load(id).events.slice();
       for (let i = from; i < all.length; i++) yield all[i];
     },
@@ -392,6 +422,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
 
     /** @param {{ drafts?: boolean }} [opts] @returns {IndexRow[]} */
     list({ drafts = false } = {}) {
+      assertWritable();
       return rows
         .filter((r) => drafts || !r.draft)
         .map((r) => ({ ...r }))
@@ -400,6 +431,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
 
     /** @param {string} nameOrPrefix @returns {string | null | { ambiguous: string[] }} */
     resolve(nameOrPrefix) {
+      assertWritable();
       const exact = rows.find((r) => r.id === nameOrPrefix) ?? rows.find((r) => !r.draft && r.name === nameOrPrefix);
       if (exact) return exact.id;
       if (!nameOrPrefix) return null;
@@ -441,4 +473,47 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       return name;
     },
   };
+}
+
+/** One small pool per url for existence checks (one connection at most). @type {Map<string, any>} */
+const existsPools = new Map();
+
+/**
+ * Whether a tenant has any map in a Postgres database, without opening its store or taking its lock.
+ * For a config's `store.exists`: the server then never opens (and locks) a store for a tenant that
+ * does not exist. False when the tables are not there yet.
+ * @param {{ url?: string, pool?: any, tenant: string }} o
+ * @returns {Promise<boolean>}
+ */
+export async function postgresTenantExists({ url, pool, tenant }) {
+  if (typeof tenant !== 'string' || !TENANT_RE.test(tenant)) return false;
+  let db = pool;
+  if (!db) {
+    db = existsPools.get(String(url));
+    if (!db) {
+      const pg = /** @type {any} */ (await import('pg'));
+      const Pool = pg.Pool ?? pg.default?.Pool;
+      db = new Pool({ connectionString: url, max: 1, idleTimeoutMillis: 5000, allowExitOnIdle: true });
+      db.on('error', () => { /* an idle connection died: the next query reconnects */ });
+      existsPools.set(String(url), db);
+    }
+  }
+  try {
+    const r = await db.query('SELECT 1 FROM ontologizer_maps WHERE tenant = $1 LIMIT 1', [tenant]);
+    return r.rows.length > 0;
+  } catch (/** @type {any} */ err) {
+    if (err && err.code === '42P01') return false; // the tables do not exist yet
+    throw err;
+  }
+}
+
+/**
+ * The config store port for Postgres, with `exists` set: `store: postgresStorePort({ url })`.
+ * @param {{ url: string }} o
+ */
+export function postgresStorePort({ url }) {
+  /** @param {string} tenant */
+  const port = (tenant) => openPostgresStore({ url, tenant });
+  port.exists = (/** @type {string} */ tenant) => postgresTenantExists({ url, tenant });
+  return port;
 }

@@ -192,12 +192,12 @@ test('postgres durability: a failed raise INSERT stops the store and leaves no g
     await assert.rejects(s.sync(), (/** @type {any} */ e) => e.code === 'STORE_FAILED');
     assert.ok(s.failed instanceof Error && /injected/.test(s.failed.message));
     assert.equal(lines.length, 1, 'logged once');
-    const before = s.list({ drafts: true }).length;
-    for (const fn of [() => s.append(id, node('later', 3)), () => s.createDraft({}), () => s.save(id, 'gap'), () => s.importEvents('imp', [created('I')])]) {
+    // Every write and every read is refused: memory holds events Postgres never stored, so a failed
+    // store serves nothing (not even the failed write's private node).
+    for (const fn of [() => s.append(id, node('later', 3)), () => s.createDraft({}), () => s.save(id, 'gap'), () => s.importEvents('imp', [created('I')]),
+      () => s.read(id), () => s.list({ drafts: true })]) {
       assert.throws(fn, (/** @type {any} */ e) => e.code === 'STORE_FAILED' && /^The Postgres store stopped after a write failed:/.test(e.message));
     }
-    assert.equal(s.list({ drafts: true }).length, before, 'refused calls do not change memory');
-    assert.ok(!('later' in s.read(id).nodes));
 
     const stored = (await kit.q('SELECT seq FROM ontologizer_events WHERE tenant = $1 AND map_id = $2 ORDER BY seq', [kit.tenant, id])).rows;
     assert.deepEqual(leakedAfterGap(stored), []);
