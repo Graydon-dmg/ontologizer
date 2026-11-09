@@ -124,6 +124,32 @@ function sectionLines(o, m) {
   ]).map(([k, v]) => /** @type {[string, string]} */ ([k, oneLine(v)])).filter(([, v]) => v);
   const sizeLine = `- Size: ${m.ids.length} nodes in ${o.categories.length} categories, ${o.edges.length} cross-links, ${explained} explained`;
 
+  // A label shared by several nodes is named with its category, so "Panel Lining → Panel Lining"
+  // does not read as a loop. When the category is shared too, the parent is added.
+  /** @type {Map<string, string[]>} */
+  const byLabel = new Map();
+  for (const id of m.ids) {
+    const key = String(nodes[id].label ?? '').trim().toLowerCase();
+    byLabel.set(key, [...(byLabel.get(key) ?? []), id]);
+  }
+  /** Where a node sits: its category, or its parent for a category node. @param {string} id */
+  const placeOf = (id) => {
+    const n = nodes[id];
+    if (n.category && n.category !== id) return m.catLabel(n.category);
+    return n.parent ? nodes[n.parent]?.label ?? '' : '';
+  };
+  /** The node's label, qualified only when another node has the same label. @param {string} id */
+  const nameOf = (id) => {
+    const n = nodes[id];
+    const twins = byLabel.get(String(n.label ?? '').trim().toLowerCase()) ?? [];
+    if (twins.length < 2) return n.label;
+    const place = placeOf(id);
+    const samePlace = twins.some((t) => t !== id && placeOf(t) === place);
+    const parent = n.parent ? nodes[n.parent]?.label : '';
+    const where = samePlace && parent && parent !== place ? `${place}, under ${parent}` : place;
+    return where ? `${n.label} (${where})` : n.label;
+  };
+
   /** @type {string[]} */
   const bridges = [];
   for (const e of o.edges) {
@@ -131,12 +157,12 @@ function sectionLines(o, m) {
     const c = nodes[e.to];
     if (!a || !c || !a.category || !c.category || a.category === c.category) continue;
     const why = oneLine(e.why, WHY_MAX);
-    bridges.push(`- ${a.label} → ${c.label} (${e.type})${why ? ': ' + why : ''}`);
+    bridges.push(`- ${nameOf(e.from)} → ${nameOf(e.to)} (${e.type})${why ? ': ' + why : ''}`);
   }
 
   const insights = (o.insights ?? []).map((i) => {
     const n = i.nodeId ? nodes[i.nodeId] : undefined;
-    return `- ${oneLine(i.text)}${n ? ` (${n.label})` : ''}`;
+    return `- ${oneLine(i.text)}${n && i.nodeId ? ` (${nameOf(i.nodeId)})` : ''}`;
   });
 
   // Thin areas
@@ -161,8 +187,11 @@ function sectionLines(o, m) {
     .sort((a, b2) => (nodes[a].depth - nodes[b2].depth) || ((m.descCount.get(b2) ?? 0) - (m.descCount.get(a) ?? 0)));
   /** @type {string[]} */
   const thinNodes = [];
-  for (const id of noSummary) thinNodes.push(`- ${nodes[id].label}: ${m.leafCount.get(id)} leaves, no summary`);
-  for (const id of bare) thinNodes.push(`- ${nodes[id].label} (${m.catLabel(nodes[id].category)}): no explanation, no sources`);
+  for (const id of noSummary) thinNodes.push(`- ${nameOf(id)}: ${m.leafCount.get(id)} leaves, no summary`);
+  for (const id of bare) {
+    const shown = nameOf(id); // already carries its category when the label is shared
+    thinNodes.push(`- ${shown !== nodes[id].label ? shown : `${nodes[id].label} (${m.catLabel(nodes[id].category)})`}: no explanation, no sources`);
+  }
   thinNodes.length = Math.min(thinNodes.length, THIN_NODE_MAX);
 
   // Sources
@@ -206,11 +235,23 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
   // stay longest. Labels stay until the very end of the outline trim: they are cheap and they are
   // what a brainstorm needs most.
   const present = new Set(m.rows.map((r) => r.depth));
-  const SUM_ORDER = [...[...present].filter((d) => d >= 2).sort((a, b) => b - a), ...[0, 1].filter((d) => present.has(d))];
+  const withSum = new Set(m.rows.filter((r) => r.summary).map((r) => r.depth));
+  const SUM_ORDER = [...[...present].filter((d) => d >= 2).sort((a, b) => b - a), 0, 1].filter((d) => withSum.has(d));
+  /** Each summary's place among the summaries of its level, in outline order. @type {Map<string, number>} */
+  const rank = new Map();
+  /** @type {Map<number, number>} summaries per level */
+  const perLevel = new Map();
+  for (const r of m.rows) {
+    if (!r.summary) continue;
+    const k = perLevel.get(r.depth) ?? 0;
+    rank.set(r.id, k);
+    perLevel.set(r.depth, k + 1);
+  }
 
   const st = {
     depthMax: maxDepth, // outline rows deeper than this are dropped
     sumOff: 0, // how many levels of SUM_ORDER have lost their summaries
+    part: Infinity, // at level SUM_ORDER[sumOff], how many summaries (in outline order) are kept
     bridges: s.bridges.length,
     sources: s.sources.length,
     thin: s.thinNodes.length,
@@ -241,7 +282,8 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
     out.push('## Outline');
     for (const r of m.rows) {
       if (r.depth > st.depthMax) continue;
-      const sum = SUM_ORDER.indexOf(r.depth) >= st.sumOff ? r.summary : '';
+      const lvl = SUM_ORDER.indexOf(r.depth);
+      const sum = lvl > st.sumOff || (lvl === st.sumOff && (rank.get(r.id) ?? 0) < st.part) ? r.summary : '';
       out.push(`${'  '.repeat(r.indent)}- ${r.label}${sum ? ': ' + sum : ''}${r.explained ? ' [explained]' : ''}`);
     }
     out.push('', '## Bridges', ...section(s.bridges, st.bridges), '');
@@ -269,10 +311,13 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
       w.push(`outline depth${ds.length === 1 ? '' : 's'} ${lbl} (${nodes} node${nodes === 1 ? '' : 's'})`);
     }
     const lost = SUM_ORDER.slice(0, st.sumOff).filter((d) => d <= st.depthMax);
-    if (lost.length) {
-      if (lost.length === SUM_ORDER.filter((d) => d <= st.depthMax).length) w.push('all outline summaries');
+    const cutLevel = SUM_ORDER[st.sumOff];
+    const cut = cutLevel !== undefined && Number.isFinite(st.part) ? (perLevel.get(cutLevel) ?? 0) - st.part : 0;
+    if (lost.length || cut) {
+      if (!cut && lost.length === SUM_ORDER.filter((d) => d <= st.depthMax).length) w.push('all outline summaries');
       else {
         const parts = lost.map((d) => (d === 0 ? "the root's" : `depth ${d}`));
+        if (cut) parts.push(`${cut} of ${perLevel.get(cutLevel)} at ${cutLevel === 0 ? 'the root' : `depth ${cutLevel}`}`);
         w.push(`summaries at ${parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`}`);
       }
     }
@@ -308,9 +353,25 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
     return fits();
   };
 
-  // 1. drop summaries, deepest level first; the root's children keep theirs longest (labels stay)
+  // 1. drop summaries, deepest level first; the root's children keep theirs longest (labels stay).
+  //    Within the level being cut, summaries go from the end of the outline, only as many as needed.
   while (st.sumOff < SUM_ORDER.length) {
+    const total = perLevel.get(SUM_ORDER[st.sumOff]) ?? 0;
+    st.part = 0;
+    if (fits()) {
+      let lo = 0;
+      let hi = total;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        st.part = mid;
+        if (fits()) lo = mid;
+        else hi = mid - 1;
+      }
+      st.part = lo;
+      return render();
+    }
     st.sumOff += 1;
+    st.part = Infinity;
     if (fits()) return render();
   }
   // 2. shorten Bridges, then Sources

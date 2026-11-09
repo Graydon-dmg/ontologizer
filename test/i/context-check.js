@@ -47,3 +47,18 @@ export function missingLabels(text, ontology) {
   const labels = new Set(outline.map((l) => l.trim().replace(/^- /, '').replace(/ \[explained\]$/, '').split(': ')[0]));
   return Object.values(ontology.nodes).map((n) => /** @type {any} */ (n).label).filter((l) => !labels.has(l));
 }
+
+/**
+ * Bridge lines whose two ends read the same ("A → A"): two nodes that share a label must be told
+ * apart, or the bridge reads as a loop.
+ * @param {string} text @returns {string[]}
+ */
+export function sameNameBridges(text) {
+  const lines = text.split('\n');
+  const from = lines.indexOf('## Bridges');
+  const to = lines.indexOf('## Insights');
+  return lines.slice(from + 1, to).filter((l) => {
+    const m = l.match(/^- (.+?) → (.+?) \((?:influences|requires|part-of|bridge|analog)\)/);
+    return m !== null && m[1] === m[2];
+  });
+}

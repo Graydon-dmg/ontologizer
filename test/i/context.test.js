@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { foldAll } from '../../src/core/events.js';
 import { contextPack, estimateTokens, CONTEXT_HEADINGS } from '../../src/core/export/context.js';
-import { checkContextPack, missingLabels } from './context-check.js';
+import { checkContextPack, missingLabels, sameNameBridges } from './context-check.js';
 
 /** @param {string} name */
 const load = (name) => foldAll(readFileSync(new URL(`../../fixtures/${name}.events.jsonl`, import.meta.url), 'utf8')
@@ -56,13 +56,16 @@ const outlineOf = (/** @type {string} */ t) => {
 
 test('at a budget that fits labels but not summaries, every node label is still there', () => {
   const text = contextPack(demo, { budget: 1500 });
-  assert.match(lastLine(text), /^_Trimmed to fit 1500 tokens: summaries at depth 2\._$/);
+  // Leaf summaries go first; the root's children lose theirs last, from the end, only as many as needed.
+  const m = lastLine(text).match(/^_Trimmed to fit 1500 tokens: summaries at depth 2(?: and (\d+) of 9 at depth 1)?\._$/);
+  assert.ok(m, lastLine(text));
   assert.deepEqual(missingLabels(text, demo), []);
   assert.deepEqual(checkContextPack(text, demo, 1500), []);
-  // The root's children keep their summaries.
-  for (const n of Object.values(demo.nodes).filter((x) => x.parent === demo.root)) {
-    assert.ok(text.includes(`  - ${n.label}: `), n.label);
-  }
+  const children = Object.values(demo.nodes).filter((x) => x.parent === demo.root);
+  const kept = children.filter((n) => text.includes(`  - ${n.label}: `));
+  assert.equal(kept.length, children.length - Number(m[1] ?? 0));
+  assert.ok(kept.length >= 7, `${kept.length} of the root's children keep their summaries`);
+  assert.ok(text.includes(`  - ${children[0].label}: `), 'cut from the end of the outline');
 });
 
 test('planted fault: the old depth-first trim (leaf labels cut before summaries) is reported', () => {
@@ -188,6 +191,50 @@ test('thin areas with partial coverage: a line per category, thinnest first, plu
   assert.ok(thin.includes(`- ${cat?.label}: 1 of `), 'the covered category shows its count');
   // Planted fault: a pack that kept the per-category lines on a fresh map would not match.
   assert.notEqual(thinOf(contextPack(demo, { budget: 4000 })).trim(), thin.trim());
+});
+
+test('a label shared by two nodes is named with its category; unique labels stay bare', () => {
+  const text = contextPack(demo, { budget: 4000 });
+  assert.ok(text.includes('- Panel Lining (Painting Techniques) → Panel Lining (Weathering Techniques) (analog): '), 'the shared label is told apart');
+  assert.ok(text.includes('- Canopy Glue → Clear Coats (influences): '), 'unique labels unchanged');
+  assert.deepEqual(sameNameBridges(text), []);
+  // Outline lines stay bare: the tree already shows where each one sits.
+  assert.equal(text.split('\n').filter((l) => l.trim().startsWith('- Panel Lining:')).length, 2);
+  // An insight that points at a shared label is qualified too.
+  const pl = 'scale-plastic-modeling/weathering-techniques/panel-lining';
+  const withInsight = { ...demo, insights: [...demo.insights, { at: 1, text: 'Lines read better after a gloss coat.', nodeId: pl }] };
+  assert.ok(contextPack(withInsight, { budget: 4000 }).includes('- Lines read better after a gloss coat. (Panel Lining (Weathering Techniques))'));
+});
+
+test('two same-label nodes in the same category are told apart by their parent', () => {
+  const a = 'scale-plastic-modeling/core-hand-tools';
+  const kids = Object.values(demo.nodes).filter((n) => n.parent === a).slice(0, 2);
+  assert.equal(kids.length, 2);
+  const cat = /** @type {any} */ (demo.nodes[a]).category;
+  // Make a grandchild of each with the same label, both in the same category.
+  const mk = (/** @type {any} */ p, /** @type {string} */ id) => ({ id, label: 'Grip', parent: p.id, category: cat, depth: 3, origin: 'general', sources: [], article: null, status: 'done', createdBy: 'test', summary: 'x' });
+  const g1 = mk(kids[0], `${kids[0].id}/grip`);
+  const g2 = mk(kids[1], `${kids[1].id}/grip`);
+  const o = { ...demo, nodes: { ...demo.nodes, [g1.id]: g1, [g2.id]: g2 }, edges: [...demo.edges, { id: 'e-grip', from: g1.id, to: 'scale-plastic-modeling/paints-and-finishes', type: 'influences', why: 'test' }],
+    insights: [{ at: 1, text: 'Grip matters.', nodeId: g2.id }] };
+  const text = contextPack(/** @type {any} */ (o), { budget: 100000 });
+  assert.ok(text.includes(`- Grip (Core Hand Tools, under ${kids[0].label}) → `), text.split('## Bridges')[1].slice(0, 300));
+  assert.ok(text.includes(`(Grip (Core Hand Tools, under ${kids[1].label}))`));
+});
+
+test('planted fault: a pack that only tells same-label nodes apart when both share a category is reported', () => {
+  // The faulty rule: qualify a shared label only when both ends of the bridge are in one category.
+  const faulty = demo.edges.map((e) => {
+    const a = demo.nodes[e.from];
+    const b = demo.nodes[e.to];
+    const qualify = a.label === b.label && a.category === b.category;
+    const name = (/** @type {any} */ n) => (qualify ? `${n.label} (${n.category})` : n.label);
+    return `- ${name(a)} → ${name(b)} (${e.type}): ${e.why}`;
+  });
+  const text = contextPack(demo, { budget: 4000 });
+  const lines = text.split('\n');
+  const faultyPack = [...lines.slice(0, lines.indexOf('## Bridges') + 1), ...faulty, '', ...lines.slice(lines.indexOf('## Insights'))].join('\n');
+  assert.deepEqual(sameNameBridges(faultyPack), ['- Panel Lining → Panel Lining (analog): Same technique listed in both branches: dark lines in recessed panel detail.']);
 });
 
 test('context.js is pure: no node: imports, no document or process', () => {
