@@ -268,7 +268,8 @@ async function makePg(shared) {
   };
   const store = await open();
   return {
-    store, shared: { tenant }, reopen: async () => { await store.flush(); return open(); },
+    store, shared: { tenant }, // One writer per tenant: the previous store must release its lock before a reopen.
+    reopen: async () => { await store.flush(); for (const o of opened) await o.close(); return open(); },
     cleanup: async () => {
       for (const s of opened) { try { await s.flush(); } catch { /* reported by the test */ } }
       const pg = await import('pg');
@@ -413,4 +414,89 @@ test('postgres store: a failed write rejects flush and goes to log', async () =>
 test('postgres store: an invalid tenant is refused', () => {
   const { pool } = fakePool();
   assert.throws(() => openPostgresStore({ pool, tenant: 'Bad Tenant' }), /Invalid tenant "Bad Tenant": use lowercase letters, digits and hyphens \(at most 63 characters\)\./);
+});
+
+// ---- fail-stop, sync, transactions, lock and row visibility, without a server ----
+
+/** A pool with `connect`: records every statement and which client ran it. @param {(sql: string, params: any[]) => any} [hook] */
+function txPool(hook) {
+  /** @type {string[]} */ const calls = [];
+  /** @param {string} who */
+  const run = (who) => async (/** @type {string} */ sql, /** @type {any[]} */ params = []) => {
+    calls.push(`${who}: ${sql.replace(/\s+/g, ' ').trim().slice(0, 60)}`);
+    if (hook) hook(sql, params);
+    return { rows: /pg_try_advisory_lock/.test(sql) ? [{ ok: true }] : [] };
+  };
+  let n = 0;
+  return { calls, pool: { query: run('pool'), connect: async () => { const who = `c${++n}`; return { query: run(who), release: () => calls.push(`${who}: release`) }; }, end: async () => {} } };
+}
+
+test('postgres store: after a failed write nothing else is written and every mutator throws STORE_FAILED', async () => {
+  let inserts = 0;
+  const { pool, log } = fakePool((sql) => { if (/^\s*INSERT INTO ontologizer_events/.test(sql) && ++inserts === 2) throw new Error('boom'); });
+  /** @type {string[]} */ const lines = [];
+  const s = openPostgresStore({ pool, root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')), log: (l) => lines.push(l) });
+  await s.ready;
+  assert.equal(s.failed, null);
+  const d = s.createDraft({});
+  s.append(d, created('A')); s.append(d, node('n1', 1)); s.append(d, node('n2', 2)); s.append(d, node('n3', 3));
+  await assert.rejects(s.sync(), /^Error: The Postgres store stopped after a write failed: boom/);
+  assert.equal(inserts, 2, 'no insert ran after the failure');
+  assert.equal(log.filter((q) => /INSERT INTO ontologizer_events/.test(q.sql)).length, 2);
+  assert.equal(s.failed?.message, 'boom');
+  assert.equal(lines.length, 1);
+  const n = Object.keys(s.read(d).nodes).length;
+  for (const fn of [() => s.append(d, node('n4', 4)), () => s.createDraft({}), () => s.save(d, 'a'), () => s.importEvents('b', [created('B')])]) {
+    assert.throws(fn, (/** @type {any} */ e) => e.code === 'STORE_FAILED' && /^The Postgres store stopped after a write failed:/.test(e.message));
+  }
+  assert.equal(Object.keys(s.read(d).nodes).length, n);
+  await assert.rejects(s.flush(), (/** @type {any} */ e) => e.code === 'STORE_FAILED');
+});
+
+test('postgres store: save, createDraft and importEvents run in one transaction; the lock is taken and released', async () => {
+  const { pool, calls } = txPool();
+  const s = openPostgresStore({ pool, tenant: 'acme', root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });
+  await s.ready;
+  assert.match(calls[0], /^c1: SELECT pg_try_advisory_lock\(hashtext\('ontologizer:' \|\| \$1\)\)/);
+  const d = s.createDraft({}); s.append(d, created('A')); s.save(d, 'a'); s.importEvents('b', [created('B')]);
+  await s.sync();
+  const tx = calls.filter((c) => /^c[2-9]/.test(c));
+  const groups = []; let cur = null;
+  for (const c of tx) { if (/BEGIN/.test(c)) cur = []; if (cur) cur.push(c); if (/COMMIT|ROLLBACK/.test(c) && cur) { groups.push(cur); cur = null; } }
+  assert.equal(groups.length, 3, `expected 3 transactions, got ${JSON.stringify(calls)}`);
+  assert.ok(groups.every((g) => new Set(g.map((c) => c.split(':')[0])).size === 1 && /COMMIT/.test(g[g.length - 1])), 'one client, committed');
+  await s.close();
+  assert.ok(calls.some((c) => /^c1: SELECT pg_advisory_unlock/.test(c)) && calls[calls.length - 1] === 'c1: release');
+  // a failing last statement of save must end in ROLLBACK and never COMMIT
+  const bad = txPool((sql) => { if (/draft = false, is_current = true/.test(sql)) throw new Error('nope'); });
+  const s2 = openPostgresStore({ pool: bad.pool, root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });
+  await s2.ready;
+  const d2 = s2.createDraft({}); s2.append(d2, created('A')); s2.save(d2, 'a');
+  await assert.rejects(s2.flush(), /nope/);
+  const txCalls = bad.calls.filter((c) => /^c3/.test(c)); // the save's transaction (c2 is createDraft's)
+  assert.ok(txCalls.some((c) => /ROLLBACK/.test(c)) && !txCalls.some((c) => /COMMIT/.test(c)), JSON.stringify(txCalls));
+});
+
+test('postgres store: a refused lock rejects ready and releases the client', async () => {
+  const calls = /** @type {string[]} */ ([]);
+  const pool = { query: async () => ({ rows: [] }), end: async () => {},
+    connect: async () => ({ query: async () => ({ rows: [{ ok: false }] }), release: () => calls.push('release') }) };
+  const s = openPostgresStore({ pool, tenant: 'acme', root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });
+  await assert.rejects(s.ready, /^Error: Another process already has the Postgres store for tenant "acme" open \(one server per tenant\)\.$/);
+  assert.deepEqual(calls, ['release']);
+});
+
+test('postgres store: rows carry visibility only when private, kept current by append', async () => {
+  const { pool } = fakePool();
+  const s = openPostgresStore({ pool, root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });
+  await s.ready;
+  const d = s.createDraft({}); s.append(d, created('V'));
+  const row = () => s.list({ drafts: true })[0];
+  assert.deepEqual(Object.keys(row()).sort(), ['draft', 'id', 'name', 'nodes', 'root', 'updatedAt']);
+  s.append(d, { t: 'visibility.raised', at: 1, to: 'private', reason: 'source', sources: ['b', 'a'] });
+  assert.equal(row().visibility, 'private');
+  assert.deepEqual(row().privateSources, ['a', 'b']);
+  // planted fault: a public row must not pass the same check
+  const pub = s.list({ drafts: true })[0]; delete pub.visibility;
+  assert.notEqual(pub.visibility, 'private');
 });

@@ -4,8 +4,13 @@
 // One server process per tenant writes a Postgres store. The whole tenant (map rows and events) is
 // loaded into memory by `ready`; every read is served from memory and stays synchronous. Writes
 // update memory at once and go to Postgres in order through one promise chain (write-behind):
-// `flush()` resolves when everything so far is stored. Two processes writing the same tenant would
-// each hold a stale copy in memory, so do not do that.
+// `flush()` / `sync()` resolve when everything so far is stored (the router awaits `sync()` before
+// it answers a write).
+//
+// Fail-stop: the first failed write marks the store failed. Queued writes after it are skipped (so
+// Postgres never holds later events behind a gap) and every mutating call throws STORE_FAILED.
+// One writer per tenant is enforced with a Postgres advisory lock taken in `ready`. Multi-statement
+// writes (save, createDraft, importEvents) run in one transaction.
 //
 // Tables (created if missing), every query scoped by tenant:
 //   ontologizer_events (tenant, map_id, seq, event jsonb)            primary key (tenant, map_id, seq)
@@ -18,7 +23,8 @@ import { RESERVED_NAMES, TENANT_RE } from '../core/store.js';
 
 /** @typedef {import('../core/schema.js').Ontology} Ontology */
 /** @typedef {import('../core/events.js').OntoEvent} OntoEvent */
-/** @typedef {{ id: string, name: string, root: string, nodes: number, updatedAt: number, draft: boolean }} IndexRow */
+/** @typedef {{ id: string, name: string, root: string, nodes: number, updatedAt: number, draft: boolean,
+ *             visibility?: 'private', privateSources?: string[] }} IndexRow */
 /** @typedef {{ events: OntoEvent[], onto: Ontology, lastAt: number, startedAt: number,
  *             subs: Set<(e: OntoEvent, i: number) => void> }} Entry */
 
@@ -68,6 +74,8 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
   let pool = givenPool ?? null;
   let ownPool = false;
   let closed = false;
+  /** Dedicated client holding the tenant's advisory lock for the store's life. @type {any} */
+  let lockClient = null;
   /** @type {IndexRow[]} */
   let rows = [];
   /** @type {string|null} */
@@ -97,15 +105,60 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
   let chain = Promise.resolve();
   /** @param {(db: any) => Promise<any>} fn */
   function enqueue(fn) {
-    chain = chain.then(() => fn(pool)).then(() => {}, (/** @type {any} */ err) => {
-      if (!firstError) firstError = err;
-      if (log) log(`postgres store write failed: ${err && err.message}`);
+    chain = chain.then(() => {
+      if (firstError) return undefined; // fail-stop: never write behind a gap
+      return fn(pool);
+    }).then(() => {}, (/** @type {any} */ err) => {
+      if (!firstError) {
+        firstError = err instanceof Error ? err : new Error(String(err));
+        if (log) log(`postgres store write failed: ${firstError.message}`);
+      }
     });
   }
   /** @param {string} [_id] */
   async function flush(_id) {
     await chain;
-    if (firstError) throw firstError;
+    if (firstError) throw storeFailed();
+  }
+  /** The error every call gets once a write has failed. @returns {Error} */
+  function storeFailed() {
+    const e = /** @type {any} */ (new Error(`The Postgres store stopped after a write failed: ${firstError && firstError.message}`));
+    e.code = 'STORE_FAILED';
+    e.cause = firstError;
+    return e;
+  }
+  function assertWritable() {
+    if (firstError) throw storeFailed();
+  }
+
+  /** Run `fn` in one transaction on one client. A pool without `connect` (a test double with only
+   *  `query`) has no way to pin a connection, so the statements run without a transaction there.
+   *  @param {(db: any) => Promise<any>} fn */
+  async function inTx(fn) {
+    if (!pool || typeof pool.connect !== 'function') return fn(pool);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      try {
+        const out = await fn(client);
+        await client.query('COMMIT');
+        return out;
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch { /* the original error matters */ }
+        throw err;
+      }
+    } finally { client.release(); }
+  }
+
+  /** Keep visibility keys on a row: only a private map carries them. @param {IndexRow} row @param {Ontology} onto */
+  function applyVisibility(row, onto) {
+    if (onto.visibility === 'private') {
+      row.visibility = 'private';
+      row.privateSources = [...(onto.privateSources ?? [])].sort();
+    } else {
+      delete row.visibility;
+      delete row.privateSources;
+    }
   }
 
   const ready = (async () => {
@@ -120,6 +173,25 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       const Pool = pg.Pool ?? pg.default?.Pool;
       pool = new Pool({ connectionString: url, max: 4 });
       ownPool = true;
+    }
+    // One writer per tenant: a session-level advisory lock on a dedicated client, held until close().
+    // A pool without `connect` (a test double with only `query`) cannot pin a session, so no lock there.
+    if (typeof pool.connect === 'function') {
+      const client = await pool.connect();
+      let granted = false;
+      try {
+        const r = await client.query("SELECT pg_try_advisory_lock(hashtext('ontologizer:' || $1)) AS ok", [tenant]);
+        granted = !!(r.rows[0] && r.rows[0].ok);
+      } catch (err) {
+        client.release();
+        throw err;
+      }
+      if (!granted) {
+        client.release();
+        if (ownPool && !closed) { closed = true; try { await pool.end(); } catch { /* ignore */ } }
+        throw new Error(`Another process already has the Postgres store for tenant "${tenant}" open (one server per tenant).`);
+      }
+      lockClient = client;
     }
     for (const sql of SCHEMA) await pool.query(sql);
     const maps = await pool.query(
@@ -138,6 +210,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
     currentId = maps.rows.find((/** @type {any} */ r) => r.is_current)?.id ?? null;
     cache.clear();
     for (const [id, events] of byMap) cache.set(id, makeEntry(events));
+    for (const r of rows) { const en = cache.get(r.id); if (en) applyVisibility(r, en.onto); }
   })();
   ready.catch(() => {});
   // Writes wait for the tables.
@@ -192,16 +265,28 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
     ready,
     now,
     flush,
+    /** Resolves when every write so far is stored; rejects once the store has failed. */
+    sync() { return flush(); },
+    /** The first write error, or null. */
+    get failed() { return firstError; },
 
-    /** Ends the pool (when this store made it) after the pending writes. */
+    /** Releases the tenant lock, then ends the pool (when this store made it), after the pending writes. */
     async close() {
       try { await chain; } finally {
-        if (pool && ownPool && !closed) { closed = true; await pool.end(); }
+        try {
+          if (lockClient) {
+            const c = lockClient; lockClient = null;
+            try { await c.query("SELECT pg_advisory_unlock(hashtext('ontologizer:' || $1))", [tenant]); } finally { c.release(); }
+          }
+        } finally {
+          if (pool && ownPool && !closed) { closed = true; await pool.end(); }
+        }
       }
     },
 
     /** @param {any} brief @param {string} [suggestedName] @returns {string} */
     createDraft(brief, suggestedName) {
+      assertWritable();
       const base = `draft-${stamp(new Date())}`;
       let id = base;
       for (let n = 2; rowOf(id) || cache.has(id); n++) id = `${base}-${n}`;
@@ -210,18 +295,19 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       cache.set(id, makeEntry([]));
       currentId = id;
       const b = JSON.stringify(brief ?? {});
-      enqueue(async (db) => {
+      enqueue(() => inTx(async (db) => {
         await db.query('UPDATE ontologizer_maps SET is_current = false WHERE tenant = $1 AND is_current', [tenant]);
         await db.query(
           `INSERT INTO ontologizer_maps (tenant, id, name, root, nodes, updated_at, draft, brief, is_current)
            VALUES ($1, $2, $3, '', 0, $4, true, $5::jsonb, true)`,
           [tenant, id, row.name, row.updatedAt, b]);
-      });
+      }));
       return id;
     },
 
     /** @param {string} id @param {OntoEvent} event */
     append(id, event) {
+      assertWritable();
       const e = load(id);
       const row = rowOf(id);
       if (!row) throw new Error(`Unknown ontology "${id}"`);
@@ -234,6 +320,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       row.root = e.onto.root;
       row.nodes = countNodes(e.onto);
       row.updatedAt = Date.now();
+      applyVisibility(row, e.onto);
       const json = JSON.stringify(event);
       enqueue((db) => db.query(
         'INSERT INTO ontologizer_events (tenant, map_id, seq, event) VALUES ($1, $2, $3, $4::jsonb)',
@@ -263,6 +350,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
     /** @param {string} id @param {string} name @param {{ overwrite?: boolean, actor?: any }} [opts]
      *  actor: stamped on the ontology.renamed event (service mode); without it the event is as before. */
     save(id, name, { overwrite = false, actor = null } = {}) {
+      assertWritable();
       assertName(name);
       const e = load(id);
       if (name !== id) {
@@ -280,10 +368,11 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       }
       rows = rows.filter((r) => r.id !== id && r.id !== name);
       Object.assign(row, { id: name, name, root: e.onto.root, nodes: countNodes(e.onto), updatedAt: Date.now(), draft: false });
+      applyVisibility(row, e.onto);
       rows.push(row);
       currentId = name;
       const snap = { ...row };
-      enqueue(async (db) => {
+      enqueue(() => inTx(async (db) => {
         if (name !== id) {
           if (hadTarget) {
             await db.query('DELETE FROM ontologizer_events WHERE tenant = $1 AND map_id = $2', [tenant, name]);
@@ -297,7 +386,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
           `UPDATE ontologizer_maps SET name = $3, root = $4, nodes = $5, updated_at = $6, draft = false, is_current = true
            WHERE tenant = $1 AND id = $2`,
           [tenant, name, snap.name, snap.root, snap.nodes, snap.updatedAt]);
-      });
+      }));
       return name;
     },
 
@@ -327,16 +416,18 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
 
     /** @param {string} name @param {OntoEvent[]} events */
     importEvents(name, events) {
+      assertWritable();
       assertName(name);
       if (rows.some((r) => r.id === name)) throw new Error(`"${name}" already exists.`);
       const onto = foldAll(events);
       const brief = events.find((x) => x.t === 'ontology.created')?.brief ?? onto.brief;
       const row = { id: name, name: onto.name || name, root: onto.root, nodes: countNodes(onto), updatedAt: Date.now(), draft: false };
+      applyVisibility(row, onto);
       rows.push(row);
       cache.set(name, makeEntry(events.slice()));
       const evJson = JSON.stringify(events);
       const briefJson = JSON.stringify(brief ?? {});
-      enqueue(async (db) => {
+      enqueue(() => inTx(async (db) => {
         await db.query('DELETE FROM ontologizer_events WHERE tenant = $1 AND map_id = $2', [tenant, name]);
         await db.query(
           `INSERT INTO ontologizer_maps (tenant, id, name, root, nodes, updated_at, draft, brief, is_current)
@@ -346,7 +437,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
           `INSERT INTO ontologizer_events (tenant, map_id, seq, event)
            SELECT $1, $2, (t.n - 1)::integer, t.e FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS t(e, n)`,
           [tenant, name, evJson]);
-      });
+      }));
       return name;
     },
   };
