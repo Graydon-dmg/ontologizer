@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildEmbed } from '../../scripts/build-embed.js';
-import { bundleText, networkProblems, ROOT } from './build-check.js';
+import { buildEmbed, bundledPackages, licenceText } from '../../scripts/build-embed.js';
+import { exportMap } from '../../src/core/export/index.js';
+import { bundleText, networkProblems, ROOT, demo, licenceHeader, licenceHeaderProblems } from './build-check.js';
 
 const root = fileURLToPath(ROOT);
 
@@ -37,6 +38,35 @@ test('the bundles define the element once, carry their licences, and only the 3D
   assert.match(three, /Includes three@/);
   assert.doesNotMatch(two, /three@/);
   assert.ok(two.length < three.length / 3, 'the 2D bundle leaves three.js out');
+});
+
+test('each bundle names every package esbuild put in it, with its full licence text and copyright line', async () => {
+  for (const [entry, threeD] of /** @type {const} */ ([['index.js', false], ['index-3d.js', true]])) {
+    const pkgs = await bundledPackages(entry);
+    assert.ok(pkgs.size >= 10, `${entry}: ${pkgs.size} packages`);
+    assert.deepEqual(licenceHeaderProblems(await bundleText(threeD), pkgs, licenceText), [], entry);
+  }
+  const pkgs = await bundledPackages('index.js');
+  assert.ok([...pkgs.keys()].some((id) => id.startsWith('d3-zoom@')));
+});
+
+test('planted fault: a licence comment missing one bundled package, or its text, is reported', async () => {
+  const code = await bundleText();
+  const pkgs = await bundledPackages('index.js');
+  const zoom = /** @type {string} */ ([...pkgs.keys()].find((id) => id.startsWith('d3-zoom@')));
+  const dropped = code.replace(`${zoom}, `, '').replace(`, ${zoom}`, '');
+  assert.deepEqual(licenceHeaderProblems(dropped, pkgs, licenceText), [`${zoom} is bundled but not named in the licence comment`]);
+  const noText = code.replace('Mike Bostock', 'someone');
+  assert.ok(licenceHeaderProblems(noText, pkgs, licenceText).length > 0);
+  assert.deepEqual(licenceHeaderProblems('(()=>{})()', pkgs, licenceText), ['the bundle has no licence comment first']);
+});
+
+test('the licence comment survives into html and embed exports', async () => {
+  const code = await bundleText();
+  const header = /** @type {string} */ (licenceHeader(code));
+  for (const format of /** @type {const} */ (['html', 'embed'])) {
+    assert.ok(exportMap(demo(), { format, bundle: code }).includes(header), format);
+  }
 });
 
 test('a fresh build from nothing works (no test needs web/dist/ to exist beforehand)', async () => {

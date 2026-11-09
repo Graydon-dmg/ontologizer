@@ -19,19 +19,19 @@ const GUARD_OPEN = 'if(!(globalThis.customElements&&customElements.get("ontologi
 const GUARD_CLOSE = '}';
 
 /** @param {string} dir @returns {string|null} */
-function licenceText(dir) {
+export function licenceText(dir) {
   if (!existsSync(dir)) return null;
   const name = readdirSync(dir).find((f) => /^licen[cs]e(\.(md|txt))?$/i.test(f));
   return name ? readFileSync(path.join(dir, name), 'utf8').replace(/\r\n/g, '\n').trim() : null;
 }
 
 /**
- * The licence comment for the packages a bundle includes (from esbuild's metafile inputs).
- * @param {string[]} inputs  input paths relative to ROOT
- * @returns {string}
+ * The packages a bundle includes, from esbuild's metafile inputs (paths relative to ROOT).
+ * @param {string[]} inputs
+ * @returns {Map<string, string>} name@version -> package dir
  */
-export function licenceComment(inputs) {
-  /** @type {Map<string, string>} name@version -> package dir */
+export function packagesOf(inputs) {
+  /** @type {Map<string, string>} */
   const pkgs = new Map();
   for (const file of inputs) {
     const m = file.replace(/\\/g, '/').match(/^(.*?node_modules\/((?:@[^/]+\/)?[^/]+))\//);
@@ -40,6 +40,41 @@ export function licenceComment(inputs) {
     const meta = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
     pkgs.set(`${meta.name}@${meta.version}`, dir);
   }
+  return pkgs;
+}
+
+/** esbuild options shared by the probe and the real build. @param {string} entry */
+function options(entry) {
+  return {
+    entryPoints: [path.join(ROOT, 'web', 'embed', entry)],
+    bundle: true,
+    format: /** @type {const} */ ('iife'),
+    minify: true,
+    target: 'es2022',
+    platform: /** @type {const} */ ('browser'),
+    absWorkingDir: ROOT,
+    logLevel: /** @type {const} */ ('error'),
+  };
+}
+
+/**
+ * The packages an entry's bundle includes, by running esbuild without writing anything.
+ * @param {string} entry  'index.js' or 'index-3d.js'
+ * @returns {Promise<Map<string, string>>} name@version -> package dir
+ */
+export async function bundledPackages(entry) {
+  const { build } = await import('esbuild');
+  const probe = await build({ ...options(entry), write: false, metafile: true, outfile: path.join(DIST_DIR, 'probe.js') });
+  return packagesOf(Object.keys(probe.metafile?.inputs ?? {}));
+}
+
+/**
+ * The licence comment for a bundle: Ontologizer's licence, then the full licence text (with its
+ * copyright line) of every package the bundle includes; identical texts are written once.
+ * @param {Map<string, string>} pkgs  name@version -> package dir
+ * @returns {string}
+ */
+export function licenceComment(pkgs) {
   /** @type {Map<string, string[]>} licence text -> packages */
   const byText = new Map();
   for (const [id, dir] of [...pkgs].sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -61,21 +96,10 @@ export async function buildEmbed({ outdir = DIST_DIR, quiet = false } = {}) {
   const out = [];
   for (const [entry, name] of ENTRIES) {
     const file = path.join(outdir, name);
-    const common = {
-      entryPoints: [path.join(ROOT, 'web', 'embed', entry)],
-      bundle: true,
-      format: /** @type {const} */ ('iife'),
-      minify: true,
-      target: 'es2022',
-      platform: /** @type {const} */ ('browser'),
-      absWorkingDir: ROOT,
-      logLevel: /** @type {const} */ ('error'),
-    };
     // First pass: find which packages go in. Second pass: write the bundle with their licences on top.
-    const probe = await build({ ...common, write: false, metafile: true, outfile: file });
-    const licences = licenceComment(Object.keys(probe.metafile?.inputs ?? {}));
+    const licences = licenceComment(await bundledPackages(entry));
     const res = await build({
-      ...common,
+      ...options(entry),
       outfile: file,
       write: false,
       legalComments: 'none', // every licence is in the comment above, once

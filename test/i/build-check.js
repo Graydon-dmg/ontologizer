@@ -83,3 +83,30 @@ export function sizeProblems(html) {
   const bytes = Buffer.byteLength(html);
   return bytes < MAX_2D_HTML ? [] : [`2D html export is ${Math.round(bytes / 1024)} KB, over ${MAX_2D_HTML / 1024} KB`];
 }
+
+/** The leading licence comment of a bundle, or null. @param {string} code */
+export function licenceHeader(code) {
+  const m = code.match(/^\/\*!\n([\s\S]*?)\n\*\//);
+  return m ? m[1] : null;
+}
+
+/**
+ * Every package esbuild put in the bundle must be named in its licence header, with its full
+ * licence text (which carries its copyright line).
+ * @param {string} code @param {Map<string, string>} pkgs name@version -> package dir
+ * @param {(dir: string) => string|null} textOf
+ * @returns {string[]}
+ */
+export function licenceHeaderProblems(code, pkgs, textOf) {
+  const header = licenceHeader(code);
+  if (header === null) return ['the bundle has no licence comment first'];
+  const named = new Set();
+  for (const m of header.matchAll(/^Includes (.*):$/gm)) for (const id of m[1].split(', ')) named.add(id);
+  const problems = [];
+  for (const [id, dir] of pkgs) {
+    if (!named.has(id)) problems.push(`${id} is bundled but not named in the licence comment`);
+    const text = (textOf(dir) ?? '').replace(/\*\//g, '* /');
+    if (!text || !header.includes(text)) problems.push(`${id}: its licence text is not in the licence comment`);
+  }
+  return problems;
+}
