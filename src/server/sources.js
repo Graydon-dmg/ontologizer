@@ -5,7 +5,10 @@
 /** @typedef {{ name: string, url?: string, command?: string, args?: string[], visibility: 'public'|'private', allowTools: string[], headers?: (principal: any) => Record<string, string> }} SourceEntry */
 /** @typedef {{ source: string, ref: string, title?: string, url?: string }} SourceRef */
 /** @typedef {{ text: string, isError: boolean, source: string, visibility: 'public'|'private', refs: SourceRef[] }} ToolResult */
-/** @typedef {{ defs: { name: string, description: string, input_schema: any }[], names: string[], call: (name: string, input: any) => Promise<ToolResult> }} ToolSet */
+/** @typedef {{ defs: { name: string, description: string, input_schema: any }[], names: string[],
+ *   info: Record<string, { source: string, visibility: 'public'|'private' }>,
+ *   call: (name: string, input: any) => Promise<ToolResult> }} ToolSet
+ *   info: which source (and its visibility) each offered tool name belongs to. */
 
 export const SEP = '__';
 const JOINED_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -253,6 +256,7 @@ export function createSources(entries, { connect = defaultConnect, log = () => {
       return {
         defs,
         names: defs.map((d) => d.name),
+        info: Object.fromEntries([...offered].map(([full, o]) => [full, { source: o.entry.name, visibility: o.entry.visibility }])),
         async call(name, input) {
           const hit = offered.get(name);
           if (!hit) return { isError: true, text: 'That tool is not offered.', source: String(name).split(SEP)[0], visibility: 'public', refs: [] };

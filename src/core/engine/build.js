@@ -117,6 +117,12 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   const subject = String(brief.subject);
   const root = slug(subject);
   ectx.emit('ontology.created', { name: subject, root, brief, categories: [] });
+  // Private sources picked in New map make the map private before anything else is written (not even
+  // the root node is ever public), durably, whether or not the build ends up using them.
+  if (ectx.picked?.length) {
+    ectx.emit('visibility.raised', { to: 'private', reason: 'sources-picked', sources: [...new Set(/** @type {string[]} */ (ectx.picked))].sort() });
+    await ectx.durable?.();
+  }
 
   /** @param {object} p */
   const node = (p) => ({ summary: '', hook: '', sources: [], article: null, status: 'done', ...p });

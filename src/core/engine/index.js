@@ -27,7 +27,9 @@ const JOB_KINDS = new Set(['research', 'explain', 'sources']);
  * - actor: stamped on every event the run appends, as a top-level `actor` field.
  * - principal: who asked; passed to the model port with the call's purpose.
  * - tools: a ToolSet of configured sources (src/server/sources.js), or null.
- * @typedef {{ actor?: any, principal?: any, tools?: import('./run.js').ToolSet|null }} RunOpts
+ * - privateSources (build only): private sources picked in New map; the map is raised to private
+ *   (reason 'sources-picked') right after ontology.created, before anything else is written.
+ * @typedef {{ actor?: any, principal?: any, tools?: import('./run.js').ToolSet|null, privateSources?: string[] }} RunOpts
  * @typedef {'check'|'build'|'research'|'explain'|'sources'|'ask'|'fuse'|'rosetta'} Purpose
  */
 
@@ -47,6 +49,9 @@ export function createEngine({ store, id, client = null, models = defaultModels(
   const getClient = (purpose = 'build', principal = null) =>
     (clientFor ? clientFor({ principal, purpose }) : (lazyClient ??= makeClient()));
 
+  /** Resolves when every write so far is stored: a Postgres store's sync(); the file store has none (its appends are synchronous). */
+  const durable = async () => { if (typeof store.sync === 'function') await store.sync(); };
+
   // `at` is ms since the ontology was created. build() resets the clock when it writes
   // ontology.created; an engine opened on an existing map counts from its own start.
   let startedAt = Date.now();
@@ -60,18 +65,20 @@ export function createEngine({ store, id, client = null, models = defaultModels(
    * model port with this purpose, and `{ useTools: true }` on a call offers the run's source tools.
    * @param {Purpose} purpose @param {RunOpts} [o]
    */
-  function runCtx(purpose, { actor = null, principal = null, tools = null } = {}) {
+  function runCtx(purpose, { actor = null, principal = null, tools = null, privateSources = [] } = {}) {
     /** @param {string} t @param {object} fields */
     const emitAs = actor ? (t, fields) => emit(t, { ...fields, actor }) : emit;
-    const run = createRun({ tools, emit: emitAs, read: () => store.read(id) });
+    const run = createRun({ tools, emit: emitAs, read: () => store.read(id), durable });
     return {
-      store, id, models, queue, actor, run,
+      store, id, models, queue, actor, run, durable,
+      picked: Array.isArray(privateSources) ? privateSources.filter((n) => typeof n === 'string' && n) : [],
       getClient: () => getClient(purpose, principal),
       emit: emitAs,
       /** @param {any} params @param {(obj: any) => void} onObject */
       call: (params, onObject) => {
         const { useTools, ...p } = params;
-        return runCall(() => getClient(purpose, principal), { ...p, tools: useTools ? run.tools : null }, onObject);
+        // Every call knows whether the map is private now (a private map's run gets no web search).
+        return runCall(() => getClient(purpose, principal), { ...p, tools: useTools ? run.tools : null, restricted: run.restricted }, onObject);
       },
       /** The verified source refs of a model line's `sources`. @param {any} list */
       cite: (list) => run.cite(list),
@@ -118,7 +125,7 @@ export function createEngine({ store, id, client = null, models = defaultModels(
      */
     ask: (input, { signal, ...o } = {}) => {
       const c = runCtx('ask', o);
-      return ask({ store, id, models, getClient: c.getClient, emit: c.emit, run: c.run }, input, signal ? { signal } : {});
+      return ask({ store, id, models, getClient: c.getClient, emit: c.emit, run: c.run, durable }, input, signal ? { signal } : {});
     },
 
     /** Resolves when no job is queued or running. */

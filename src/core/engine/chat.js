@@ -5,6 +5,7 @@
 import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage } from './call.js';
 import { labelPath, findByLabelPath } from './ids.js';
 import { chatSystem, outlineBlock } from './prompts-chat.js';
+import { UNTRUSTED } from './run.js';
 
 const MAX_TURNS = 6;           // model calls per question, tool turns included
 const HISTORY_EXCHANGES = 10;  // earlier question/answer pairs sent with each question
@@ -15,7 +16,8 @@ export const STOPPED = 'Stopped.';
 
 const SOURCES_NOTE = `
 
-The reader's own sources can also be searched, with the tools named <source>__<tool>. Use them for what the map does not cover. When you use a document from a source that has a url, link it the way you link web pages.`;
+The reader's own sources can also be searched, with the tools named <source>__<tool>. Use them for what the map does not cover. When you use a document from a source that has a url, link it the way you link web pages.
+${UNTRUSTED}`;
 
 /**
  * @typedef {{ type: 'delta', text: string } | { type: 'citation', nodeId: string, label: string }
@@ -158,7 +160,9 @@ async function run(cctx, q, out) {
       const params = {
         model: models.strong, max_tokens: 8000, system, messages,
         output_config: { effort: 'medium' },
-        tools: [...TOOLS, WEB_SEARCH_TOOL, ...(srcTools ? srcTools.defs : [])],
+        // A private map's answer never reaches the web or a public source: only the map's own tools
+        // and the private sources this ask may use (checked each turn: a source can raise it mid-answer).
+        tools: [...TOOLS, ...(store.read(id).visibility === 'private' ? [] : [WEB_SEARCH_TOOL]), ...(srcTools ? srcTools.defs : [])],
       };
       if (last) params.tool_choice = { type: 'none' };      // out of turns: answer with what it has
       const stream = client.messages.stream(params, signal ? { signal } : undefined);
@@ -197,7 +201,7 @@ async function run(cctx, q, out) {
       /** @type {any[]} */
       const results = [];
       for (const u of uses) {
-        if (srcNames.has(u.name)) {
+        if (srcNames.has(u.name) && params.tools.some((/** @type {any} */ d) => d.name === u.name)) {
           // A source tool (read-only). A private source's first answer raises the map first.
           const r = await /** @type {any} */ (srcTools).call(u.name, u.input);
           for (const ref of r.refs ?? []) if (ref.url && ref.title) searchTitles.set(ref.url, String(ref.title));

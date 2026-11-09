@@ -29,9 +29,10 @@ export function createEngine({ store, id, client: _client = null }) {
       return { ready: true, brief: created.brief, name: 'plastic-modeling' };
     },
 
-    /** @param {any} brief @param {{ actor?: any }} [opts] @returns {Promise<void>} */
+    /** @param {any} brief @param {{ actor?: any, privateSources?: string[] }} [opts] @returns {Promise<void>} */
     async build(brief, opts) {
       const actor = opts?.actor ?? null; // service mode stamps who asked on every event
+      const picked = Array.isArray(opts?.privateSources) ? [...new Set(opts.privateSources)].sort() : [];
       const speed = Number(process.env.ONTOLOGIZER_STUB_SPEED) || 1;
       let prev = 0;
       for (const ev of fixtureEvents()) {
@@ -40,6 +41,12 @@ export function createEngine({ store, id, client: _client = null }) {
         prev = ev.at ?? prev;
         const e = ev.t === 'ontology.created' ? { ...ev, brief } : ev;
         store.append(id, actor ? { ...e, actor } : e);
+        // As the real engine: picked private sources raise the map right after ontology.created.
+        if (ev.t === 'ontology.created' && picked.length) {
+          const raise = { t: 'visibility.raised', at: ev.at ?? 0, to: 'private', reason: 'sources-picked', sources: picked };
+          store.append(id, actor ? { ...raise, actor } : raise);
+          if (typeof store.sync === 'function') await store.sync();
+        }
       }
     },
 
