@@ -26,7 +26,8 @@
     "./core": "./src/core/index.js",
     "./views": "./web/views/index.js",
     "./store-postgres": "./src/store-postgres/index.js",
-    "./export": "./src/core/export/index.js"
+    "./export": "./src/core/export/index.js",
+    "./client": "./src/client/index.js"
   },
   "files": [
     "src",
