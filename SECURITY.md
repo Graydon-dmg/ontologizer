@@ -73,6 +73,19 @@ When you open a map, Ontologizer starts a web server on `127.0.0.1` (your own ma
 - **Plain HTTP.** Service mode serves HTTP. On a network you do not trust, put it behind a reverse proxy that terminates TLS, create a token, and pass `--allow-host` with the proxy's name.
 - **The API key** stays in the server's environment or keychain. Service mode never prompts for it and never sends it to a browser.
 
+## Ports, sources and private maps
+
+Service mode can load an optional `ontologizer.config.js` (see the guide, "Ports and private sources").
+
+- **The config runs as code.** Loading it imports a JavaScript module with the server's own rights: it can read files and the environment and open connections. `serve` finds it only through `--config`, `ONTOLOGIZER_CONFIG` or `<home>/ontologizer.config.js`, never from the current folder, so running `serve` in a folder someone else controls cannot load their code. Keep the file writable only by you. A config that fails to load or validate stops the server (exit 1); unknown keys are refused rather than ignored.
+- **Sources only read.** A source's tool is offered to the model only if the operator listed it in `allowTools` and the source server marks it `readOnlyHint`. Both must hold; a call to any other tool is refused before it reaches the server. `readOnlyHint` is the source server's own claim, which is why the operator's list is also required: remove a source that lies about its tools. `sources list` and `sources test` never call a tool.
+- **Citations are checked.** A node cites a source document only if a tool returned that document in the same build or job; the title and link come from the tool's result, and only `http`/`https` links are made clickable.
+- **Private maps.** The first time a private source answers during a build (or a fused map has a private input), the map is marked private, before anything written from that answer is stored. Nothing can mark it public again. A private map is readable only by an admin or a principal holding every private source it used; anyone else gets 404 on every route of it, and it is left out of their maps list and fuse picker. A click or a question on an existing map never brings in a new private source: only **New map** does.
+- **Identity port.** A custom identity replaces tokens. It is trusted to say who a request comes from, so whatever it reads (for example a header set by a sign-in proxy) must be something only that proxy can set: keep the server unreachable except through it. A principal without a valid actor, tenant and scopes, or an identity that throws, is refused. A cross-origin `POST` is refused as with cookie sessions.
+- **Policy port.** A custom policy that throws or returns anything but `true` denies. No policy can reach another tenant's maps.
+- **Who did what.** Every event a service-mode request appends carries the caller's actor (`token:<name>`, `local`, or the identity port's actor), never a token or a session id.
+- **Model port.** The model client and any headers it adds are the operator's code; the server passes it the principal and the call's purpose, nothing else.
+
 ## Data at rest
 
 Images you attach in the chat are saved in the map's folder as `attachments/<sha256>.<ext>`. The chat transcript in `events.jsonl` records only each image's hash, type and size, never its bytes. Delete `attachments/` (or single files in it) to remove the images; the chat still loads without them.

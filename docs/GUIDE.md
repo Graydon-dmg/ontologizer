@@ -19,6 +19,7 @@ Ontologizer builds a live, color-coded map of any topic with Claude and streams 
 8. [Privacy](#8-privacy)
 9. [Troubleshooting](#9-troubleshooting)
 10. [Service mode](#10-service-mode)
+11. [Ports and private sources](#11-ports-and-private-sources)
 
 ---
 
@@ -467,3 +468,117 @@ Behind a proxy, add `-e ONTOLOGIZER_ALLOW_HOST=maps.example.com`.
 
 Service mode never asks for an API key. Without one, the server still runs, and a build fails with "No Anthropic API key" on the map.
 
+
+## 11. Ports and private sources
+
+Service mode has five **ports**, places where a team plugs in its own piece without forking: **identity** (who is calling), **policy** (what they may do), **store** (where maps live), **model** (which model client a call uses) and **sources** (your own documents, reached through MCP servers). With no config file, every port is the built-in one and service mode behaves exactly as in section 10.
+
+### The config file
+
+The ports are set in one file, `ontologizer.config.js`, an ES module with a default export. `serve` finds it, in this order, from `--config <file>`, the `ONTOLOGIZER_CONFIG` environment variable, or `<home>/ontologizer.config.js`. It never looks in the folder you run it from.
+
+**Loading the config runs it as code,** with the server's own rights (it can read files, open connections, read the environment). Keep it where only you can write it, and treat a change to it like a change to the server. A config that fails to load, or has a key or value it does not understand, stops `serve` with exit 1 and a message naming the file and every problem.
+
+Imports in the config resolve from the config file's own folder, like any ES module: install what it imports next to it (for example `npm install ontologizer pg` in that folder).
+
+A full example, with a private team wiki and a public documentation site:
+
+```js
+// ontologizer.config.js
+import { openPostgresStore } from 'ontologizer/store-postgres';   // only if you use the Postgres store
+import Anthropic from '@anthropic-ai/sdk';
+
+export default {
+  // Your own MCP servers. Only tools listed in allowTools AND marked readOnlyHint by the server are
+  // ever offered to the model. Nothing a source offers may write.
+  sources: [
+    {
+      name: 'wiki',
+      url: 'https://wiki.internal.example/mcp',          // streamable HTTP
+      visibility: 'private',                              // a map built from it becomes private
+      allowTools: ['search', 'get_page'],
+      headers: (principal) => ({ 'X-On-Behalf-Of': principal.actor.id }),   // per caller
+    },
+    {
+      name: 'docs',
+      command: 'node', args: ['/opt/docs-mcp/server.js'], // stdio (headers do not apply)
+      visibility: 'public',
+      allowTools: ['search'],
+    },
+  ],
+
+  // Where maps live: one store per tenant. The default is the files under your home.
+  store: (tenant) => openPostgresStore({ url: process.env.DATABASE_URL, tenant }),
+
+  // Which client each model call uses. purpose is check, build, research, explain, sources, ask,
+  // fuse or rosetta. The default is your own key, as everywhere else.
+  model: ({ principal, purpose }) => new Anthropic({
+    defaultHeaders: { 'X-Team': principal.tenant, 'X-Purpose': purpose },
+  }),
+
+  // identity and policy: see below.
+};
+```
+
+### Sources
+
+Each source is an MCP server: `url` for one reached over HTTP, or `command` and `args` for one Ontologizer starts itself. Its tools appear to the model as `<source>__<tool>` (for example `wiki__search`), beside web search, when it builds a map, researches or explains a node, or answers a question in the chat. They are never used for the context check, the Sources job, fuse or lenses.
+
+A tool is offered only when **both** of these hold: you listed it in `allowTools`, and the server marks it `readOnlyHint`. A tool that changes anything is never offered, even if you list it; a call to a tool that was not offered never reaches the server.
+
+```bash
+ontologizer sources list            # name, visibility, allowed tools, reachable or not
+ontologizer sources test wiki       # connects, lists every tool, says which are offered and why the others are not
+```
+
+Both are read-only: they never call a tool. The Server panel shows the same list (name, visibility, reachable), and the ports in use.
+
+### Citations you can trust
+
+When a node is built from a document a source returned, its details panel lists that document under **From sources** (`wiki · Choosing glue`), linked when the source gave a web address. The model can only cite documents a tool actually returned in the same build or job: a reference it makes up is dropped, and the title and link always come from the source, never from the model.
+
+### Private maps
+
+A source marked `visibility: 'private'` makes every map that uses it private, **for life**: the first time it answers during a build, the map records it, and nothing can make the map public again. A fused map is private if either input is. A private map shows a **Private** badge in its top bar and in the maps home, and `ontologizer list` shows it in the visibility column.
+
+Who sees a private map: an admin, and anyone who **holds every private source** the map used. Anyone else gets "not found" for it, and it is not in their maps list or their fuse picker.
+
+```bash
+ontologizer token create --name reader                    # holds every public source, no private one
+ontologizer token create --name team --sources wiki,docs  # holds wiki (private) and docs
+```
+
+**New map** shows a checkbox for each source you hold; a build uses only the ones you leave checked. A click on an existing map (research, explain, a question in the chat) uses your public sources and only the private ones the map already uses: a reader exploring a shared public map never turns it private by accident.
+
+### Identity and policy
+
+**Identity** decides who a request comes from. The default is the tokens and sessions of section 10. To sign people in through your organisation's single sign-on, put an OIDC-aware reverse proxy in front of the server and let an identity port read the user it vouches for:
+
+```js
+identity: {
+  name: 'sso-proxy',
+  // Called for every /v1/t/ request. Return a principal, or null for "not signed in" (401).
+  authenticate(req) {
+    const user = req.headers['x-auth-user'];         // set by your proxy, and only by it
+    if (!user) return null;
+    return {
+      actor: { id: `user:${user}`, kind: 'human' },  // kind: human | agent | service
+      tenant: 'default',
+      scopes: ['read', 'ask', 'build'],
+      sources: ['wiki', 'docs'],                     // the sources this person holds
+    };
+  },
+},
+```
+
+A custom identity replaces tokens: the server then requires a principal on every map route and may listen beyond loopback. Make sure only your proxy can reach it, or anyone could send the header themselves. A principal without a valid actor, tenant or scopes is refused.
+
+**Policy** decides what a principal may do. `can(principal, action, { tenant, mapId, map })` returns true or false; `action` is `read`, `build`, `ask`, `job` (node actions), `save`, `export` or `admin`. The default is the scope ladder of section 10 plus the private-map rule above. A policy that throws denies. No policy can let a principal into another tenant.
+
+### Who did what
+
+In service mode every change a request makes to a map is stamped with who made it: `actor: { id, kind }` on each event (`token:<name>` for a token, `local` on an open server, or your identity port's actor). The command line and the one-map page write exactly what they always did.
+
+### The Postgres store
+
+`ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8.23.1`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order behind the scenes, so **run one server per tenant** against a database. Chat images stay on local disk (`<home>/pg/<tenant>/`).

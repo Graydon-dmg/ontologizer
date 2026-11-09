@@ -106,6 +106,8 @@ ontologizer serve --host 0.0.0.0            # every /v1/t/ route now needs the t
 
 `new`, `load` and the one-map page work exactly as before. Details are in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#10-service-mode) and in [SECURITY.md](SECURITY.md#network-mode).
 
+**Ports and private sources.** An optional `ontologizer.config.js` plugs in your own identity, policy, store (files or Postgres), model client and **sources**: your own MCP servers, whose read-only tools the model uses to build maps that cite your documents. A map built from a private source is private for life and visible only to those who hold that source. `ontologizer sources list` and `sources test` check them. See the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#11-ports-and-private-sources).
+
 ## Requirements
 
 - Node 22+

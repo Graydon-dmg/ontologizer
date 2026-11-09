@@ -267,6 +267,8 @@ Built on Part I1 (branch `epic/i2-ports`, from I1's head). Five ports let a team
 **May touch:**
 - `src/core/events.js`: the `visibility.raised` event, `visibility` and `privateSources` in `fold` and `emptyOntology`. Nothing else changes for existing events.
 - `src/core/schema.js`: the types (`actor`, `SourceRef`, `visibility`, `privateSources`).
+- `src/core/store.js`: `save(id, name, { overwrite, actor })` stamps the actor on `ontology.renamed` (without it, the event is as before).
+- `scripts/third-party-notices.js`: development-only packages (`pg`) in their own section, so the existing notices test covers every lockfile package (the same approach as Part I4's build tools).
 - `src/core/engine/`: per-run `actor`, `principal` and `tools` options, the model port (`clientFor`), the tool loop in `call.js`, verified citations, the visibility raise, fuse inheritance. Called without the new options, every function writes exactly what it writes today.
 - `src/cli/engine.js`, `src/cli/serve.js` (pass `clientFor` through), `src/cli/engine-stub.js` (stamp `actor` when given).
 - `src/server/service.js`, `src/server/map.js`, `src/server/chat.js` (the ports, the actor, the read rule), `src/server/tokens.js` (the optional `sources` list).
@@ -394,10 +396,12 @@ openPostgresStore({ url, tenant = 'default', root? })   // -> a store; await sto
 ```text
 GET  /v1/t/:tenant/sources              [{ name, visibility }] the sources the caller holds (read)
 POST /v1/t/:tenant/maps                 { brief, name?, depth?, sources?: [names] }   400 for a source not held
-GET  /v1/t/:tenant/maps                 rows gain visibility: 'public'|'private'; unreadable maps are left out
+GET  /v1/t/:tenant/maps                 rows gain visibility: 'private' for a private map ('public' when sources are
+                                        configured; no key otherwise, so I1's rows are unchanged); unreadable maps are left out
 GET  /v1/t/:tenant/status               adds sources: [{ name, visibility, reachable }] (admin: all; others: held),
                                         ports: { identity, policy, store, model } (names only),
-                                        tokens rows gain sources (when set); store is the store port's name
+                                        tokens rows gain sources (when set); store is the store port's name;
+                                        auth is 'identity' with a custom identity; config (the path, admin only)
 ```
 
 ### Commands
@@ -454,14 +458,20 @@ ontologizer status                                 shows the config path, ports 
 
 ```bash
 H=$(mktemp -d)
-cp docs/examples/ontologizer.config.js $H/ 2>/dev/null || true   # or write one from GUIDE.md
+cat > $H/ontologizer.config.js <<JS
+export default { sources: [
+  { name: 'wiki', command: process.execPath, args: ['$PWD/test/i/fixtures/stub-mcp.js', '--name', 'wiki'], visibility: 'private', allowTools: ['search', 'get', 'delete_page'] },
+  { name: 'docs', command: process.execPath, args: ['$PWD/test/i/fixtures/stub-mcp.js', '--name', 'docs'], visibility: 'public', allowTools: ['search'] },
+] };
+JS
 node src/cli/index.js sources list --home $H
-node src/cli/index.js sources test wiki --home $H
+node src/cli/index.js sources test wiki --home $H           # delete_page: not offered: not marked readOnlyHint
 node src/cli/index.js token create --name reader --home $H                  # holds public sources only
-node src/cli/index.js token create --name team --sources wiki --home $H     # holds the private wiki
-node src/cli/index.js serve --home $H        # New map: pick sources; a map built from wiki shows Private;
-                                             # the reader token gets 404 on it and does not list it
-ONTOLOGIZER_PG_URL=postgres://localhost:55432/postgres npm run check:i       # the Postgres contract run
+node src/cli/index.js token create --name team --sources wiki,docs --home $H
+node src/cli/index.js serve --home $H --host 0.0.0.0        # sign in as team: New map shows the sources picker;
+                                                            # a map built from wiki shows Private and its source refs;
+                                                            # signed in as reader, it is not listed and its URL is 404
+ONTOLOGIZER_PG_URL=postgres://localhost:55432/postgres npm run check:i       # the Postgres run (your own throwaway cluster)
 ```
 
 ## Open for the maintainer
