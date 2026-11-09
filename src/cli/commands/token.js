@@ -4,7 +4,8 @@ import path from 'node:path';
 import { CliError } from '../deps.js';
 import { shellQuote } from '../../server/service.js';
 import { resolveHome } from './status.js';
-import { SCOPES, tokensPath, readTokens, createToken, revokeToken, publicRows } from '../../server/tokens.js';
+import { findConfig, loadConfig } from '../../server/config.js';
+import { SCOPES, SOURCE_NAME_RE, tokensPath, readTokens, createToken, revokeToken, publicRows } from '../../server/tokens.js';
 
 /** @template T @param {() => T} fn @returns {T} */
 function asCliError(fn) {
@@ -27,6 +28,17 @@ export function nextStep(home) {
   return `Start the server with: ontologizer serve${isDefault ? '' : ` --home ${shellQuote(abs)}`} --host 0.0.0.0`;
 }
 
+/** Warn (stderr) for each name that is not a configured source. A missing or broken config is skipped. */
+async function warnUnknownSources(/** @type {any} */ argv, /** @type {any} */ deps, /** @type {string[]} */ sources) {
+  try {
+    const configPath = findConfig({ flag: undefined, env: deps.env ?? process.env, home: resolveHome(argv, deps) });
+    if (!configPath) return;
+    const config = await loadConfig(configPath);
+    const known = new Set((config.sources ?? []).map((/** @type {any} */ s) => s.name));
+    for (const s of sources) if (!known.has(s)) deps.stderr.write(`Note: no source named "${s}" in ${configPath}.\n`);
+  } catch { /* no usable config: nothing to check against */ }
+}
+
 export default {
   command: 'token [action] [target]',
   describe: 'Manage service-mode access tokens (create, list, revoke)',
@@ -36,6 +48,7 @@ export default {
     .option('name', { type: 'string', describe: 'Token name (create)' })
     .option('tenant', { type: 'string', default: 'default', describe: 'Tenant the token opens (create)' })
     .option('scopes', { type: 'string', default: 'read,build', describe: `Comma list of ${SCOPES.join(', ')}; each implies the ones before it (create)` })
+    .option('sources', { type: 'string', describe: 'Comma list of source names this token holds (create); without it a token holds every public source and no private one' })
     .option('home', { type: 'string', describe: 'Store home directory' })
     .option('json', { type: 'boolean', default: false, describe: 'Print JSON (list)' }),
   handler: async (/** @type {any} */ argv) => {
@@ -49,7 +62,16 @@ export default {
       if (bad.length || !scopes.length) {
         throw new CliError(`Invalid scopes "${argv.scopes}": allowed scopes are ${SCOPES.join(', ')}.`, 1);
       }
-      const { token } = asCliError(() => createToken(file, { name: argv.name, tenant: argv.tenant, scopes }));
+      /** @type {string[]|undefined} */
+      let sources;
+      if (argv.sources !== undefined) {
+        sources = String(argv.sources).split(',').map((s) => s.trim()).filter(Boolean);
+        if (!sources.length || sources.some((s) => !SOURCE_NAME_RE.test(s))) {
+          throw new CliError(`Invalid sources "${argv.sources}": give a comma list of source names (lowercase letters, digits and hyphens).`, 1);
+        }
+      }
+      if (sources) await warnUnknownSources(argv, deps, sources);
+      const { token } = asCliError(() => createToken(file, { name: argv.name, tenant: argv.tenant, scopes, ...(sources ? { sources } : {}) }));
       deps.stdout.write(`${token}\n`);
       deps.stdout.write('This token is shown once; only its hash is stored.\n');
       deps.stdout.write(`${nextStep(resolveHome(argv, deps))}\n`);
@@ -60,7 +82,7 @@ export default {
       } else if (!rows.length) {
         deps.stdout.write('No tokens.\n');
       } else {
-        for (const r of rows) deps.stdout.write(`${r.name}  tenant ${r.tenant}  scopes ${r.scopes.join(',')}  ${r.created}\n`);
+        for (const r of rows) deps.stdout.write(`${r.name}  tenant ${r.tenant}  scopes ${r.scopes.join(',')}${r.sources ? `  sources ${r.sources.join(',')}` : ''}  ${r.created}\n`);
       }
     } else if (action === 'revoke') {
       const name = argv.target ?? argv.name;

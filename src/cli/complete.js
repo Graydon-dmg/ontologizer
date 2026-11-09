@@ -13,9 +13,9 @@ const FLAGS = {
   fuse: ['--into'],
   rosetta: ['--as', '--name'],
   research: ['--general'],
-  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open'],
-  status: ['--home', '--json'],
-  token: ['--name', '--tenant', '--scopes', '--home', '--json'],
+  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open', '--config'],
+  status: ['--home', '--json', '--config'],
+  token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
 };
 const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse']);

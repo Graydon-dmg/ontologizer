@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { TENANT_RE } from '../core/store.js';
 
-/** @typedef {{ name: string, tenant: string, scopes: string[], hash: string, created: string }} TokenRow */
+/** @typedef {{ name: string, tenant: string, scopes: string[], hash: string, created: string, sources?: string[] }} TokenRow */
 
 /**
  * Scopes are a ladder: each implies the ones before it. read only reads; ask also asks the map (it
@@ -25,6 +25,7 @@ export function hasScope(scopes, need) {
 }
 export const TOKEN_RE = /^ont_[A-Za-z0-9_-]{43}$/;
 export const NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
+export const SOURCE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 /** @param {string} home */
 export function tokensPath(home) {
@@ -44,7 +45,8 @@ export function hashToken(token) {
 function validRow(r) {
   return r && typeof r === 'object' && typeof r.name === 'string' && typeof r.tenant === 'string'
     && Array.isArray(r.scopes) && r.scopes.every((/** @type {any} */ s) => typeof s === 'string')
-    && typeof r.hash === 'string' && typeof r.created === 'string';
+    && typeof r.hash === 'string' && typeof r.created === 'string'
+    && (r.sources === undefined || (Array.isArray(r.sources) && r.sources.every((/** @type {any} */ s) => typeof s === 'string')));
 }
 
 /** @param {string} file @returns {TokenRow[]} */
@@ -80,10 +82,10 @@ export function writeTokens(file, rows) {
 
 /**
  * @param {string} file
- * @param {{ name: string, tenant?: string, scopes?: string[], now?: Date }} o
+ * @param {{ name: string, tenant?: string, scopes?: string[], sources?: string[], now?: Date }} o
  * @returns {{ token: string, row: TokenRow }}
  */
-export function createToken(file, { name, tenant = 'default', scopes = ['read', 'build'], now = new Date() }) {
+export function createToken(file, { name, tenant = 'default', scopes = ['read', 'build'], sources, now = new Date() }) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) {
     throw new Error(`Invalid token name "${name}": use lowercase letters, digits, "_", "." and "-" (start with a letter or digit).`);
   }
@@ -93,12 +95,17 @@ export function createToken(file, { name, tenant = 'default', scopes = ['read', 
   if (!Array.isArray(scopes) || !scopes.length || !scopes.every((s) => SCOPES.includes(s))) {
     throw new Error(`Invalid scopes: each must be one of ${SCOPES.join(', ')}.`);
   }
+  if (sources !== undefined && (!Array.isArray(sources) || !sources.length || !sources.every((s) => typeof s === 'string' && SOURCE_NAME_RE.test(s)))) {
+    throw new Error('Invalid sources: a non-empty list of source names (lowercase letters, digits and hyphens).');
+  }
   const rows = readTokens(file);
   if (rows.some((r) => r.name === name)) throw new Error(`A token named "${name}" already exists.`);
   const token = newToken();
+  /** @type {TokenRow} */
   const row = {
     name, tenant, scopes: [...new Set(scopes)], hash: hashToken(token),
     created: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    ...(sources ? { sources: [...new Set(sources)] } : {}),
   };
   writeTokens(file, [...rows, row]);
   return { token, row };
@@ -128,5 +135,5 @@ export function checkToken(rows, token) {
 
 /** @param {TokenRow[]} rows */
 export function publicRows(rows) {
-  return rows.map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], created: r.created }));
+  return rows.map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], created: r.created, ...(r.sources ? { sources: [...r.sources] } : {}) }));
 }

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openStore, TENANT_RE } from '../../core/store.js';
 import { readTokens, tokensPath, publicRows } from '../../server/tokens.js';
 import { CliError } from '../deps.js';
+import { findConfig, loadConfig, portNames } from '../../server/config.js';
 import { TOKENS_FOUND_NOTE } from '../../server/service.js';
 
 /** @param {any} argv @param {any} deps @returns {string} */
@@ -56,6 +57,7 @@ export default {
   describe: 'Show the home, tenants, tokens and running server',
   builder: (/** @type {any} */ y) => y
     .option('home', { type: 'string', describe: 'Store home directory' })
+    .option('config', { type: 'string', describe: 'Config file (ontologizer.config.js); default: ONTOLOGIZER_CONFIG, else <home>/ontologizer.config.js' })
     .option('json', { type: 'boolean', default: false, describe: 'Print one JSON object' }),
   handler: async (/** @type {any} */ argv) => {
     const deps = argv.deps;
@@ -68,10 +70,26 @@ export default {
       throw new CliError(err.message, 1);
     }
     const server = readServer(home);
+    // Config: names and visibility only. Status never connects to a source.
+    /** @type {string|null} */
+    let configPath = null;
+    /** @type {any} */
+    let config = null;
+    /** @type {string|null} */
+    let configProblem = null;
+    try {
+      configPath = findConfig({ flag: argv.config, env: deps.env ?? process.env, home });
+      if (configPath) config = await loadConfig(configPath);
+    } catch (/** @type {any} */ err) {
+      configProblem = String(err?.message ?? err).split('\n')[0];
+      if (!configPath && argv.config) configPath = path.resolve(String(argv.config));
+    }
+    const ports = config ? portNames(config) : null;
+    const sources = config ? (config.sources ?? []).map((/** @type {any} */ x) => ({ name: x.name, visibility: x.visibility })) : null;
     // A server that started open stays open until restarted, even after tokens are created.
     const note = server?.auth === 'open' && tokens.length ? TOKENS_FOUND_NOTE : null;
     if (argv.json) {
-      deps.stdout.write(`${JSON.stringify({ home, tenants, tokens, server, ...(note ? { note } : {}) })}\n`);
+      deps.stdout.write(`${JSON.stringify({ home, tenants, tokens, server, ...(config ? { config: configPath, ports, sources } : {}), ...(configProblem ? { configProblem } : {}), ...(note ? { note } : {}) })}\n`);
       return;
     }
     const out = [`Home: ${home}`, 'Tenants:'];
@@ -79,9 +97,14 @@ export default {
     if (!tokens.length) out.push('No tokens: service mode listens on loopback only.');
     else {
       out.push('Tokens:');
-      for (const t of tokens) out.push(`  ${t.name}  tenant ${t.tenant}  scopes ${t.scopes.join(',')}`);
+      for (const t of tokens) out.push(`  ${t.name}  tenant ${t.tenant}  scopes ${t.scopes.join(',')}${t.sources ? `  sources ${t.sources.join(',')}` : ''}`);
     }
     out.push(server ? `Server: running at ${server.url} (pid ${server.pid})${server.auth ? `, auth: ${server.auth}` : ''}` : 'Server: not running');
+    if (config && ports && sources) {
+      out.push(`Config: ${configPath}`);
+      out.push(`Ports: identity ${ports.identity}, policy ${ports.policy}, store ${ports.store}, model ${ports.model}`);
+      if (sources.length) out.push(`Sources: ${sources.map((/** @type {any} */ x) => `${x.name} (${x.visibility})`).join(', ')}`);
+    } else if (configProblem) out.push(configProblem.startsWith('Config ') ? `Config ${configPath} does not load: ${configProblem.replace(/^Config [^:]*: /, '')}` : `Config ${configPath} does not load: ${configProblem}`);
     if (note) out.push(`Note: ${note}`);
     deps.stdout.write(`${out.join('\n')}\n`);
   },

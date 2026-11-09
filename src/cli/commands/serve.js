@@ -8,6 +8,7 @@ import { packageVersion } from '../banner.js';
 import { resolveHome } from './status.js';
 import { startService, isLoopback } from '../../server/service.js';
 import { tokensPath } from '../../server/tokens.js';
+import { findConfig, loadConfig } from '../../server/config.js';
 import { openStore, TENANT_RE } from '../../core/store.js';
 
 /** Maps in every tenant of the home (saved and drafts). @param {string} home */
@@ -65,6 +66,16 @@ export async function handler(argv) {
     ...(Array.isArray(argv.allowHost) ? argv.allowHost : argv.allowHost ? [argv.allowHost] : []),
     ...String(deps.env.ONTOLOGIZER_ALLOW_HOST ?? '').split(','),
   ].map((h) => String(h).trim()).filter(Boolean);
+  /** @type {string|null} */
+  let configPath = null;
+  /** @type {any} */
+  let config = null;
+  try {
+    configPath = findConfig({ flag: argv.config, env: deps.env, home });
+    config = configPath ? await loadConfig(configPath) : null;
+  } catch (/** @type {any} */ err) {
+    throw new CliError(err?.message ?? String(err), 1);
+  }
   fs.mkdirSync(home, { recursive: true });
 
   let srv;
@@ -74,7 +85,8 @@ export async function handler(argv) {
       watchTokensFile: tokensPath(home),
       version: await packageVersion(),
       // A missing API key fails the model call (shown on the map), never the server.
-      makeEngine: ({ store, id }) => engineFor({ deps, store, id, needKey: false }),
+      config, configPath,
+      makeEngine: ({ store, id, clientFor }) => engineFor({ deps, store, id, needKey: false, ...(clientFor ? { clientFor } : {}) }),
       log: (line) => deps.stderr.write(`${line}\n`),
     });
   } catch (err) {
@@ -103,6 +115,7 @@ export async function handler(argv) {
 
   const n = countMaps(home);
   deps.stdout.write(`Serving ${n} ${n === 1 ? 'map' : 'maps'} at ${srv.url}  (Ctrl-C to stop)\n`);
+  if (config) deps.stdout.write(`Config: ${configPath}\n`);
   if (!isLoopback(host)) deps.stdout.write(`Listening on ${host}: every /v1/t/ route needs a token.\n`);
   else if (!srv.tokensLoaded) deps.stdout.write('No tokens loaded: loopback only, open to this machine.\n');
   if (argv.open) await deps.openBrowser(srv.url);
@@ -139,6 +152,7 @@ export default {
     .option('max-queued', { type: 'number', default: 10, describe: 'Builds that may wait per tenant; more get 429' })
     .option('max-checks', { type: 'number', default: 4, describe: 'Context checks at once; more get 429' })
     .option('allow-host', { type: 'string', array: true, describe: 'Extra Host name to accept behind a reverse proxy (needs tokens); repeatable. Also ONTOLOGIZER_ALLOW_HOST=a,b' })
+    .option('config', { type: 'string', describe: 'Config file (ontologizer.config.js); default: ONTOLOGIZER_CONFIG, else <home>/ontologizer.config.js. It runs as code.' })
     .option('open', { type: 'boolean', default: false, describe: 'Open the maps home in a browser' })
     .option('exit-after', { type: 'number', hidden: true }),
   handler,
