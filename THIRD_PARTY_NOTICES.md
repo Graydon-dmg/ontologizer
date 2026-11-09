@@ -8,7 +8,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 - **Served to your browser:** the local web page that `ontologizer` opens serves the d3 packages and `three` to your browser straight from `node_modules`.
 - **Platform binaries:** `@napi-rs/keyring` ships one prebuilt binary per platform; npm installs only the one for your system.
 
-179 shipped packages: MIT 148, ISC 24, BSD-3-Clause 3, Apache-2.0 2, Unlicense 1, BSD-2-Clause 1. Plus 41 build-only packages (MIT 39, ISC 2), listed under Build tools at the end: never shipped.
+179 shipped packages: MIT 148, ISC 24, BSD-3-Clause 3, Apache-2.0 2, Unlicense 1, BSD-2-Clause 1. Plus 41 development-only packages (MIT 39, ISC 2), listed under Build tools at the end: never shipped.
 
 ## Packages
 
@@ -1118,7 +1118,7 @@ For more information, please refer to <http://unlicense.org>
 
 ## Build tools: installed for development only, never shipped or bundled
 
-These are development dependencies. They build `web/dist/` from source and are not part of the published package or of any exported page.
+These are development dependencies: the tools that build `web/dist/` from source, and drivers used only by the tests (such as `pg`, which a deployment that uses the optional Postgres store installs itself). None is part of the published package or of any exported page.
 
 | Package | Version | Licence | Copyright |
 |---|---|---|---|

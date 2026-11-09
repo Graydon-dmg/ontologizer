@@ -82,7 +82,7 @@ export function generate() {
     for (const r of list) counts[r.license] = (counts[r.license] || 0) + 1;
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ');
   };
-  const devNote = devRows.length ? ` Plus ${devRows.length} build-only packages (${tally(devRows)}), listed under Build tools at the end: never shipped.` : '';
+  const devNote = devRows.length ? ` Plus ${devRows.length} development-only packages (${tally(devRows)}), listed under Build tools at the end: never shipped.` : '';
   out.push(`${rows.length} shipped packages: ${tally(rows)}.${devNote}`, '');
   out.push('## Packages', '');
   out.push('| Package | Version | Licence | Copyright |', '|---|---|---|---|');
@@ -108,7 +108,7 @@ export function generate() {
   }
   if (devRows.length) {
     out.push('## Build tools: installed for development only, never shipped or bundled', '');
-    out.push('These are development dependencies. They build `web/dist/` from source and are not part of the published package or of any exported page.', '');
+    out.push('These are development dependencies: the tools that build `web/dist/` from source, and drivers used only by the tests (such as `pg`, which a deployment that uses the optional Postgres store installs itself). None is part of the published package or of any exported page.', '');
     out.push('| Package | Version | Licence | Copyright |', '|---|---|---|---|');
     for (const r of devRows) out.push(`| ${esc(r.name)} | ${r.version} | ${r.license} | ${esc(r.copyright)} |`);
     out.push('');
