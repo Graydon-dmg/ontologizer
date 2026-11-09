@@ -1,5 +1,5 @@
 // @ts-check
-import { searchNodes, ancestorsToExpand } from '../search.js';
+import { searchNodes, createReveal } from '../search.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountSearch(el, shell) {
@@ -21,15 +21,16 @@ export function mountSearch(el, shell) {
     list.hidden = true;
   };
   // A match inside a collapsed branch would be highlighted where nothing is drawn: open the
-  // collapsed branches that hold a match. Clearing the search leaves them open.
-  /** @param {string[]} ids */
-  const reveal = (ids) => {
-    const snap = shell.snapshot();
-    for (const nodeId of ancestorsToExpand(snap, ids, snap.view.collapsed)) shell.act({ type: 'expand', nodeId });
-  };
+  // collapsed branches that hold a match, once typing pauses or on Enter. Clearing the search
+  // leaves them open. Sent straight to the source, not shell.act: a page that cannot change the
+  // map (a read-only token) just stops trying, without a notice per keystroke.
+  const reveal = createReveal({
+    snapshot: () => shell.snapshot(),
+    act: (a) => (shell.source && typeof shell.source.act === 'function' ? shell.source.act(a) : shell.act(a)),
+  });
   const refresh = () => {
     const ids = matches();
-    reveal(ids);
+    reveal.schedule(ids);
     shell.activeView()?.highlight(ids);
     const nodes = shell.snapshot().nodes;
     list.replaceChildren(...ids.slice(0, 8).map((id) => {
@@ -43,9 +44,11 @@ export function mountSearch(el, shell) {
   input.addEventListener('input', refresh);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      const [best] = matches();
-      if (best) go(best);
+      const ids = matches();
+      reveal.now(ids);
+      if (ids[0]) go(ids[0]);
     } else if (e.key === 'Escape') {
+      reveal.cancel();
       input.value = '';
       list.replaceChildren();
       list.hidden = true;

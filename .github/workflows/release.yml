@@ -4,12 +4,18 @@ name: release
 # npm exchanges the publish job's short-lived OIDC identity for a one-time publish credential.
 # Setup and the normal flow: docs/RELEASING.md.
 #
-# Two jobs on purpose: `verify` runs the tests, which execute dependency code, and has NO
-# id-token permission. `publish` holds id-token: write but installs no project dependencies,
-# runs no tests and publishes with --ignore-scripts, so a compromised dependency cannot mint
-# the publish token.
-# The export bundle (web/dist/) is built in `verify` by `npm run check` and handed to `publish`
-# as an artifact: publish only receives the file, it never runs a dependency.
+# Three jobs on purpose, and only `publish` holds id-token: write.
+# - `build` builds the export bundle (web/dist/embed.js, embed-3d.js) with nothing but
+#   `node scripts/build-embed.js`, so esbuild is the only third-party code that runs there. It
+#   records the SHA-256 of both files (job outputs + a SHA256SUMS file) and uploads exactly those
+#   three files.
+# - `verify` runs the tests (which execute dependency code) against those exact bytes, then
+#   re-checks the hashes. It uploads nothing, so a compromised dependency there cannot change
+#   what ships.
+# - `publish` installs no project dependencies, runs no tests, checks the downloaded bundle
+#   against build's hashes, refuses any extra file in web/dist/, and publishes with
+#   --ignore-scripts, so a compromised dependency can neither mint the publish token nor swap
+#   the bytes it signs.
 
 on:
   push:
@@ -23,7 +29,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      embed-sha256: ${{ steps.hash.outputs.embed }}
+      embed-3d-sha256: ${{ steps.hash.outputs.embed3d }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false # never use caching in release builds
+
+      - run: npm ci --ignore-scripts
+
+      # The build only: no tests, so esbuild is the only dependency code that runs in this job.
+      - run: node scripts/build-embed.js
+
+      - name: Hash the bundle
+        id: hash
+        env:
+          OUT: ${{ runner.temp }}/embed-bundle
+        run: |
+          set -eu
+          mkdir -p "$OUT"
+          cp web/dist/embed.js web/dist/embed-3d.js "$OUT/"
+          cd "$OUT"
+          sha256sum embed.js embed-3d.js > SHA256SUMS
+          cat SHA256SUMS
+          echo "embed=$(sha256sum embed.js | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "embed3d=$(sha256sum embed-3d.js | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # Exactly the two bundles and their checksums; nothing else from the build job.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: embed-bundle
+          path: |
+            ${{ runner.temp }}/embed-bundle/embed.js
+            ${{ runner.temp }}/embed-bundle/embed-3d.js
+            ${{ runner.temp }}/embed-bundle/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
   verify:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -60,18 +115,43 @@ jobs:
 
       - run: npm ci --ignore-scripts
 
-      - run: npm run check
-
-      # `npm run check` built the export bundle; publish packs it without building anything.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # The exact bytes build made and publish will ship. Received as files only.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: embed-bundle
-          path: web/dist/
-          retention-days: 1
-          if-no-files-found: error
+          path: ${{ runner.temp }}/embed-bundle
+
+      - name: Check the bundle against build's hashes
+        env:
+          IN: ${{ runner.temp }}/embed-bundle
+          EMBED_SHA256: ${{ needs.build.outputs.embed-sha256 }}
+          EMBED_3D_SHA256: ${{ needs.build.outputs.embed-3d-sha256 }}
+        run: |
+          set -eu
+          [ "$(ls -A "$IN" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS embed-3d.js embed.js " ] || { echo "::error::unexpected files in the bundle artifact"; exit 1; }
+          (cd "$IN" && sha256sum -c SHA256SUMS)
+          [ "$(sha256sum "$IN/embed.js" | cut -d' ' -f1)" = "$EMBED_SHA256" ] || { echo "::error::embed.js does not match build"; exit 1; }
+          [ "$(sha256sum "$IN/embed-3d.js" | cut -d' ' -f1)" = "$EMBED_3D_SHA256" ] || { echo "::error::embed-3d.js does not match build"; exit 1; }
+          mkdir -p web/dist
+          cp "$IN/embed.js" "$IN/embed-3d.js" web/dist/
+
+      # `npm run check` (and `npm pack`'s prepack in the tests) re-runs the build. build-embed only
+      # rewrites a file whose content changed, so the same source gives the same bytes; the step
+      # after this one fails if anything (a different build, or a dependency) changed them.
+      - run: npm run check
+
+      - name: Re-check the bundle after the tests
+        env:
+          EMBED_SHA256: ${{ needs.build.outputs.embed-sha256 }}
+          EMBED_3D_SHA256: ${{ needs.build.outputs.embed-3d-sha256 }}
+        run: |
+          set -eu
+          [ "$(sha256sum web/dist/embed.js | cut -d' ' -f1)" = "$EMBED_SHA256" ] || { echo "::error::web/dist/embed.js changed during the tests"; exit 1; }
+          [ "$(sha256sum web/dist/embed-3d.js | cut -d' ' -f1)" = "$EMBED_3D_SHA256" ] || { echo "::error::web/dist/embed-3d.js changed during the tests"; exit 1; }
+          echo "tested exactly the bytes build made"
 
   publish:
-    needs: verify
+    needs: [build, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # A required reviewer on this environment (GitHub settings) gates every publish.
@@ -80,7 +160,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # Same commit verify tested: both jobs check out github.sha.
+      # Same commit build and verify used: every job checks out github.sha.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -96,14 +176,32 @@ jobs:
       - name: Upgrade npm
         run: npm install -g --ignore-scripts npm@11.21.2 && npm --version
 
-      # The bundle verify built and tested. Received as files only: nothing is installed or run.
+      # The bundle build made and verify tested. Received as files only: nothing is installed or run.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: embed-bundle
-          path: web/dist/
+          path: ${{ runner.temp }}/embed-bundle
 
-      - name: Check the export bundle arrived
-        run: test -s web/dist/embed.js && test -s web/dist/embed-3d.js
+      # Ship only the bytes build hashed: both files must match build's job outputs, and web/dist/
+      # must hold nothing but them. The hashes go in the log so the published files can be matched
+      # to this run (and its provenance).
+      - name: Check the bundle against build's hashes
+        env:
+          IN: ${{ runner.temp }}/embed-bundle
+          EMBED_SHA256: ${{ needs.build.outputs.embed-sha256 }}
+          EMBED_3D_SHA256: ${{ needs.build.outputs.embed-3d-sha256 }}
+        run: |
+          set -eu
+          [ "$(ls -A "$IN" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS embed-3d.js embed.js " ] || { echo "::error::unexpected files in the bundle artifact"; exit 1; }
+          [ "$(sha256sum "$IN/embed.js" | cut -d' ' -f1)" = "$EMBED_SHA256" ] || { echo "::error::embed.js does not match build"; exit 1; }
+          [ "$(sha256sum "$IN/embed-3d.js" | cut -d' ' -f1)" = "$EMBED_3D_SHA256" ] || { echo "::error::embed-3d.js does not match build"; exit 1; }
+          if [ -e web/dist ]; then echo "::error::web/dist/ already exists in the checkout"; exit 1; fi
+          mkdir -p web/dist
+          cp "$IN/embed.js" "$IN/embed-3d.js" web/dist/
+          [ "$(ls -A web/dist | LC_ALL=C sort | tr '\n' ' ')" = "embed-3d.js embed.js " ] || { echo "::error::web/dist/ holds files other than the two bundles"; exit 1; }
+          test -s web/dist/embed.js && test -s web/dist/embed-3d.js
+          echo "publishing these bundle bytes:"
+          sha256sum web/dist/embed.js web/dist/embed-3d.js
 
       # No `npm ci` here: npm packs straight from the checkout (the package.json `files` list),
       # so this job never downloads or runs a project dependency.

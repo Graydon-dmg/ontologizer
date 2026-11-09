@@ -109,7 +109,7 @@ The server speaks plain HTTP: beyond this machine, put it behind an HTTPS revers
 
 ## Export
 
-`ontologizer export <map> --format html` writes one page that shows the map offline: pan, zoom, click a node for its details, collapse, search. Nothing in it loads from the network. `--format embed` gives a fragment to paste into any page, `--format json` the map itself, and `--format context` a short markdown brief of the map (outline, cross-links, insights, thin areas, sources) to hand to an AI agent, trimmed to `--budget` tokens (4000 by default). On the page, the same four are in the **Export** menu; **Copy for an agent** copies the context pack.
+`ontologizer export <map> --format html` writes one page that shows the map offline: pan, zoom, click a node for its details, collapse, search. Nothing in it loads from the network. `--format embed` gives a fragment to paste into any page, `--format json` the map itself, and `--format context` a short markdown brief of the map (outline, cross-links, insights, thin areas, sources) to hand to an AI agent, trimmed to `--budget` tokens (4000 by default). On the page, the same four are in the **Export** menu; **Copy for an agent** copies the context pack. Several embeds can share one page, 2D and 3D mixed; each keeps the views it was exported with. A page or embed exported from the menu links back to the live map (**Open live**) only when the map is served from an address other people can reach, never `localhost`, and without the address's query or `#` part.
 
 ```bash
 ontologizer export demo --format html --out demo.html

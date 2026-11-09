@@ -44,3 +44,71 @@ export function ancestorsToExpand(ontology, ids, collapsed) {
   }
   return [...out].sort((a, b) => (ontology.nodes[a]?.depth ?? 0) - (ontology.nodes[b]?.depth ?? 0) || a.localeCompare(b));
 }
+
+/** How long typing must pause before search opens collapsed branches. */
+export const REVEAL_DELAY_MS = 400;
+
+/**
+ * Search's "open the branches that hide a match", paced: an expand is a saved change to the map,
+ * so it is sent once the user stops typing (or presses Enter), never twice for the same node while
+ * it is still waiting to land, and not at all once the page turned out unable to change the map
+ * (for example a read-only token in service mode): no error notice for that, search still works.
+ * No DOM; the timer and the action are passed in.
+ * @param {{
+ *   snapshot: () => Ontology,
+ *   act: (a: { type: 'expand', nodeId: string }) => Promise<any>|any,
+ *   delayMs?: number,
+ *   setTimer?: (fn: () => void, ms: number) => any,
+ *   clearTimer?: (t: any) => void,
+ * }} deps
+ */
+export function createReveal({ snapshot, act, delayMs = REVEAL_DELAY_MS, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  /** Nodes asked to open whose expand has not shown up in the snapshot yet. @type {Set<string>} */
+  const asked = new Set();
+  let stopped = false;
+  /** @type {any} */
+  let timer = null;
+  /** @type {string[]} */
+  let pending = [];
+
+  const cancel = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
+
+  /** Open now what hides these matches. @param {string[]} ids */
+  const now = (ids) => {
+    cancel();
+    if (stopped) return;
+    const snap = snapshot();
+    const collapsed = snap.view?.collapsed || [];
+    // An expand that landed is no longer collapsed: forget it, so a branch the user closes again
+    // can be reopened by a later search.
+    for (const id of [...asked]) if (!collapsed.includes(id)) asked.delete(id);
+    for (const nodeId of ancestorsToExpand(snap, ids, collapsed)) {
+      if (asked.has(nodeId)) continue;
+      asked.add(nodeId);
+      /** @type {any} */
+      let res;
+      try { res = act({ type: 'expand', nodeId }); } catch { stopped = true; return; }
+      Promise.resolve(res).then(
+        (r) => { if (r && r.ok === false) stopped = true; },
+        () => { stopped = true; },
+      );
+    }
+  };
+
+  return {
+    /** After the user pauses typing. @param {string[]} ids */
+    schedule(ids) {
+      pending = ids;
+      cancel();
+      if (stopped || !ids.length) return;
+      timer = setTimer(() => { timer = null; now(pending); }, delayMs);
+    },
+    now,
+    cancel,
+    /** True once an expand was refused: this session does not try again. */
+    stopped: () => stopped,
+  };
+}
