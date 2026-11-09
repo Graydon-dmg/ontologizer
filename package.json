@@ -24,7 +24,8 @@
   "exports": {
     ".": "./src/core/index.js",
     "./core": "./src/core/index.js",
-    "./views": "./web/views/index.js"
+    "./views": "./web/views/index.js",
+    "./store-postgres": "./src/store-postgres/index.js"
   },
   "files": [
     "src",
@@ -62,6 +63,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
     "@inquirer/prompts": "^8.7.5",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@napi-rs/keyring": "^2.1.2",
     "open": "^11.0.4",
     "p-queue": "^10.0.0",
@@ -78,5 +80,16 @@
     "d3-transition": "^3.0.2",
     "d3-zoom": "^3.0.1",
     "three": "^0.187.0"
+  },
+  "peerDependencies": {
+    "pg": "8.23.1"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "pg": "8.23.1"
   }
 }
