@@ -183,7 +183,10 @@ function sectionLines(o, m) {
     .sort((a, b2) => b2.cited.size - a.cited.size || a.title.localeCompare(b2.title))
     .map((s) => `- ${s.title}: ${s.url}`);
 
-  return { name, briefFields, sizeLine, bridges, insights, catLines, thinNodes, sources };
+  // On a fresh map nothing is explained or sourced: one line says so instead of a line per category.
+  const covered = m.ids.some((id) => nodes[id].article || hasSources(nodes[id]));
+  const coverageLines = covered ? catLines : ['- Nothing explained or sourced yet: every branch is thin.'];
+  return { name, briefFields, sizeLine, bridges, insights, coverageLines, thinNodes, sources };
 }
 
 /**
@@ -199,9 +202,15 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
   const depthCounts = new Map();
   for (const r of m.rows) depthCounts.set(r.depth, (depthCounts.get(r.depth) ?? 0) + 1);
 
+  // Summaries go first, deepest level up; the root's own summary before its children's, which
+  // stay longest. Labels stay until the very end of the outline trim: they are cheap and they are
+  // what a brainstorm needs most.
+  const present = new Set(m.rows.map((r) => r.depth));
+  const SUM_ORDER = [...[...present].filter((d) => d >= 2).sort((a, b) => b - a), ...[0, 1].filter((d) => present.has(d))];
+
   const st = {
     depthMax: maxDepth, // outline rows deeper than this are dropped
-    sumMax: maxDepth, // summaries kept for rows with depth <= this (-1: none)
+    sumOff: 0, // how many levels of SUM_ORDER have lost their summaries
     bridges: s.bridges.length,
     sources: s.sources.length,
     thin: s.thinNodes.length,
@@ -232,13 +241,13 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
     out.push('## Outline');
     for (const r of m.rows) {
       if (r.depth > st.depthMax) continue;
-      const sum = r.depth <= st.sumMax ? r.summary : '';
+      const sum = SUM_ORDER.indexOf(r.depth) >= st.sumOff ? r.summary : '';
       out.push(`${'  '.repeat(r.indent)}- ${r.label}${sum ? ': ' + sum : ''}${r.explained ? ' [explained]' : ''}`);
     }
     out.push('', '## Bridges', ...section(s.bridges, st.bridges), '');
     out.push('## Insights', ...section(s.insights, st.insights), '');
     out.push('## Thin areas');
-    const thin = [...s.catLines, ...section(s.thinNodes, st.thin).filter((l) => l !== NONE)];
+    const thin = [...s.coverageLines, ...section(s.thinNodes, st.thin).filter((l) => l !== NONE)];
     out.push(...(thin.length ? thin : [NONE]), '');
     out.push('## Sources', ...section(s.sources, st.sources));
     const what = trimmedWhat();
@@ -259,10 +268,13 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
       const lbl = ds.length === 1 ? `${ds[0]}` : `${ds.slice(0, -1).join(', ')} and ${ds[ds.length - 1]}`;
       w.push(`outline depth${ds.length === 1 ? '' : 's'} ${lbl} (${nodes} node${nodes === 1 ? '' : 's'})`);
     }
-    if (st.sumMax < st.depthMax) {
-      w.push(st.sumMax < 0 ? 'all outline summaries'
-        : st.sumMax === 0 ? 'summaries below the root'
-          : `summaries at depth ${st.sumMax + 1} and below`);
+    const lost = SUM_ORDER.slice(0, st.sumOff).filter((d) => d <= st.depthMax);
+    if (lost.length) {
+      if (lost.length === SUM_ORDER.filter((d) => d <= st.depthMax).length) w.push('all outline summaries');
+      else {
+        const parts = lost.map((d) => (d === 0 ? "the root's" : `depth ${d}`));
+        w.push(`summaries at ${parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`}`);
+      }
     }
     if (st.bridges < s.bridges.length) w.push(`${s.bridges.length - st.bridges} of ${s.bridges.length} bridges`);
     if (st.sources < s.sources.length) w.push(`${s.sources.length - st.sources} of ${s.sources.length} sources`);
@@ -275,34 +287,44 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
   const fits = () => estimateTokens(render()) <= budget;
   if (fits()) return render();
 
-  // 1. drop the deepest outline depths (never depth 1 or the root)
+  /** Shorten these sections from the end, in order; the largest keep that fits, by binary search. @param {('bridges'|'sources'|'thin'|'insights')[]} keys */
+  const shrink = (keys) => {
+    for (const key of keys) {
+      const total = { bridges: s.bridges.length, sources: s.sources.length, thin: s.thinNodes.length, insights: s.insights.length }[key];
+      if (!total) continue;
+      st[key] = 0;
+      if (!fits()) continue; // all of it goes, and the next section is cut too
+      let lo = 0;
+      let hi = total;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        st[key] = mid;
+        if (fits()) lo = mid;
+        else hi = mid - 1;
+      }
+      st[key] = lo;
+      return true;
+    }
+    return fits();
+  };
+
+  // 1. drop summaries, deepest level first; the root's children keep theirs longest (labels stay)
+  while (st.sumOff < SUM_ORDER.length) {
+    st.sumOff += 1;
+    if (fits()) return render();
+  }
+  // 2. shorten Bridges, then Sources
+  if (shrink(['bridges', 'sources'])) return render();
+  // 3. only then drop the deepest labels (never depth 1 or the root), keeping as many bridges and
+  //    sources as now fit again
   while (st.depthMax > 1) {
     st.depthMax -= 1;
-    st.sumMax = Math.min(st.sumMax, st.depthMax);
-    if (fits()) return render();
+    st.bridges = s.bridges.length;
+    st.sources = s.sources.length;
+    if (fits() || shrink(['bridges', 'sources'])) return render();
   }
-  // 2. drop summaries from the deepest level up, root last
-  while (st.sumMax >= 0) {
-    st.sumMax -= 1;
-    if (fits()) return render();
-  }
-  // 3 and 4. shorten whole sections from the end; the smallest cut that fits, by binary search
-  for (const key of /** @type {const} */ (['bridges', 'sources', 'thin', 'insights'])) {
-    const total = { bridges: s.bridges.length, sources: s.sources.length, thin: s.thinNodes.length, insights: s.insights.length }[key];
-    if (!total) continue;
-    let lo = 0;
-    let hi = total; // keep `hi` lines; find the largest keep that fits
-    st[key] = 0;
-    if (!fits()) continue;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      st[key] = mid;
-      if (fits()) lo = mid;
-      else hi = mid - 1;
-    }
-    st[key] = lo;
-    return render();
-  }
+  // 4. thin-area node lines, then insights
+  if (shrink(['thin', 'insights'])) return render();
   // 5. shorten brief values
   st.briefCut = true;
   return render();

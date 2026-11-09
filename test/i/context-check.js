@@ -36,3 +36,14 @@ export function checkContextPack(text, ontology, budget) {
   }
   return problems;
 }
+
+/**
+ * Node labels missing from a pack's Outline (the brainstorm needs every label it can afford).
+ * @param {string} text @param {any} ontology @returns {string[]}
+ */
+export function missingLabels(text, ontology) {
+  const lines = text.split('\n');
+  const outline = lines.slice(lines.indexOf('## Outline') + 1, lines.indexOf('## Bridges'));
+  const labels = new Set(outline.map((l) => l.trim().replace(/^- /, '').replace(/ \[explained\]$/, '').split(': ')[0]));
+  return Object.values(ontology.nodes).map((n) => /** @type {any} */ (n).label).filter((l) => !labels.has(l));
+}
