@@ -1,11 +1,13 @@
 // @ts-check
 // Where the shell's data comes from. The mode comes from the URL:
 //   ?fixture=<name>[&speed=<n>]  replay /fixtures/<name>.events.jsonl locally
-//   otherwise                    fold EventSource('/api/events?from=0') and POST /api/action
+//   otherwise                    fold EventSource(api('/api/events?from=0')) and POST api('/api/action')
+// api() puts the page's base path in front ("" on the one-map server; see base.js). params.base overrides it.
 // Both modes start from emptyOntology() and fold every event. Never /api/snapshot (double counts).
 // No DOM here: Node tests inject fetch, EventSource and timers.
 import { emptyOntology, fold } from '../../src/core/events.js';
 import { JOB_ACTIONS, isValidAction, viewPatchFor } from './actions.js';
+import { api } from './base.js';
 
 /** @typedef {import('../../src/core/schema.js').Ontology} Ontology */
 /** @typedef {(event: any, ontology: Ontology) => void} Listener */
@@ -24,6 +26,8 @@ export function createSource(params = {}) {
   const ES = params.EventSource ?? /** @type {any} */ (globalThis).EventSource;
   const later = params.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
   const base = params.base ?? '';
+  /** The map's own routes: params.base when given (tests), else the page's base. @param {string} p */
+  const route = (p) => (params.base !== undefined ? `${params.base}${p}` : api(p));
   const jobDelayMs = params.jobDelayMs ?? 1000;
   const reconnectMs = params.reconnectMs ?? 1000;
   const actMs = params.actMs ?? 10000;
@@ -115,7 +119,7 @@ export function createSource(params = {}) {
   let es = null;
   let closed = false;
   const open = () => {
-    es = new ES(`${base}/api/events?from=${received}`);
+    es = new ES(route(`/api/events?from=${received}`));
     es.onopen = () => setStatus('live');
     es.onmessage = (/** @type {{ data: string }} */ m) => {
       setStatus('live');
@@ -144,7 +148,7 @@ export function createSource(params = {}) {
       const timer = ctl ? later(() => ctl.abort(), actMs) : null;
       let res;
       try {
-        res = await fetchFn(`${base}/api/action`, {
+        res = await fetchFn(route('/api/action'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(action),

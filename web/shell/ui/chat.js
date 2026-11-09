@@ -4,6 +4,7 @@ import {
   emptyAnswer, applyChatItem, suggestionAction, researchBusy, scaleSize, pickEncoding, MAX_IMAGES,
 } from '../chat.js';
 import { renderMarkdown } from '../chat-render.js';
+import { api } from '../base.js';
 
 /** The Chat pane (in the side panel) and the top-bar "Chat" button.
  * @param {HTMLElement} el  #chat @param {any} shell */
@@ -209,7 +210,7 @@ export function mountChat(el, shell) {
       const imgs = mk('div', 'chat-imgs');
       for (const im of q.images) {
         const i = /** @type {HTMLImageElement} */ (mk('img'));
-        i.src = `/api/attachments/${encodeURIComponent(im.hash)}`;
+        i.src = api(`/api/attachments/${encodeURIComponent(im.hash)}`);
         i.alt = 'Attached image';
         i.loading = 'lazy';
         imgs.append(i);

@@ -23,6 +23,8 @@ import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests } from './explain.js';
+import { TENANT } from './base.js';
+import { mountServerPanel } from './ui/server.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -161,6 +163,11 @@ const mounts = [
 for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
+}
+// Service mode only: the read-only Server panel (the one-map server leaves it hidden).
+if (TENANT) {
+  try { mountServerPanel($('server-panel'), { tenant: TENANT, popover: true }); }
+  catch (err) { console.error('[shell] mount "server-panel" failed', err); }
 }
 // The ⓘ tooltips go in once, after every control exists.
 try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }

@@ -1,5 +1,6 @@
 // @ts-check
 import { fuseCandidates, slugName, submitFuse } from '../fuse.js';
+import { api } from '../base.js';
 
 /** "Fuse" in the top bar: pick another saved map, optionally name the result, open it in a new tab.
  * @param {HTMLElement} el @param {any} shell */
@@ -91,7 +92,7 @@ export function mountFuse(el, shell) {
   const load = async () => {
     list.replaceChildren(Object.assign(document.createElement('p'), { className: 'fuse-empty', textContent: 'Loading your maps…' }));
     try {
-      const res = await fetch('/api/maps');
+      const res = await fetch(api('/api/maps'));
       maps = res.ok ? await res.json() : [];
       if (!res.ok) hint.textContent = `Could not list your maps (HTTP ${res.status}).`;
     } catch {
