@@ -36,7 +36,7 @@ export const FEATURES = [
 | Feature | Command | Button on the localhost page | Part |
 |---|---|---|---|
 | Service mode, new maps from the browser | `ontologizer serve` | Maps home with a **New map** button (`#new-map`) | I1 |
-| Server status | `ontologizer status` | Read-only **Server** panel (`#server-panel`) | I1 (filled in by I2, I3) |
+| Server status | `ontologizer status` | Read-only **Server** panel (`#server-panel`), with the auth mode | I1 (filled in by I2, I3) |
 | Tokens | `ontologizer token create / list / revoke` | Listed in the Server panel, names and scopes only (`#server-tokens`) | I1 |
 | Private sources and visibility | `ontologizer sources list / test`; `list` shows visibility | Sources picker in New map, **Private** badge, source refs in node details | I2 |
 | MCP for agents | `ontologizer mcp` | **Connect an agent** (`#connect-agent`) | I3 |
@@ -50,27 +50,30 @@ export const FEATURES = [
 - Tests go in `test/i/` and run offline under `npm run check` with the stub engine (`src/cli/engine-stub.js`) and the fixtures. No API key, no network. `npm run check:i` runs only them.
 - Every check below comes with a **planted fault**, built into the test: the test feeds the fault and asserts the check reports failure (`LEAD.md`).
 - No new runtime dependency except the ones named here. No company, product or vendor names in code, docs or commits.
-- Security is the default: loopback only unless told otherwise; secrets never in a response, a log or the page.
+- Security is the default: loopback only unless tokens are loaded; a server behind a proxy needs tokens; secrets never in a response, a log or the page.
+- Scopes are a ladder, each implying the ones before it: `read` < `ask` < `build` < `admin`. `read` never writes; anything that calls the model needs at least `ask`.
 
 ---
 
 # Part I1 · Service mode
 
+This section describes Part I1 as built (branch `epic/i1-service-mode`), including the changes accepted during review.
+
 ## You own
 
 - `src/cli/commands/serve.js`, `src/cli/commands/status.js`, `src/cli/commands/token.js`
-- `src/server/service.js` (the multi-map router) and any new `src/server/*.js` it needs
-- `src/server/tokens.js` (token file, hashing, checking)
-- `web/home/` (the maps home page: `index.html`, `main.js`, `home.css`)
-- `web/shell/ui/server.js` (the Server panel, shared by the home page and the map page)
+- `src/server/service.js` (the multi-map router), `src/server/map.js` (one map's `/api/*` handlers, shared with the one-map server), `src/server/http.js` (shared HTTP helpers)
+- `src/server/tokens.js` (token file, hashing, checking, the scope ladder)
+- `web/home/` (the maps home page: `index.html`, `main.js`, `flow.js`, `home.css`)
+- `web/shell/ui/server.js` and `web/shell/server-panel.js` (the Server panel, shared by the home page and the map page), `web/shell/base.js` (the page's base path)
 - `src/features.js`, `test/i/`
 - `Dockerfile`, `.dockerignore`
 
 **May touch:**
-- `src/server/index.js`: refactor so the one-map server and the router share handlers. Its routes, responses and behaviour stay exactly as they are (`test/b` passes unchanged).
-- `src/core/store.js`: add the optional `tenant` to `openStore`. Tenant `default` is today's layout, byte for byte.
-- `src/cli/main.js` (register the new commands), `src/cli/complete.js` (complete them).
-- `web/shell/*.js`: replace hard-coded `/api/...` URLs with one helper that prefixes the page's base path (see Interface). Nothing else.
+- `src/server/index.js`: refactored so the one-map server and the router share handlers (`map.js`, `http.js`). Its routes, responses and behaviour stay exactly as they are (`test/b` passes unchanged).
+- `src/core/store.js`: the optional `tenant` for `openStore`, and the reserved map name `tenants`. Tenant `default` is today's layout, byte for byte.
+- `src/cli/main.js` (register the new commands; `COMMANDS` is exported for the features test), `src/cli/complete.js` (their flags and `token` subcommands).
+- `web/shell/*.js`: replace hard-coded `/api/...` URLs with one helper that prefixes the page's base path (see Interface), and mount the Server panel in service mode. Nothing else.
 - `web/index.html`: one `<meta name="ontologizer-base">` placeholder and the Server panel's mount point.
 - `SECURITY.md` (network mode section), `README.md` and `docs/GUIDE.md` (a short "Service mode" section), `package.json` (scripts only: `check:i`).
 
@@ -81,25 +84,37 @@ export const FEATURES = [
 ### Commands
 
 ```text
-ontologizer serve [--host 127.0.0.1] [--port 8787] [--home <dir>] [--tokens <file>] [--max-builds 2] [--open]
+ontologizer serve [--host 127.0.0.1] [--port 8787] [--home <dir>] [--tokens <file>] [--max-builds 2]
+                  [--max-queued 10] [--max-checks 4] [--allow-host <name>]... [--open]
     Serves every map in the home. Never opens a browser unless --open.
-    Tokens: --tokens <file>, else <home>/tokens.json if it exists.
+    Tokens: --tokens <file>, else <home>/tokens.json if it exists. A file with no rows is no tokens.
     A --host that is not loopback (127.0.0.1, ::1, localhost) with no tokens loaded:
       exit 1, "Refusing to listen on <host> without tokens: create one with `ontologizer token create`, or pass --tokens."
-    Writes <home>/serve.json { pid, url, startedAt } while running; removes it on exit.
-    Prints: "Serving <n> maps at <url>  (Ctrl-C to stop)".
+    --allow-host (or ONTOLOGIZER_ALLOW_HOST=a,b) with no tokens loaded:
+      exit 1, "Refusing --allow-host without tokens: a server behind a proxy must require tokens. ..."
+    Writes <home>/serve.json { pid, url, startedAt, auth: "open"|"tokens" } while running; removes it on exit.
+    Prints: "Serving <n> maps at <url>  (Ctrl-C to stop)". Ctrl-C and SIGTERM stop it gracefully.
+    An unhandled rejection is logged as one line ("an operation failed in the background: ...") and never stops the server.
 
 ontologizer status [--home <dir>] [--json]
     Home, tenants and map counts, the tokens file (names, tenants, scopes; never secrets),
-    and the running server's URL if <home>/serve.json names a live pid.
+    and the running server's URL and auth mode if <home>/serve.json names a live pid. A server that
+    started open while tokens now exist adds the note "tokens found: restart serve to require them".
 
 ontologizer token create --name <name> [--tenant default] [--scopes read,build] [--home <dir>]
     Prints the new token once ("ont_" + 43 base64url chars). Stores only its SHA-256 in <home>/tokens.json.
 ontologizer token list [--home <dir>] [--json]       names, tenants, scopes, created dates
 ontologizer token revoke <name> [--home <dir>]
+    (One yargs command, `token [action] [target]`; `token` alone prints usage and exits 1.)
 ```
 
-Scopes: `read` (list, snapshot, events, view, wait, status, ask), `build` (check, build, actions, save), `admin` (everything, and every tenant's status). `ask` costs money but changes nothing, so it rides on `read`, as on the page today.
+Scopes are a **ladder**, each implying the ones before it: `read` < `ask` < `build` < `admin`.
+- `read`: list, snapshot, events, view, wait, status, attachments. Strictly read-only.
+- `ask`: chat (ask the map). It calls the model (costs money) and writes the chat and any images into the map.
+- `build`: check, build, actions, save.
+- `admin`: everything in its own tenant, plus every tenant's status and the server's paths in it. An admin token still gets 404 on another tenant's maps.
+
+`token create` defaults to `read,build` (build implies ask and read).
 
 ### Tokens file
 
@@ -107,7 +122,7 @@ Scopes: `read` (list, snapshot, events, view, wait, status, ask), `build` (check
 [{ "name": "ci", "tenant": "default", "scopes": ["read", "build"], "hash": "sha256:<hex>", "created": "2026-11-09T18:00:00Z" }]
 ```
 
-Written atomically, mode 0600. Compare hashes in constant time.
+Written atomically, mode 0600. Compare hashes in constant time. Re-read when it changes (mtime, size, inode): a revoke takes effect on the next request, ends that token's sessions, and closes its open event streams within one ping. If it becomes unreadable while running, every token is refused. Whether the server requires tokens is fixed at start: revoking every token refuses everyone, it never reopens the server.
 
 ### Store
 
@@ -115,6 +130,7 @@ Written atomically, mode 0600. Compare hashes in constant time.
 openStore(home, { tenant = 'default' } = {})
 // 'default' -> <home>/ exactly as today.  Others -> <home>/tenants/<tenant>/ with the same layout inside.
 // Tenant names: /^[a-z0-9][a-z0-9-]{0,62}$/, anything else throws.
+// The map name `tenants` is reserved in every tenant (save and import refuse it with a clear message).
 ```
 
 ### HTTP (service mode)
@@ -122,31 +138,40 @@ openStore(home, { tenant = 'default' } = {})
 All JSON responses are `application/json`; errors are `{ ok: false, error }` with the right status.
 
 ```text
-GET  /                                   maps home page (web/home/index.html)
-POST /v1/session      { token }          sets cookie "ontologizer_session" (HttpOnly, SameSite=Strict, Path=/) -> { ok, tenant, scopes }
+GET  /                                   maps home page (web/home/index.html); ?next=<map view path> returns there after sign-in
+GET  /v1/session                         { ok, tenant, scopes, open } ; 401 when tokens are loaded and none is sent
+POST /v1/session      { token }          sets cookie "ontologizer_session" (HttpOnly, SameSite=Strict, Path=/; Secure via an https --allow-host proxy) -> { ok, tenant, scopes }
+                                         400 when the server has no tokens
 DELETE /v1/session                       clears it
 GET  /v1/health/live                     200 always
 GET  /v1/health/ready                    200 when the home is readable, else 503
-GET  /v1/t/:tenant/status                { tenant, home, store: "files", maps, tokens: [{ name, tenant, scopes }], server: { version, startedAt } }
+GET  /v1/t/:tenant/status                { tenant, home (admin only), store: "files", auth: "open"|"tokens", note?, maps, tokens: [{ name, tenant, scopes }], server: { version, startedAt } }
 GET  /v1/t/:tenant/maps                  [{ id, name, root, nodes, updatedAt, draft }]
-POST /v1/t/:tenant/maps/check            { context, answers? } -> { ready, brief?, name?, questions? }   (engine.check)
-POST /v1/t/:tenant/maps                  { brief, name?, depth? } -> 202 { id, viewUrl, eventsUrl }   (build starts in the background)
+POST /v1/t/:tenant/maps/check            { context, answers? } -> { ready, brief?, name?, questions? }   (engine.check; 502 with the model's error; 429 when --max-checks are busy)
+POST /v1/t/:tenant/maps                  { brief, name?, depth? } -> 202 { id, viewUrl, eventsUrl }   (build starts in the background; 429 when --max-queued builds already wait for this tenant)
 GET  /v1/t/:tenant/maps/:id/snapshot     the folded map (today's /api/snapshot)
 GET  /v1/t/:tenant/maps/:id/events?from=n  SSE (today's /api/events)
-GET  /v1/t/:tenant/maps/:id/wait?timeout=ms  { state: "idle" | "busy", jobs } ; default timeout 30000, max 300000
+GET  /v1/t/:tenant/maps/:id/wait?timeout=ms  { state: "idle" | "busy", jobs: [{ id, kind, state }], error? } ; default 30000, max 300000
+                                         jobs: the build (queued or running), the map's unfinished jobs, and a chat being written
 POST /v1/t/:tenant/maps/:id/actions      today's /api/action body and response
 POST /v1/t/:tenant/maps/:id/chat         today's /api/chat body and response
-POST /v1/t/:tenant/maps/:id/save         { name } -> { ok, id }
+POST /v1/t/:tenant/maps/:id/save         { name } -> { ok, id, viewUrl } ; 409 while anything in `jobs` runs or the name is taken
 GET  /v1/t/:tenant/maps/:id/view         the map page, with its base path set to /v1/t/:tenant/maps/:id
      /v1/t/:tenant/maps/:id/api/*        today's /api/* routes for that map, so the page works unchanged under its base
-GET  /shell/*, /shared/*, /views/*, /vendor/*, /src/core/*, /fixtures/*, /home/*   static, as today
+GET  /shell/*, /shared/*, /views/*, /vendor/*, /src/core/*, /fixtures/*, /home/*, /dist/*   static, as today
 ```
 
-Auth (when tokens are loaded): `Authorization: Bearer <token>` or the session cookie. Missing or wrong: 401. Wrong tenant: 404 (do not reveal the map exists). Missing scope: 403. Health routes and static files need no auth. POST and DELETE with a cookie must carry an `Origin` that matches the server's own; Bearer requests need not. Without tokens (loopback only), everything is open, as the one-map server is today.
+A failed build appends `job.failed` (kind `build`, with the error) to the map, so the page's jobs tray shows it; `wait` reports the error. A successful build leaves the log exactly as a CLI build does.
+
+**Auth** (when tokens are loaded): `Authorization: Bearer <token>` or the session cookie. Checked in this order on every `/v1/t/` route: missing or wrong credentials 401, then a cookie POST/DELETE without a matching `Origin` 403, then a wrong tenant 404 (do not reveal the map exists), then a missing scope 403, then a missing map 404. A browser `GET .../view` (Accept includes `text/html`) with no or an expired session gets `302 /?next=<path>` instead of 401. Health routes and static files need no auth. Bearer requests need no `Origin`. Sessions are random ids in memory (12 hours; at most 20 per token, evicting that token's oldest; at most 1000 in all), never the token. Without tokens (loopback only), everything is open, as the one-map server is; a POST with a foreign `Origin` still gets 403.
+
+**Proxies need tokens:** without tokens, `--allow-host` is refused at start, and any request carrying `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host` or `X-Real-IP` gets 403 ("This server has no tokens; proxied requests need tokens.").
+
+**Host check:** the one-map server's Host check stays. The router accepts `Host` = `127.0.0.1`, `localhost` or `[::1]` on any port; the bound host and port; this machine's own IP addresses on the bound port when bound to `0.0.0.0` or `::`; and any `--allow-host` name (with any port). A cookie POST's `Origin` matches when it is the request's own `Host` or an `--allow-host` name.
+
+**Limits:** `--max-builds` builds run at once; waiting builds queue per tenant (at most `--max-queued`) and start round-robin across tenants. `--max-checks` context checks at once. At most 50 open event streams plus pending waits per token (429). A map's engine and handler with no open streams and nothing running are dropped after 10 minutes and made again on the next request.
 
 `viewUrl` is `/v1/t/<tenant>/maps/<id>/view`; `eventsUrl` is `/v1/t/<tenant>/maps/<id>/events`.
-
-**Host check:** the one-map server's Host check stays. The router checks Host against the bound host and port, plus any `--allow-host <name>` given (repeatable), so it works behind a reverse proxy.
 
 ### The base path in the page
 
@@ -156,23 +181,24 @@ Auth (when tokens are loaded): `Authorization: Bearer <token>` or the session co
 
 ```js
 // web/shell/base.js
-export const BASE = document.querySelector('meta[name="ontologizer-base"]')?.content ?? '';
+export const BASE = /* the meta's content, or "" (also in Node, with no document) */;
 export const api = (path) => `${BASE}${path}`;   // api('/api/events?from=0')
+export const TENANT = /* the tenant in a service-mode BASE, else null */;
 ```
 
 ### Engines and fuse
 
-- One engine per map, created on first use by the same `engineFor` the CLI uses (`needKey: false`: a missing key fails the model call, not the server), kept in a registry keyed by `tenant/id`.
+- One engine per map, created on first use by the same `engineFor` the CLI uses (`needKey: false`: a missing key fails the model call, not the server), kept in a registry keyed by `tenant/id`. Context checks use one engine per tenant with id `draft-pending` (check writes nothing), as `ontologizer new` does.
 - `--max-builds` caps builds running at once; a build over the cap waits in a queue (the 202 still returns at once).
 - Fuse in service mode makes the fused draft a new map in the same process; its `url` is that map's `viewUrl`. No child servers, no new ports.
 
 ## Bodies of work
 
-- **W1 · Store tenant + tokens.** `openStore` tenant option; `src/server/tokens.js`; `token` and `status` commands.
-- **W2 · Router.** `src/server/service.js` with auth, the routes above, the engine registry, async build, `wait`, in-process fuse, the shared handlers refactor of `src/server/index.js`.
-- **W3 · `serve` command.** Flags, the network-bind refusal, `serve.json`, graceful shutdown (stop accepting, flush stores, close streams), `Dockerfile` (`node:22-slim`, non-root user, `ONTOLOGIZER_HOME=/data`, `serve --host 0.0.0.0`, which refuses without tokens by design).
-- **W4 · Maps home and New map.** `web/home/`: the map list (name, root, nodes, updated), a **New map** button opening a dialog: context textarea → `check` → its questions as option buttons plus "Other" text → `check` again (up to three rounds, as the CLI) → `build` → go to `viewUrl`. A token form when the server answers 401. Uses `web/shared/tokens.js` for every color and the shell's CSS.
-- **W5 · Server panel.** `web/shell/ui/server.js`: a read-only panel from `/v1/t/:tenant/status` (tenant, store, map count, tokens by name and scopes). Mounted on the home page and, in service mode, on the map page (a top-bar button `#server-panel`). Hidden on the one-map server.
+- **W1 · Store tenant + tokens.** `openStore` tenant option, the reserved name; `src/server/tokens.js` with the scope ladder; `token` and `status` commands.
+- **W2 · Router.** `src/server/service.js` with auth, the routes above, the engine registry with idle eviction, async build with per-tenant queues, `wait`, save, in-process fuse, the limits, the proxy rule; the shared handlers refactor of `src/server/index.js` into `map.js` and `http.js`, with event streams that end when their token or session does.
+- **W3 · `serve` command.** Flags, the network-bind and `--allow-host` refusals, `serve.json`, graceful shutdown (stop accepting, end streams and chats, flush stores), the unhandled-rejection guard, `Dockerfile` (`node:22-slim`, non-root user, `ONTOLOGIZER_HOME=/data`, `serve --host 0.0.0.0`, which refuses without tokens by design).
+- **W4 · Maps home and New map.** `web/home/`: the map list (name, root, nodes, updated), a **New map** button opening a dialog: context textarea → `check` → its questions as option buttons plus "Other" text → `check` again with the answers so far (up to three rounds, as the CLI) → `build` → go to `viewUrl`. A token form when the server answers 401; after sign-in, back to `?next=` if it is a map page. Uses `web/shared/tokens.js` for every color and the shell's CSS. Request and round logic in `web/home/flow.js` (no DOM).
+- **W5 · Server panel.** `web/shell/ui/server.js`: a read-only panel from `/v1/t/:tenant/status` (tenant, store, auth mode and its note, map count, version, tokens by name and scopes). Mounted on the home page and, in service mode, on the map page (a top-bar button `#server-panel`). Hidden on the one-map server.
 - **W6 · Base path.** `web/shell/base.js` and every `/api/` call in `web/shell/` through `api()`.
 - **W7 · Docs and features.** `src/features.js` rows for I1, `test/i/features.test.js`, README and GUIDE sections, SECURITY.md "Network mode".
 
@@ -182,15 +208,21 @@ export const api = (path) => `${BASE}${path}`;   // api('/api/events?from=0')
 |---|---|
 | `serve --host 0.0.0.0` with no tokens exits 1 and the message names `ontologizer token create`. | A `serve` that only warns. |
 | With tokens loaded, every `/v1/t/` route returns 401 without a token and with a wrong one. | A route registered outside the auth wrapper. |
-| A `read`-only token gets 403 on `POST /maps`, `/actions`, `/save`. | A scope check that only checks the tenant. |
+| A `read`-only token gets 403 on `POST /maps`, `/actions`, `/save`, and on chat. Scopes form the ladder read < ask < build < admin. | A scope check that only checks the tenant; a flat scope check. |
 | A token for tenant `a` gets 404 on tenant `b`'s map. | A store lookup that ignores the tenant. |
-| A cookie POST with a foreign `Origin` gets 403. | An Origin check that skips cookie requests. |
+| A cookie POST with a foreign `Origin` gets 403; an `--allow-host` origin passes. | An Origin check that skips cookie requests. |
 | No response, log line or page contains a token secret; `tokens.json` holds only hashes. | A status handler that returns the token. |
 | `POST /maps` returns 202 within 1 s with the stub engine; `wait` then reports `idle` and the snapshot has nodes. | A handler that awaits the build. |
 | Fuse in service mode creates a new map id in the same process and opens no new port. | The child-server path. |
 | `openStore(home)` and `openStore(home, { tenant: 'default' })` read and write the same files as before. | A default tenant that writes under `tenants/default/`. |
 | The map page served under `/v1/t/default/maps/<id>/view` loads its events from `<base>/api/events`. | A shell call left on a bare `/api/`. |
-| Every feature in `src/features.js` has a registered command and its button's id in its page. | A feature row with a missing button. |
+| Every feature in `src/features.js` has a registered command and its button's id in its page (in the HTML, or rendered by a module the page loads). | A feature row with a missing button. |
+| Save while a chat answer is being written gets 409; `serve` survives an unhandled rejection. | A work list without chats; no rejection handler. |
+| Without tokens, `--allow-host` is refused and proxied requests get 403. | A server that ignores proxy headers. |
+| A revoked token's (or signed-out session's) open event stream ends within one ping. | A stream that is never re-checked. |
+| The map name `tenants` is refused in every tenant. | A store that allows it. |
+| Build queue cap per tenant (429), round-robin start order, check slots (429), idle eviction, streams per token (429), sessions per token. | No cap; a FIFO queue; no eviction. |
+| A browser `GET .../view` without a session gets 302 to `/?next=`; API requests keep 401. | A server that redirects every unauthenticated request. |
 | `test/a` to `test/h` pass unchanged. | (Their own planted faults.) |
 
 ## Try it
@@ -203,6 +235,11 @@ node src/cli/index.js serve --home $H --host 0.0.0.0     # refuses
 node src/cli/index.js token create --name me --home $H   # then serve --host 0.0.0.0 starts; the page asks for the token
 docker build -t ontologizer . && docker run -p 8787:8787 -e ANTHROPIC_API_KEY -v $H:/data ontologizer   # refuses without tokens
 ```
+
+## Open for the maintainer
+
+1. **Top-level tab completion.** `serve`, `status` and `token` are not in the top-level completion list, because `test/b/complete.test.js` pins `complete([''])` to the exact old list and existing tests must not change. Their flags and `token create|list|revoke` do complete. Updating that test (and adding the I1 and I4 commands) is the maintainer's call.
+2. **The keychain in the container.** The `Dockerfile` sets `ONTOLOGIZER_KEYRING=none`, because a container has no OS keychain and the key comes from `ANTHROPIC_API_KEY`. `src/cli/apikey.js` describes that value as "for tests only". Either bless it as the container setting or add a dedicated one.
 
 ---
 

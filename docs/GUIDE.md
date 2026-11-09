@@ -431,7 +431,7 @@ ontologizer token revoke ci                               # takes effect at once
 ontologizer status                                        # home, tenants, tokens, running server
 ```
 
-A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps only its SHA-256 hash. In the browser, the home asks for the token once and keeps a session cookie. Scripts send `Authorization: Bearer <token>`. Scopes: `read` (list, view, events, wait, status, ask the map), `build` (check, build, node actions, save), `admin` (everything, and every tenant's status).
+A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps only its SHA-256 hash. In the browser, the home asks for the token once and keeps a session cookie. Scripts send `Authorization: Bearer <token>`. Opening a map link while signed out takes you to the home to sign in, then back to the map. Scopes are a ladder, each including the ones before it: `read` (list, view, events, wait, status), `ask` (ask the map: it calls the model and saves the conversation), `build` (check, build, node actions, save), `admin` (every tenant's status and the server's paths).
 
 **Tenants.** A token belongs to one tenant (`--tenant`, default `default`). The `default` tenant is your home itself; any other tenant's maps live under `<home>/tenants/<tenant>/`. A token never sees another tenant's maps.
 
@@ -451,7 +451,9 @@ A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps o
 | `GET /v1/t/<tenant>/status` | Tenant, store, map count, tokens (names and scopes) |
 | `GET /v1/health/live`, `/v1/health/ready` | Health checks (no token) |
 
-`--max-builds` (default 2) caps builds running at once; more wait in a queue. Fuse from a map page makes the fused draft a new map on the same server. Behind a reverse proxy, pass `--allow-host <name>` for the name the proxy forwards. While it runs, `serve` writes `<home>/serve.json` (pid, URL, start time) and removes it on exit (Ctrl-C or SIGTERM).
+`--max-builds` (default 2) caps builds running at once; more wait in a queue, at most `--max-queued` (default 10) per tenant, started in turn across tenants. `--max-checks` (default 4) caps context checks at once. Past a limit the server answers 429. Fuse from a map page makes the fused draft a new map on the same server. A map cannot be named `tenants` (that folder holds the other tenants).
+
+**Behind a reverse proxy**, create a token first, then pass `--allow-host <name>` (or set `ONTOLOGIZER_ALLOW_HOST=name1,name2`) for the name the proxy forwards. Without tokens, `serve` refuses `--allow-host`, and refuses any request that came through a proxy: an open server is for this machine only. If the proxy sends `X-Forwarded-Proto: https`, the sign-in cookie is marked `Secure`. While it runs, `serve` writes `<home>/serve.json` (pid, URL, start time, auth mode) and removes it on exit (Ctrl-C or SIGTERM). A server started without tokens stays open until restarted, even if you create one meanwhile; `ontologizer status` and the Server panel say "tokens found: restart serve to require them".
 
 **In a container.** The repository has a `Dockerfile` (`node:22-slim`, a non-root user, maps in `/data`, `serve --host 0.0.0.0`). It refuses to start until `/data` has a token:
 
@@ -460,6 +462,8 @@ docker build -t ontologizer .
 docker run --rm -v "$PWD/data:/data" ontologizer token create --name me
 docker run -p 8787:8787 -e ANTHROPIC_API_KEY -v "$PWD/data:/data" ontologizer
 ```
+
+Behind a proxy, add `-e ONTOLOGIZER_ALLOW_HOST=maps.example.com`.
 
 Service mode never asks for an API key. Without one, the server still runs, and a build fails with "No Anthropic API key" on the map.
 
