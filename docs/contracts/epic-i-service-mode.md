@@ -524,17 +524,186 @@ ONTOLOGIZER_PG_URL=postgres://localhost:55432/postgres npm run check:i       # t
 
 # Part I3 · Surfaces
 
-Built after I2 merges.
+Built on Part I2 (branch `epic/i3-surfaces`, from I2's head), with Part I4 merged in first (exactly the merge that happens upstream when I4 and then I2 land). Agents and apps reach service mode through three surfaces made from **one list of operations**: an HTTP API described by OpenAPI, MCP tools (over HTTP on `serve`, and over stdio), and a JS client. All three go through the router's one security path. Per-tenant daily limits count model calls and tokens; a build that runs too long is stopped.
+
+**Nothing changes for a person on a laptop**, and with no new flags `serve` behaves as in Part I2 (usage is counted, nothing is limited, builds stop after 15 minutes).
+
+## You own
+
+- `src/ops.js` (the operation list, `requestFor`, `openApi`)
+- `src/server/mcp.js` (the MCP server, the HTTP handler, the callers), `src/server/usage.js` (counters, limits, the client wrapper)
+- `src/client/index.js` (`ontologizer/client`)
+- `src/cli/commands/mcp.js`, `src/cli/commands/usage.js`
+- `web/shell/ui/connect.js` (the Connect an agent panel), `web/shell/connect.js` (its pure text: the configs)
+- `test/i/` files named `ops*`, `openapi*`, `mcp*`, `client*`, `usage*`, `limits*`, `timeout*`, `connect*`, `features-i3*`, `routes-i3*`
+
+**May touch:**
+- `src/server/service.js`: the new routes below, mounting `/v1/mcp`, the limit checks, `meter` for `makeEngine`, the build timeout. Every existing route, check and its order stay exactly as they are.
+- `src/server/map.js`: the request context's `limit()` (429 on model-calling actions and chat). `src/server/policy.js`: `actionFor` maps `export` and `context` to the reserved `export` action.
+- `src/cli/serve.js` (`engineFor` applies `meter`), `src/cli/commands/serve.js` (`--limit-calls`, `--limit-tokens`, `--build-timeout`, `meter`), `src/cli/main.js` (register `mcp`, `usage`), `src/cli/complete.js`.
+- `web/shell/ui/server.js` and `web/shell/server-panel.js` (usage, the API link, the Connect an agent button), `web/shell/ui/export.js` (one item: Connect an agent), `web/shell/main.js`, `web/home/` (mount the panel).
+- `src/features.js` (I3 rows), `test/i/features.test.js` (the ops check is added beside the existing one; nothing removed).
+- `package.json` (the `./client` export), `README.md`, `docs/GUIDE.md` ("Agents and apps"), `SECURITY.md`.
+
+**Must not touch:** `src/core/` (the engine's `outline`, `buildIndex` and `runTool` and I4's `exportMap` are imported, never changed), `web/views/`, `fixtures/`, any existing test except the features test as above.
+
+## Interface
+
+### One operation list: `src/ops.js`
 
 ```js
-// src/ops.js: each operation once; HTTP routes, /v1/openapi.json and the MCP tools are generated from it
-{ name, http: { method, path }, mcp: { name, description }, input /* JSON Schema */, output, scope, callsModel, cli, ui }
+// Pure data and pure functions: no Node imports (the browser client loads it).
+{ name, summary,
+  http: { method, path /* {tenant} {id} {nodeId} {path} */, fixed? /* body fields always sent */, type? /* response media type */ },
+  mcp: { name, description } | null,
+  input /* JSON Schema: path params, then query (GET) or body (POST) */, output /* JSON Schema */,
+  scope /* 'read'|'ask'|'build'|'admin'|null */, callsModel, cli /* a registered command */, ui: { page, id },
+  internal? /* the page's own /api/* routes: left out of OpenAPI */ }
+export const OPS, COST_NOTE /* "Calls the model: costs API credits." */;
+export function opByName(name), pathParams(path), requestFor(op, input) /* -> { method, path, body } */, openApi({ version, serverUrl? });
 ```
 
-- `ontologizer mcp` (stdio) and `POST /v1/mcp` (streamable HTTP, same tokens), with `@modelcontextprotocol/sdk`.
-- MCP tools: `check_context, build_map, wait_for_map, list_maps, get_outline, search_map, get_node, research, explain, sources, ask_map, fuse, rosetta, save_map, get_context, export_map`. Every tool with `callsModel: true` ends its description with "Calls the model: costs API credits."
-- `import { createClient } from 'ontologizer/client'`; per-tenant daily limits on model calls and tokens (`--limit-calls`, `--limit-tokens`), 429 with a reset time.
-- Buttons and commands: **Connect an agent** (`#connect-agent`) shows the MCP config; `ontologizer usage`; usage and an API link in the Server panel. `test/i` checks every op names a registered `cli` and a `ui` element.
+- **The router is not generated from the list; the list describes the router.** `service.js` is security-sensitive and reviewed line by line, so it keeps its hand-written routes. A test makes the two agree in both directions: every op's method and path is served (a request with that method and path reaches its handler: never the router's "no such route" 404 or 405), and every `/v1` route the router serves has an op (every path word in `service.js` and `map.js` is probed under `/v1/`, `/v1/t/default/` and a map's base, with GET and POST).
+- Several ops can share one route: `research`, `explain`, `sources`, `fuse` and `rosetta` are `POST .../actions` with a `fixed` `type`. In OpenAPI they are one operation whose body is `oneOf` their inputs.
+- `GET /v1/openapi.json` is `openApi({ version })`: OpenAPI 3.1, no auth (it holds no secret), every non-internal op, the bearer and cookie schemes, `x-ontologizer: { scope, callsModel, ops, cli }` on each operation.
+
+### HTTP (additions to Parts I1 and I2)
+
+```text
+GET  /v1/openapi.json                     the API, from src/ops.js (no auth)
+POST /v1/mcp                              MCP, streamable HTTP, stateless (GET and DELETE: 405)
+GET  /v1/t/:tenant/usage                  { tenant, day, calls, inputTokens, outputTokens, limits: { calls, tokens }, resetsAt }
+                                          read scope; the same tenant rule as status
+GET  /v1/t/:tenant/maps/:id/outline       text/markdown: "# <name>" and one line per node, "- Label (id): summary"
+GET  /v1/t/:tenant/maps/:id/search?q=&limit=   { results: [{ id, label, path, snippet }] }  (limit 1-50, default 8)
+GET  /v1/t/:tenant/maps/:id/nodes/:nodeId { id, label, path, parent, summary, hook, article, sources, children, neighbours }
+                                          404 { ok: false, error, didYouMean } for an unknown node
+GET  /v1/t/:tenant/maps/:id/context?budget=   text/markdown: I4's context pack (budget 300-200000, default 4000)
+GET  /v1/t/:tenant/maps/:id/export?format=json|context|html|embed[&budget=][&threeD=true]
+                                          I4's exportMap; html and embed need the built bundle (503 "run `npm run build`")
+```
+
+- The new map routes are reads: they pass the same checks, in the same order, as the snapshot (401, Origin 403, tenant 404, scope 403, missing map 404, read rule 404). `context` and `export` are the policy's reserved `export` action (read scope by default); the others are `read`. They answer 409 while the map is being saved.
+- Outline, search and node detail are the chat's own read-only tools (`outline`, `buildIndex().search`, `runTool('get_node')` in `src/core/engine/chat.js`), imported, not copied.
+
+### MCP
+
+```text
+ontologizer mcp [--url <server>] [--token-file <file>] [--home <dir>]
+    stdio. With --url: forwards every tool call over HTTP to that server, with the token from --token-file
+    (or ONTOLOGIZER_TOKEN). Never takes a token on the command line.
+    Without --url: starts the service in-process on 127.0.0.1 (a random port) for the home, open mode
+    (loopback only, no token), and forwards to it. Logs go to stderr; stdout is the protocol only.
+```
+
+- **One security path.** No MCP code calls the engine or a store. Each tool call becomes an HTTP request to the router (`requestFor(op, input)`), carrying the caller's own credentials:
+  - `/v1/mcp` first authenticates the request as every `/v1/t/` route does (401 with `WWW-Authenticate: Bearer`; then a cookie POST without a matching Origin, or any foreign Origin, 403). Each tool call is then sent to the same server on loopback with the incoming request's headers (Authorization, cookie, Host, Origin and the rest; hop-by-hop, length, content and MCP headers dropped), so the tenant, scope, read rule, policy, limits and Origin checks apply to it unchanged.
+  - stdio sends `Authorization: Bearer <token>` from the token file, or nothing (the in-process open server).
+- The tenant is the caller's own: `GET /v1/session` once per MCP request (HTTP) or per process (stdio).
+- **Tools** (each one op; `inputSchema` is the op's input without `tenant`):
+  `check_context, build_map, wait_for_map, list_maps, get_outline, search_map, get_node, research, explain, sources, ask_map, fuse, rosetta, save_map, get_context, export_map`.
+  - `build_map` answers at once with `{ id, viewUrl, eventsUrl }` (URLs absolute). `wait_for_map` waits up to `timeout` ms (default 30000, at most 300000).
+  - `ask_map` reads the chat's event stream to its end and answers with the full text, the cited nodes and sources (or the error).
+  - `get_outline` and `get_context` are cheap, read-only text. `get_context` is I4's context pack.
+  - Every tool whose op has `callsModel: true` ends its description with exactly `Calls the model: costs API credits.` No other tool says so.
+  - An HTTP error becomes a tool result with `isError: true` and the server's `error` text (a 404 reads the same as over HTTP: "not found").
+- **Resource:** `ontologizer://<tenant>/maps/<id>/snapshot` (`application/json`), listed from `list_maps` and read through `GET .../snapshot`; a resource template with the same shape.
+- `@modelcontextprotocol/sdk` 1.32.2 (already a dependency): the low-level `Server` with the tools' JSON Schemas from `src/ops.js`, `StreamableHTTPServerTransport` (stateless: a new server and transport per request) and `StdioServerTransport`.
+
+### The JS client: `ontologizer/client`
+
+```js
+import { createClient } from 'ontologizer/client';
+const c = createClient({ url, token? /* sent as Bearer */, tenant? /* default: GET /v1/session's */, fetch? /* default globalThis.fetch */ });
+await c.maps.check(context, answers?)            // check_context
+await c.maps.build(brief, { name, depth, sources }?)  // build_map -> { id, viewUrl, eventsUrl }
+await c.maps.wait(id, { timeout }?)               // wait_for_map
+await c.maps.list(); await c.maps.snapshot(id);
+for await (const ev of c.maps.events(id, { from, signal }?)) {}   // SSE, as an async iterator
+await c.maps.actions(id, body)                    // view_action and the jobs
+for await (const item of c.maps.ask(id, text, { chatId, lens, signal }?)) {}   // the chat's items
+await c.maps.save(id, name); await c.maps.export(id, { format, budget, threeD }?); await c.maps.context(id, { budget }?)
+await c.maps.outline(id); await c.maps.search(id, q, { limit }?); await c.maps.node(id, nodeId)
+await c.usage(); await c.status(); await c.sources(); await c.call(opName, input)   // any op by name
+```
+
+- Every method is `call(opName, input)` over `requestFor`. `fetch` only: Node 22+ and browsers. A non-2xx answer throws an `OntologizerError` with `status`, `error` and `retryAfter` (seconds, from a 429).
+- `package.json` gains `"./client": "./src/client/index.js"`.
+
+### Usage limits
+
+```text
+ontologizer serve ... [--limit-calls N] [--limit-tokens N] [--build-timeout <minutes>]
+ontologizer usage [--home <dir>] [--days 7] [--json]       reads <home>/usage.json; no server needed
+```
+
+- Counted per tenant per UTC day: model calls and tokens (input, with cache reads and writes, plus output), from the `usage` field of each SDK response, by wrapping every model client the engine gets (the default client and the model port's), so every purpose counts. **Dollars are not counted** (there is no price table): this is a usage limit, not a spend cap.
+- `makeEngine({ store, id, tenant, clientFor?, meter })`: the engine factory wraps every client with `meter(client)`. `createUsage({ home, limitCalls, limitTokens })` → `{ wrap(client, { tenant, signal }), today(tenant), over(tenant), flush(), file }`.
+- Over a limit (calls made ≥ `--limit-calls`, or tokens ≥ `--limit-tokens`), every op with `callsModel` answers **429** with `Retry-After` (seconds to the next UTC midnight) and `{ ok: false, error }` naming the limit and when it resets, until the next UTC day. The checks come after the auth, tenant, scope and read-rule checks. A model call that starts while over the limit (a build already running) throws instead, so a build stops at the limit.
+- Counters persist in `<home>/usage.json` (`{ version: 1, tenants: { <tenant>: { <YYYY-MM-DD>: { calls, inputTokens, outputTokens } } } }`, written atomically, mode 0600, the last 31 days kept), read at start, so a restart keeps them. One server per home writes it.
+- Default: no limits (counting only).
+
+### Build timeout
+
+- `serve --build-timeout <minutes>` (default 15, from 1 to 1440). A build running longer is aborted: the engine's model calls are aborted through the meter's AbortSignal (in flight and later), the engine is dropped, `job.failed` (kind `build`) "Timed out after N minutes" is appended, and its build slot is freed at once, even when the engine never returns. `wait` reports the error.
+
+### Buttons and commands
+
+| Feature | Command | Button | id |
+|---|---|---|---|
+| MCP for agents | `ontologizer mcp` | **Connect an agent**: an item in the Export menu on the map page (one-map and service mode), and a button in the Server panel (home page); opens a panel with copyable configs | `#connect-agent` (map page), `#server-connect-agent` (home) |
+| HTTP API | `ontologizer serve` (`/v1/openapi.json`) | **API** link in the Server panel | `#server-api` |
+| Usage and limits | `ontologizer usage` | Usage (today's calls and tokens, and the limits) in the Server panel | `#server-usage` |
+
+- **Connect an agent** shows: the HTTP form `claude mcp add --transport http ontologizer <server>/v1/mcp --header "Authorization: Bearer <YOUR_TOKEN>"` (service mode only: the one-map server has no `/v1/mcp`); the stdio form `claude mcp add ontologizer -- npx -y ontologizer mcp`; a generic JSON block (`mcpServers`). It never shows a real token, only the placeholder. Each block has a Copy button. It is placed by the shell's `fitPanel`/`keepFitted` and adds nothing to the top bar, so the bar wraps at exactly the widths it did.
+- Every op names a registered `cli` and a `ui` element that exists in its page (the features test, extended).
+
+## Bodies of work
+
+- **W0 · Bring in I4.** Merge `epic/i4-export`; resolve; regenerate the notices; full suite on Node 22 and 24.
+- **W1 · Contract.** This section.
+- **W2 · Ops, routes, OpenAPI.** `src/ops.js`; the new read routes; `/v1/openapi.json`; the router-consistency test.
+- **W3 · MCP.** `src/server/mcp.js`, `/v1/mcp`, `ontologizer mcp`.
+- **W4 · Client.** `src/client/index.js`, the export.
+- **W5 · Limits and timeout.** `src/server/usage.js`, the meter, the 429s, `usage` command and route, `--build-timeout`.
+- **W6 · Buttons and commands.** Connect an agent, the Server panel's usage and API link, the features rows.
+- **W7 · Docs.** README (short), GUIDE "Agents and apps" (Claude Code and the Agent SDK, the client, limits), SECURITY (MCP takes the same path; limits are not a spend cap).
+
+## Checks (each with its planted fault)
+
+| Check | Planted fault it must catch |
+|---|---|
+| Every op is served by the router, every `/v1` route has an op, and every op with `mcp` is a tool (and every tool an op). | A route added to the router only; a tool with no op. |
+| OpenAPI 3.1 is well formed: unique operationIds, every path parameter declared, a response per operation, POST bodies, no internal op. | An undeclared path parameter. |
+| A reader's MCP `get_outline` on a private map gives the same not-found as HTTP; a holder's gives the outline. | An MCP tool that calls the store directly. |
+| MCP over HTTP: no token 401; a read token's `build_map` is refused as over HTTP (403). | A tool call sent without the caller's headers. |
+| Every tool with `callsModel` ends its description with the cost line; no other tool has it. | A model-calling tool without it. |
+| stdio round trip: spawn `ontologizer mcp`, then `build_map`, `wait_for_map`, `get_outline`. | (The stdout-only-protocol rule: a log line on stdout breaks the round trip.) |
+| The client against a live server: check, build, wait, list, snapshot, an events iterator, outline, export, errors as `OntologizerError`. | An iterator that stops at the first chunk. |
+| Limits: with `--limit-calls 500`, the 501st model call's op gets 429 with Retry-After; the counters survive a restart; tenant b is not limited by tenant a. | A per-process counter (one count for every tenant). |
+| Token limit; dollars are never counted. | A limit that counts only output tokens. |
+| A build past `--build-timeout` is failed "Timed out after N minutes" and its slot is free for the next build. | A stub that never finishes holding the slot. |
+| Every op names a registered command and an element in its page; Connect an agent never shows a token. | An op whose button is missing. |
+| The top bar wraps at the same widths (1024-1600, 2 px steps, one-map page and service mode) and the Connect an agent panel stays in the window at 320x640, 375x812, 768x1024, 1024x768 and 1280x800 without covering the Server panel or the Export menu (headless Chrome, by hand). | |
+| `test/a` to `test/i` (I1, I2, I4) pass unchanged; `npm audit` is clean; no new dependency. | |
+
+## Try it
+
+```bash
+H=$(mktemp -d)
+node src/cli/index.js serve --home $H --limit-calls 200 &          # http://127.0.0.1:8787/v1/openapi.json
+claude mcp add --transport http ontologizer http://127.0.0.1:8787/v1/mcp
+claude mcp add ontologizer -- npx -y ontologizer mcp               # stdio, in-process server on the default home
+node src/cli/index.js usage --home $H
+node -e "import('ontologizer/client').then(async ({ createClient }) => console.log(await createClient({ url: 'http://127.0.0.1:8787' }).maps.list()))"
+```
+
+## Open for the maintainer
+
+1. **The router describes itself, it is not generated.** `src/ops.js` describes the hand-written router, and a test keeps them in step both ways. Generating the router from the list would remove the test but rewrite the security-reviewed code.
+2. **Usage is not money.** Calls and tokens are counted; prices change and differ by model, so no dollar figure is kept. A spend cap belongs with the API provider's own limits.
+3. **One writer per home for `usage.json`.** Two servers on one home (or `ontologizer mcp` without `--url` beside `serve`) each keep their own counts and the last write wins.
+4. **`ontologizer mcp` without `--url` opens a loopback port** while it runs, open to this machine as `ontologizer load` is.
 
 ---
 
