@@ -23,6 +23,10 @@ import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests } from './explain.js';
+import { TENANT, api } from './base.js';
+import { connBanner, stillSignedIn } from './conn.js';
+import { mountServerPanel } from './ui/server.js';
+import { mountBrandMenu } from './ui/brand.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -39,7 +43,11 @@ const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.get
 }
 
 const layout = createGraphLayout({ width: innerWidth, height: innerHeight });
-const source = createSource({ search: location.search });
+// Service mode: a dropped stream first asks whether the page is still signed in (a 401 stops it).
+const source = createSource({
+  search: location.search,
+  ...(TENANT ? { checkAccess: () => stillSignedIn(fetch, api('/api/snapshot')) } : {}),
+});
 
 /** @type {Map<string, Set<Function>>} */
 const handlers = new Map();
@@ -162,6 +170,14 @@ for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
   catch (err) { console.error(`[shell] mount "${id}" failed`, err); }
 }
+// Service mode only: the read-only Server panel (the one-map server leaves it hidden).
+if (TENANT) {
+  try { mountServerPanel($('server-panel'), { tenant: TENANT, popover: true }); }
+  catch (err) { console.error('[shell] mount "server-panel" failed', err); }
+  // The brand mark becomes a button: All maps, New map (the one-map page keeps it decorative).
+  try { mountBrandMenu(/** @type {HTMLElement} */ (document.querySelector('#topbar .brand-mark'))); }
+  catch (err) { console.error('[shell] mount "brand-menu" failed', err); }
+}
 // The ⓘ tooltips go in once, after every control exists.
 try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }
 
@@ -182,6 +198,17 @@ setInterval(() => {
   let t = null;
   const show = (/** @type {string} */ s) => {
     clearTimeout(t);
+    if (s === 'signed-out') {
+      // Service mode only: access was lost (a 401). Offer sign-in, coming back to this page.
+      const b = /** @type {any} */ (connBanner(s, location.pathname));
+      const a = document.createElement('a');
+      a.href = b.link.href;
+      a.textContent = b.link.text;
+      a.style.color = 'inherit';
+      banner.replaceChildren(b.text, a);
+      banner.hidden = false;
+      return;
+    }
     if (s === 'lost') t = setTimeout(() => { banner.hidden = false; }, 1500);
     else banner.hidden = true;
   };

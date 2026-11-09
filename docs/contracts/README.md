@@ -18,6 +18,7 @@ Copy this folder into the repository as `docs/contracts/` before the clock start
 | `epic-f-3d-sky.md` | `epic-f-3d-sky` | The 3D "Floor and Sky" view. Stretch. |
 | `epic-g-fuse-rosetta.md` | `epic-g-fuse-rosetta` | Fusing two maps; the Rosetta analogy lens. |
 | `epic-h-ship.md` | `epic-h-ship` | README, package contents, release preparation, demo replay. |
+| `epic-i-service-mode.md` | the I1 to I4 leads | Service mode, added after release (issue #1): headless server, ports, MCP and HTTP surfaces, export and context pack. |
 
 ## The sessions
 
