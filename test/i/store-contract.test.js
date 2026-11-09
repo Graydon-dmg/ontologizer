@@ -23,9 +23,9 @@ const created = (name) => ({ t: 'ontology.created', at: 0, name, root: 'root', b
 const node = (id, at) => ({ t: 'node.added', at, node: { id, label: id, parent: 'root', category: 'c', summary: '', tags: [] } });
 
 /** JSON with sorted keys: jsonb does not keep key order. @param {any} v @returns {string} */
-function canon(v) {
-  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
-  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
   return JSON.stringify(v);
 }
 
@@ -159,11 +159,11 @@ async function persistenceProblems(s, reopen) {
   s.save(d, 'keep');
   const dr = s.createDraft({}, 'Scratch'); s.append(dr, created('Scratch'));
   s.importEvents('imp', [created('Imp'), node('m1', 1)]);
-  const before = canon(s.read('keep'));
+  const before = canonical(s.read('keep'));
   const rowsBefore = s.list({ drafts: true }).map((/** @type {any} */ r) => [r.id, r.name, r.root, r.nodes, r.draft]);
   const cur = s.current();
   const s2 = await reopen();
-  need(p, canon(s2.read('keep')) === before, 'read() differs after reopen');
+  need(p, canonical(s2.read('keep')) === before, 'read() differs after reopen');
   const rowsAfter = s2.list({ drafts: true }).map((/** @type {any} */ r) => [r.id, r.name, r.root, r.nodes, r.draft]);
   need(p, JSON.stringify(rowsAfter.sort()) === JSON.stringify(rowsBefore.sort()), `rows differ after reopen: ${JSON.stringify(rowsAfter)} vs ${JSON.stringify(rowsBefore)}`);
   need(p, s2.current() === cur, `current differs after reopen: ${s2.current()} vs ${cur}`);

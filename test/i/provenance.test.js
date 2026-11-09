@@ -138,11 +138,11 @@ test('without an actor no event has an actor key, and the build is unchanged', a
   // the build with an actor, minus `actor`, is the build without one (job ids' timestamp aside)
   const withActor = await scenario({ actor: ACTOR });
   /** @param {any[]} evs */
-  const canon = (evs) => evs.map((e) => { const { actor, ...r } = strip(e); return JSON.stringify(r).replace(/"id":"(\w+)-[a-z0-9]+-(\d+)"/g, '"id":"$1-S-$2"'); }).sort();
-  assert.deepEqual(canon(withActor.build), canon(bare.build));
+  const canonical = (evs) => evs.map((e) => { const { actor, ...r } = strip(e); return JSON.stringify(r).replace(/"id":"(\w+)-[a-z0-9]+-(\d+)"/g, '"id":"$1-S-$2"'); }).sort();
+  assert.deepEqual(canonical(withActor.build), canonical(bare.build));
   // planted fault: an extra field on one event breaks the equality
   const tampered = bare.build.map((e, i) => (i === 1 ? { ...e, extra: 1 } : e));
-  assert.notDeepEqual(canon(tampered), canon(withActor.build));
+  assert.notDeepEqual(canonical(tampered), canonical(withActor.build));
 });
 
 // ---- verified citations --------------------------------------------------------------------------
