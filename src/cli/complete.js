@@ -16,6 +16,7 @@ const FLAGS = {
   serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open'],
   status: ['--home', '--json'],
   token: ['--name', '--tenant', '--scopes', '--home', '--json'],
+  sources: ['--config', '--home', '--json'],
 };
 const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse']);
 
@@ -48,6 +49,7 @@ export function complete(words) {
     }
     if (cmd === 'key' && words.length === 2) return ['set', 'clear'].filter((c) => c.startsWith(partial));
     if (cmd === 'token' && words.length === 2) return ['create', 'list', 'revoke'].filter((c) => c.startsWith(partial));
+    if (cmd === 'sources' && words.length === 2) return ['list', 'test'].filter((c) => c.startsWith(partial));
     if (cmd === 'completion' && words.length === 2) return ['zsh', 'bash', 'fish'].filter((c) => c.startsWith(partial));
     if (NAME_COMMANDS.has(cmd)) {
       if (cmd === 'fuse' ? words.length > 3 : words.length > 2) return [];
