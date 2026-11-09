@@ -1,0 +1,43 @@
+/* The maps home. Colors come only from the theme variables that tokens.THEME sets. */
+html, body { overflow: auto; height: auto; min-height: 100%; }
+.home-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--panel);
+  border-bottom: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
+.home-bar h1 { margin: 0; font-size: 15px; flex: 1; }
+.home { max-width: 860px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 24px; }
+.home h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.muted { color: var(--muted); }
+button { font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--muted);
+  background: var(--panel); color: var(--fg); }
+button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.maps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 8px; background: var(--panel); }
+.maps-list:empty { display: none; }
+.maps-list li { border-bottom: 1px solid color-mix(in srgb, var(--muted) 25%, transparent); }
+.maps-list li:last-child { border-bottom: 0; }
+.maps-list a { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 10px 12px; color: inherit; text-decoration: none; }
+.maps-list a:hover { background: var(--bg); }
+.map-name { font-weight: 600; }
+.map-meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+.map-root { color: var(--muted); font-size: 12px; }
+.map-draft { font-size: 10px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; opacity: .8; }
+dialog { background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
+  border-radius: 10px; padding: 16px; width: min(480px, calc(100vw - 32px)); box-sizing: border-box; }
+dialog::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+dialog h2 { margin: 0 0 10px; font-size: 15px; color: var(--fg); text-transform: none; letter-spacing: 0; }
+dialog form { display: flex; flex-direction: column; gap: 10px; }
+dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+dialog input, dialog textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--muted); border-radius: 4px;
+  padding: 6px 8px; font: inherit; box-sizing: border-box; width: 100%; }
+dialog .row { display: flex; gap: 6px; justify-content: flex-end; }
+.msg { margin: 0; color: var(--fg); font-size: 12px; }
+.msg:empty { display: none; }
+.q { border: 0; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 4px; }
+.q legend { padding: 0; margin-bottom: 4px; font-weight: 600; }
+.q label { flex-direction: row; align-items: center; gap: 6px; color: var(--fg); }
+.q input[type=radio] { width: auto; }
+.brief { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+.brief dt { color: var(--muted); }
+.brief dd { margin: 0; }
+#server-panel { background: var(--panel); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 8px; padding: 10px; }
