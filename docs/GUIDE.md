@@ -485,7 +485,7 @@ A full example, with a private team wiki and a public documentation site:
 
 ```js
 // ontologizer.config.js
-import { openPostgresStore } from 'ontologizer/store-postgres';   // only if you use the Postgres store
+import { postgresStorePort } from 'ontologizer/store-postgres';   // only if you use the Postgres store
 import Anthropic from '@anthropic-ai/sdk';
 
 export default {
@@ -508,7 +508,9 @@ export default {
   ],
 
   // Where maps live: one store per tenant. The default is the files under your home.
-  store: (tenant) => openPostgresStore({ url: process.env.DATABASE_URL, tenant }),
+  // postgresStorePort opens openPostgresStore({ url, tenant }) per tenant, and its exists(tenant) lets the
+  // server check a tenant without opening (and locking) a store for it.
+  store: postgresStorePort({ url: process.env.DATABASE_URL }),
 
   // Which client each model call uses. purpose is check, build, research, explain, sources, ask,
   // fuse or rosetta. The default is your own key, as everywhere else.
@@ -539,7 +541,7 @@ When a node is built from a document a source returned, its details panel lists 
 
 ### Private maps
 
-A source marked `visibility: 'private'` makes every map that uses it private, **for life**. **Picking** a private source in New map makes the map private from the start, before its first node, even if the build ends up not using it. And the first time a private source answers anything during a run (a result or an error), the map records it before the answer reaches the model. Nothing can make the map public again. A fused map is private if either input is. A private map shows a **Private** badge in its top bar and in the maps home, and `ontologizer list` shows it in the visibility column.
+A source marked `visibility: 'private'` makes every map that uses it private, **for life**. **Picking** a private source in New map makes the map private from the start: it is stored private before the server even answers, so it stays private across a crash or a restart, even if the build ends up not using the source. A build a restart interrupts is marked failed ("Interrupted by a restart") rather than left waiting. The sources you pick are given to the build as your chosen references, to search for every category. And the first time a private source answers anything during a run (a result or an error), the map records it before the answer reaches the model. Nothing can make the map public again. A fused map is private if either input is. A private map shows a **Private** badge in its top bar and in the maps home, and `ontologizer list` shows it in the visibility column.
 
 Who sees a private map: an admin, and anyone who **holds every private source** the map used. Anyone else gets "not found" for it (in the browser, a page saying "Not found, or you don't have access"), and it is not in their maps list or their fuse picker. Someone watching a public map when it becomes private stops receiving it at once, and so does a token whose sources you take away in `tokens.json`.
 
@@ -585,4 +587,6 @@ In service mode every change a request makes to a map is stamped with who made i
 
 ### The Postgres store
 
-`ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8.23.1`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order. Every change the server confirms is stored first, so a crash loses nothing it acknowledged. If a write ever fails, the store stops taking changes (the server answers 503) rather than leaving a gap, until you restart it. **One server per tenant**: a second server opening the same tenant is refused ("Another process already has the Postgres store for tenant … open"). Chat images stay on local disk (`<home>/pg/<tenant>/`).
+`ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8.23.1`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order. Every change the server confirms is stored first, so a crash loses nothing it acknowledged. If a write ever fails, the store stops taking changes (the server answers 503) rather than leaving a gap, until you restart it. **One server per tenant**: a second server opening the same tenant is refused ("Another process already has the Postgres store for tenant … open"). If the store loses its database connection (a database restart, an administrator ending it), that tenant answers 503 and `/v1/health/ready` reports not ready until you restart the server; the server itself keeps running.
+
+Each open tenant holds a few database connections. `serve --max-stores <n>` (default 16) caps how many tenants have a store open at once: keep it well below your database's `max_connections`. A store function you write yourself can carry `exists(tenant)` (sync or async) so the server never opens a store for a tenant that does not exist; `postgresStorePort` sets it for you. Chat images stay on local disk (`<home>/pg/<tenant>/`).
