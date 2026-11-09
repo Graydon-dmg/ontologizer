@@ -39,7 +39,9 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }
 :root { --side-top: max(170px, calc(var(--topbar-bottom, 56px) + 10px)); }
-#side-tabs { position: fixed; right: 10px; top: var(--side-top); z-index: 42; width: min(360px, 90vw); box-sizing: border-box; display: flex; gap: 2px;
+/* The tab strip and the pane under it (#explain, #chat) are one unit: the same width rule (border-box),
+   the same right edge, and the strip exactly 34px tall so its bottom meets the pane's top. */
+#side-tabs { position: fixed; right: 10px; top: var(--side-top); z-index: 42; width: min(360px, 90vw); height: 34px; align-items: flex-end; box-sizing: border-box; display: flex; gap: 2px;
   padding: 6px 8px 0; background: var(--panel); border-left: 1px solid var(--muted); border-top-left-radius: 8px; }
 #side-tabs[hidden] { display: none; }
 #side-tabs [role=tab] { all: unset; cursor: pointer; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; }
