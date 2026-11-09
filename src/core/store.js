@@ -91,9 +91,16 @@ function assertName(name) {
   }
 }
 
-/** @param {string} [home] */
-export function openStore(home) {
-  const root = home ?? process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer');
+/** Valid tenant names: 'default' is the home itself; others live under <home>/tenants/<tenant>/. */
+export const TENANT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** @param {string} [home] @param {{ tenant?: string }} [opts] */
+export function openStore(home, { tenant = 'default' } = {}) {
+  if (typeof tenant !== 'string' || !TENANT_RE.test(tenant)) {
+    throw new Error(`Invalid tenant "${tenant}": use lowercase letters, digits and hyphens (at most 63 characters).`);
+  }
+  const base = home ?? process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer');
+  const root = tenant === 'default' ? base : path.join(base, 'tenants', tenant);
   fs.mkdirSync(root, { recursive: true });
   const indexFile = path.join(root, 'index.json');
   const sessionsFile = path.join(root, 'sessions.json');

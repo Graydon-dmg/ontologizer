@@ -4,9 +4,10 @@
 import { CliError, makeDeps } from './deps.js';
 
 // One file per command under ./commands/, each `export default { command, describe, builder, handler }`.
-const COMMANDS = [
+export const COMMANDS = [
   'start', 'new', 'load', 'save', 'list', 'fuse', 'rosetta', 'explain', 'research',
   'update', 'key', 'doctor', 'completion', 'complete',
+  'serve', 'status', 'token',
 ];
 
 async function loadCommands() {
