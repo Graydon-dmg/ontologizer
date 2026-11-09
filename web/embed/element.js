@@ -65,6 +65,8 @@ class OntologizerMap extends Base {
   constructor() {
     super();
     this.started = false;
+    this.waiting = false;
+    /** @type {HTMLButtonElement|null} */ this.toggle = null;
     /** @type {any} */ this.onto = null;
     /** @type {any} */ this.layout = null;
     /** @type {any} */ this.view = null;
@@ -80,6 +82,15 @@ class OntologizerMap extends Base {
 
   connectedCallback() {
     if (this.started) return;
+    // An element the HTML parser creates after the bundle has run is connected before its children
+    // (the data tag) are parsed: wait for the document, then read.
+    if (this.readText() === null && document.readyState === 'loading') {
+      if (!this.waiting) {
+        this.waiting = true;
+        document.addEventListener('DOMContentLoaded', () => { this.waiting = false; if (this.isConnected) this.connectedCallback(); }, { once: true });
+      }
+      return;
+    }
     this.started = true;
     const root = this.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
@@ -197,14 +208,13 @@ class OntologizerMap extends Base {
 
     const views = listViews();
     if (views.length > 1) {
-      const toggle = button('', () => {
+      const toggle = /** @type {HTMLButtonElement} */ (button('', () => {
         const all = listViews();
         const i = all.findIndex((v) => v.id === this.viewId);
         this.mountView(all[(i + 1) % all.length].id);
-        toggle.textContent = this.toggleLabel();
-      });
-      toggle.textContent = this.toggleLabel();
+      }));
       toggle.title = 'Switch between 2D and 3D';
+      this.toggle = toggle; // labelled by mountView, once a view is up
       bar.append(toggle);
     }
 
@@ -247,9 +257,19 @@ class OntologizerMap extends Base {
       emit: (/** @type {'select'|'hover'|'focus'} */ name, /** @type {any} */ detail) => this.onViewEvent(name, detail),
     };
     this.publishInsets(); // the CSS variables are in place before the view reads them
-    v.mount(stage, ctx);
+    try {
+      v.mount(stage, ctx);
+    } catch (err) {
+      // For example no WebGL for the 3D view: say so, and keep the toggle to go back.
+      try { v.unmount(); } catch { /* it never fully mounted */ }
+      stage.replaceChildren(el('div', `The ${entry.label} view could not start here: ${err instanceof Error ? err.message : String(err)}`, 'msg'));
+      this.viewId = entry.id;
+      if (this.toggle) this.toggle.textContent = this.toggleLabel();
+      return;
+    }
     this.view = v;
     this.viewId = entry.id;
+    if (this.toggle) this.toggle.textContent = this.toggleLabel();
     applyViewState(v, viewStateToApply(this.onto.view));
   }
 
@@ -299,7 +319,7 @@ class OntologizerMap extends Base {
     /** @type {HTMLElement} */ (panel.lastChild).className = 'close';
     /** @type {HTMLElement} */ (panel.lastChild).setAttribute('aria-label', 'Close');
     panel.append(el('h2', d.label));
-    if (d.category) panel.append(el('div', d.category, 'muted'));
+    if (d.category && d.category !== d.label) panel.append(el('div', d.category, 'muted'));
     if (d.summary) panel.append(el('p', d.summary));
     const a = d.article;
     if (a) {
