@@ -286,21 +286,23 @@ Built after I2 merges.
 
 - `src/core/export/` (`index.js`, `html.js`, `context.js`): pure functions, no Node or DOM imports, so the page can run them too (the server already serves `/src/core/`).
 - `src/cli/commands/export.js`
-- `web/embed/` (the `<ontologizer-map>` custom element and its entry)
+- `web/embed/` (the `<ontologizer-map>` custom element, its entries for 2D and 3D, and a pure data reader)
 - `web/shell/ui/export.js` (the Export menu)
-- `scripts/build-embed.js`, `test/i/` files named `export*.test.js`, `context*.test.js`, `embed*.test.js`, `build*.test.js`
+- `scripts/build-embed.js`, `test/i/` files named `export*`, `context*`, `embed*`, `build*`
 
 **May touch:**
-- `package.json`: the `esbuild` devDependency (exact version), `scripts` (`build`, `prepack`, and `check`, `check:i`, `dev` run `build` first), `files` (add `dist`), `exports` (add `"./export": "./src/core/export/index.js"`).
-- `.gitignore` (add `dist/`).
-- `src/server/index.js`: serve `/dist/*` as static files (one route), nothing else.
+- `package.json`: the `esbuild` devDependency (exact version: `0.28.2`), `scripts` (`build`, `prepack`, and `check`, `check:i`, `dev` run the build first), `exports` (add `"./export": "./src/core/export/index.js"`). `files` is unchanged: the bundle lives under `web/`, which already ships.
+- `.gitignore` (add `dist/`, which also covers `web/dist/`).
+- `src/server/index.js`: add `'dist'` to the existing static list, nothing else. (Service mode's list gets the same word in Part I1.)
 - `web/index.html`: the Export menu's mount point. `web/shell/main.js`: mount it.
 - `web/views/graph/`: a read-only flag in the view's context, if the view needs one. The live view's behaviour must not change.
-- `src/features.js`: rows for I4 (I1 creates the file; if I1 has not landed, create it with only your rows and the shared shape).
+- `src/features.js`: rows for I4.
 - `src/cli/main.js` (register `export`), `src/cli/complete.js`.
+- `scripts/third-party-notices.js` and the `THIRD_PARTY_NOTICES.md` it generates (see Licences).
+- `.github/workflows/release.yml` and `docs/RELEASING.md` (see Releases).
 - `README.md`, `docs/GUIDE.md`: a short "Export" section.
 
-**Must not touch:** `src/core/engine/`, `src/core/events.js`, `src/core/schema.js`, `src/server/` beyond the one static route, any existing test.
+**Must not touch:** `src/core/engine/`, `src/core/events.js`, `src/core/schema.js`, `src/server/` beyond the one word, any existing test.
 
 ## Interface
 
@@ -310,65 +312,87 @@ ontologizer export <map> --format html|embed|json|context [--3d] [--budget 4000]
     json, context: to --out, else stdout.
     --3d: html and embed only; adds the 3D view (bigger file; the command prints the size).
     <map> resolves as `load` does: a saved map or draft, else a bundled fixture by name (`demo`).
+    A missing bundle fails with "run `npm run build`", never a stack trace.
 ```
 
 ```js
 import { exportMap } from 'ontologizer/export';
 exportMap(ontology, {
   format,              // 'html' | 'embed' | 'json' | 'context'
-  bundle,              // the text of dist/embed.js or dist/embed-3d.js (html, embed only)
+  bundle,              // the text of web/dist/embed.js or web/dist/embed-3d.js (html, embed only)
   budget = 4000,       // context only, in estimated tokens (chars / 4)
-  liveUrl = null,      // html, embed: shows "Open live" when set
+  liveUrl = null,      // html, embed: shows "Open live" when set (http and https only)
 }) // -> string
 ```
 
 - **`html`:** one self-contained page: the bundle inlined in a classic `<script>`, the map in `<script type="application/json" id="ontologizer-data">`, one `<ontologizer-map>` filling the window. No external URL anywhere.
-- **`embed`:** a fragment: one `<ontologizer-map style="display:block;height:480px">` with its data tag and the inlined bundle, nothing else. Drops into any page. Several embeds on one page share the bundle if it is already defined (`customElements.get` guard).
+- **`embed`:** a fragment: one `<ontologizer-map style="display:block;height:480px">` with its data tag and the inlined bundle, nothing else. Drops into any page. Several embeds on one page share the bundle (a define-once guard).
+- **html and embed carry no chat and no unfinished jobs:** questions people asked are not part of a published map, and a static page cannot finish a job.
 - **`json`:** `JSON.stringify(ontology)` as `/api/snapshot` returns it.
 - **`context`:** markdown with fixed headings, in this order:
 
 ```md
 # <map name>
-## Brief          context, subject, scope, purpose, level
+## Brief          context, subject, scope, purpose, level, size
 ## Outline        one line per node, indented by depth: "- Label: one-line summary"
 ## Bridges        cross-links between categories: "- A → B (influences): why"
 ## Insights       the map's insight events
-## Thin areas     nodes with no explanation, no sources, or many leaves and no summary
+## Thin areas     uncovered branches; one line when nothing is explained or sourced yet
 ## Sources        the web sources the map cites, deduplicated
 ```
-  Trimmed to `budget`: drop the deepest outline level first, then summaries from the deepest up; the root's children always stay; then shorten Bridges and Sources. A last line says what was trimmed.
-- **Private maps:** once I2 lands, `ontology.visibility === 'private'` puts a "Private" mark in every format (a banner in html and embed, a first line in context, a top-level `"visibility"` in json). Build the hook now: read `ontology.visibility` if present.
+  Trimmed to `budget`, in this order: (1) summaries, from the deepest level up (the root's children keep theirs longest); (2) Bridges and Sources shortened; (3) only then the deepest labels, never depth 1, refilling Bridges and Sources after each level; (4) Thin-area node lines and Insights; the Brief last. A last line says exactly what was trimmed. Labels are cheap and are what an agent needs most, so they outlive summaries.
+- **Private maps:** once I2 lands, `ontology.visibility === 'private'` puts a "Private" mark in every format (a banner in html and embed, a first line in context, a top-level `"visibility"` in json). The hook reads `ontology.visibility` if present.
+
+### Escaping
+
+- The data tag's JSON escapes `<`, U+2028 and U+2029; the map name is HTML-escaped; `liveUrl` must parse as http or https and is escaped.
+- A `</script` in the bundle is split. A bundle containing `<!--` or `<script` (any case) is refused: the build fails without writing it, and `exportMap` throws as a second guard, because inside a classic `<script>` that pair can stop the real `</script>` from closing it.
 
 ### The embed bundle
 
-- `scripts/build-embed.js` runs esbuild (exact pinned version) on `web/embed/index.js`: `bundle: true, format: 'iife', minify: true, target: 'es2022'`, writing `dist/embed.js` (2D) and `dist/embed-3d.js` (2D and 3D).
+- `scripts/build-embed.js` runs esbuild `0.28.2` on `web/embed/`: `bundle: true, format: 'iife', minify: true, target: 'es2022'`, writing `web/dist/embed.js` (2D) and `web/dist/embed-3d.js` (2D and 3D). Writes are atomic and skipped when unchanged; it logs to stderr, because `npm pack --json` runs it as `prepack`.
+- `web/dist/` is built, never committed. The page serves it at `/dist/`.
 - The element: shadow DOM; reads its data from the JSON tag inside it (or the page's `#ontologizer-data` for `html`); mounts the existing 2D graph view read-only with the shared layout and `web/shared/tokens.js`; pan, zoom, click a node for its details (label, summary, explanation, sources), collapse, search; light and dark from `prefers-color-scheme`; "Open live" when `liveUrl` is set.
 - **No network:** no fetch, XMLHttpRequest, EventSource, WebSocket, `import()` or external URL in the bundle or the export.
 - The live page keeps running from source files with its import map. Only exports use the bundle.
+- Measured on the demo: `embed.js` 119 KB, `embed-3d.js` 700 KB, the 2D `html` export 174 KB.
+
+### Licences
+
+- Each bundle opens with the full licence text and copyright line of every package esbuild put in it, taken from esbuild's metafile (never a hand list). The header survives into html and embed exports.
+- `scripts/third-party-notices.js` lists shipped packages and, in their own section, build tools ("installed for development only, never shipped or bundled"), with separate counts. Platform binaries are credited to the package that lists them as optional dependencies. The "not bundled" bullet becomes: `web/dist/embed.js` copies d3 code, `embed-3d.js` also copies three, and each carries their licence texts.
+
+### Releases
+
+- The `publish` job holds the npm publish credential and must never install or run a project dependency. So `verify` (no credential) builds the bundle in `npm run check` and uploads `web/dist/` as a one-day artifact; `publish` downloads it, checks both files are non-empty, and publishes with `--ignore-scripts` as before. Both actions are pinned to commit SHAs.
 
 ### The Export menu (`#export` in the top bar)
 
-Items: **Download page** (`html`), **Copy embed** (`embed`, to the clipboard), **Download JSON**, **Copy for an agent** (`#export-context`, `context` at 4000 tokens). The page fetches `/dist/embed.js` and calls the same `exportMap` from `/src/core/export/index.js` on its current snapshot. `liveUrl` is the page's own URL.
+Items: **Download page** (`html`), **Copy embed** (`embed`, to the clipboard), **Download JSON**, **Copy for an agent** (`#export-context`, `context` at 4000 tokens). The page fetches `/dist/embed.js` and calls the same `exportMap` from `/src/core/export/index.js` on its current snapshot. `liveUrl` is the page's own URL. Between 1280 and 1366 px it is an icon, so the top bar wraps at no width where it did not before.
 
 ## Bodies of work
 
 - **W1 · Context pack.** `src/core/export/context.js` and its tests (pure, no bundle needed).
-- **W2 · Bundle.** `web/embed/`, `scripts/build-embed.js`, package.json scripts, `.gitignore`.
+- **W2 · Bundle.** `web/embed/`, `scripts/build-embed.js`, package.json scripts, `.gitignore`, the licence header, the notices generator.
 - **W3 · Formats.** `src/core/export/index.js`, `html.js`, and the `export` command.
-- **W4 · Export menu.** `web/shell/ui/export.js`, the `/dist/` route, the mount point, the features rows.
+- **W4 · Export menu.** `web/shell/ui/export.js`, the static `dist` word, the mount point, the features rows, the release workflow.
 
 ## Checks (each with its planted fault)
 
 | Check | Planted fault it must catch |
 |---|---|
-| An `html` or `embed` export of the demo fixture has no `http:`, `https:` or `//` URL in any `src`, `href`, `import` or `url(`. (`liveUrl` is the one allowed link, in an `<a href>`.) | An export that loads d3 from a CDN. |
-| `dist/embed.js` contains none of `fetch(`, `XMLHttpRequest`, `EventSource`, `WebSocket`, `import(`. | A bundle that pings for updates. |
-| The 2D `html` export of the demo fixture is under 400 KB. | A 2D export that bundles three.js. |
-| A context pack's estimate is at or under its budget, keeps every child of the root, and its headings are exactly the six above, in order. | A trim that cuts the top level first. |
+| An `html` or `embed` export of the demo has no `http:`, `https:` or `//` URL in any `src`, `href`, `import` or `url(`. (`liveUrl` is the one allowed link, in an `<a href>`.) | An export that loads d3 from a CDN. |
+| `web/dist/embed.js` contains none of `fetch(`, `XMLHttpRequest`, `EventSource`, `WebSocket`, `import(`. | A bundle that pings for updates. |
+| The 2D `html` export of the demo is under 400 KB. | A 2D export that bundles three.js. |
+| A context pack's estimate is at or under its budget, its headings are exactly the six above, in order, and at a budget that fits labels but not summaries every node label is present. | The old depth-first trim, which fits the budget but drops every leaf label. |
+| Swept from 4,000 down to 300 tokens, nothing comes back as the budget shrinks, deeper summaries go before shallower ones, and labels go only after every summary. | A trim that drops labels while summaries remain. |
 | With `ontology.visibility = 'private'`, every format carries the mark. | A `json` path that skips it. |
-| The embed's data reader (a pure function in `web/embed/`) parses the demo export's data tag back to the same snapshot, and reports a clear error for a malformed tag. Rendering itself is checked by hand in Try it: the repo's tests run in Node with no DOM. | A malformed data tag that is read as an empty map. |
-| `npm pack --dry-run` lists `dist/embed.js`; `git check-ignore dist/embed.js` succeeds. | A pack without the `prepack` build. |
-| `npm run check` builds the bundle first, so a clean clone passes with `npm ci --ignore-scripts && npm run check` (as CI runs). | A test that assumes `dist/` exists. |
+| A label that tries to close the data tag, and a bundle containing `<!--<script>`, are both handled: the first escaped, the second refused by the build and by `exportMap`. | An unescaped data tag; a guard that only checks `</script`. |
+| Every package in esbuild's metafile is named in its bundle's licence header with its full text, and the header survives into exports. | A header missing `d3-zoom`. |
+| The embed's data reader parses the demo export's data tag back to the same snapshot, and reports a clear error for a malformed tag. Rendering is checked in a browser (Try it): the repo's tests run in Node with no DOM. | A malformed tag read as an empty map. |
+| `npm pack --dry-run` lists `web/dist/embed.js`; `git check-ignore web/dist/embed.js` succeeds; the existing pack audit passes unchanged. | A pack without the `prepack` build. |
+| `npm run check` builds first, so a clean clone passes with `npm ci --ignore-scripts && npm run check` (as CI runs). | A test that assumes `web/dist/` exists. |
+| In `release.yml`, `publish` runs no `npm ci`, install, `run`, `exec` or `npx` (except upgrading npm itself at an exact version), keeps `--ignore-scripts`, and downloads and checks the bundle before `npm publish`; `verify` uploads it after `npm run check`. | A copy of the workflow with `npm run build` in `publish`. |
 | Every I4 feature has its command and its button (the shared features test). | An Export menu without Copy for an agent. |
 
 ## Try it
@@ -379,3 +403,8 @@ node src/cli/index.js export demo --format html --out /tmp/demo.html && open /tm
 node src/cli/index.js export demo --format context --budget 1500
 node src/cli/index.js load demo                       # Export menu: Download page, Copy embed, Copy for an agent
 ```
+
+## Open for the maintainer
+
+1. `export` is not in the top-level tab-completion list, because `test/b` pins `complete([''])` exactly (as in Part I1). Its flags, map names and `--format` values complete.
+2. html and embed exports leave out the chat. Say if a published map should carry its questions and answers.
