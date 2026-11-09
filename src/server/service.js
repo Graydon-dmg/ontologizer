@@ -12,6 +12,9 @@ import { openStore, TENANT_RE } from '../core/store.js';
 import { readTokens, checkToken, hasScope } from './tokens.js';
 import { PKG_ROOT, WEB_ROOT, json, plain, sendFile, serveFile, sendPage, readBody } from './http.js';
 import { createMapHandler } from './map.js';
+import { defaultPolicy, actionFor, ACTION_SCOPE } from './policy.js';
+import { createSources, heldSources } from './sources.js';
+import { portNames } from './config.js';
 
 export const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 export const COOKIE = 'ontologizer_session';
@@ -51,9 +54,12 @@ export function activeWork(build, snapshotJobs, chatting) {
 
 /**
  * Who is calling. `via` is how they proved it: 'open' (no tokens loaded, loopback only),
- * 'bearer' (Authorization header) or 'cookie' (a session from POST /v1/session). `hash` and `sid`
- * let a long request (an event stream) re-check that the token and session still stand.
- * @typedef {{ name: string|null, tenant: string|null, scopes: string[], via: 'open'|'bearer'|'cookie', hash?: string, sid?: string }} Principal
+ * 'bearer' (Authorization header), 'cookie' (a session from POST /v1/session) or 'identity' (the
+ * config's identity port). `hash` and `sid` let a long request (an event stream) re-check that the
+ * token and session still stand. `actor` is stamped on the events the request causes; `sources` are
+ * the configured sources it holds.
+ * @typedef {{ name: string|null, tenant: string|null, scopes: string[], via: 'open'|'bearer'|'cookie'|'identity', hash?: string, sid?: string,
+ *   actor: { id: string, kind: string, via?: string }, sources: string[] }} Principal
  */
 
 /** @param {any} err */
@@ -70,20 +76,30 @@ function refusal(message) {
  * @param {{ home: string, host?: string, port?: number, tokensFile?: string|null, watchTokensFile?: string|null,
  *   allowHosts?: string[], maxBuilds?: number, maxQueued?: number, maxChecks?: number, maxStreamsPerToken?: number,
  *   idleMs?: number, pingMs?: number,
- *   makeEngine: (o: { store: any, id: string, tenant: string }) => Promise<any>,
- *   version?: string, webDir?: string, log?: (line: string) => void }} opts
+ *   makeEngine: (o: { store: any, id: string, tenant: string, clientFor?: any }) => Promise<any>,
+ *   version?: string, webDir?: string, log?: (line: string) => void,
+ *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null }} opts
  *   tokensFile: the tokens to load; null (or no rows) means none: loopback only, open, no --allow-host.
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
  *   maxBuilds: builds running at once. maxQueued: builds waiting per tenant (more: 429).
  *   maxChecks: context checks at once (more: 429). maxStreamsPerToken: event streams + waits per token.
  *   idleMs: a map's engine and handler with no streams and no work are dropped after this long.
- *   makeEngine: the engine for one map (the CLI passes engineFor with needKey false).
+ *   makeEngine: the engine for one map (the CLI passes engineFor with needKey false); clientFor is the
+ *   config's model port, when it has one.
+ *   config: the loaded ontologizer.config.js (or null: exactly I1). configPath: shown to admins.
+ *   sources: a createSources() instance (tests inject one); default: made from config.sources.
  */
 export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
   maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs,
-  makeEngine, version = '', webDir, log = () => {},
+  makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
 }) {
+  // ---- ports: each one is the config's, or I1's own behaviour ----
+  const identity = config?.identity ?? null;
+  const policy = config?.policy ?? defaultPolicy;
+  const ports = portNames(config);
+  const srcs = givenSources ?? (Array.isArray(config?.sources) && config.sources.length ? createSources(config.sources, { log }) : null);
+  const entries = srcs ? srcs.entries : [];
   const webRoot = path.resolve(webDir ?? WEB_ROOT);
   const fixturesRoot = path.join(PKG_ROOT, 'fixtures');
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
@@ -93,7 +109,8 @@ export async function startService({
   // ---- tokens: read at start; re-read when the file changes (a revoke takes effect at once). ----
   let tokenRows = tokensFile ? readTokens(tokensFile) : [];
   // Whether auth is required is fixed at start: revoking every token never opens the server.
-  const authRequired = tokenRows.length > 0;
+  // A custom identity port always requires a principal.
+  const authRequired = tokenRows.length > 0 || identity !== null;
   // Say where it looked, and the exact command that fixes it.
   const where = tokensFile ?? watchTokensFile ?? path.join(home, 'tokens.json');
   const fix = `Create one with \`ontologizer token create --name <name> --home ${shellQuote(home)}\`, then run serve again with the same --home.`;
@@ -145,10 +162,29 @@ export async function startService({
   function storeFor(tenant, create) {
     let s = stores.get(tenant);
     if (s) return s;
+    if (config?.store) {
+      s = config.store(tenant);
+      if (!s) return null;
+      stores.set(tenant, s);
+      return s;
+    }
     if (!create && tenant !== 'default' && !fs.existsSync(path.join(home, 'tenants', tenant))) return null;
     s = openStore(home, { tenant });
     stores.set(tenant, s);
     return s;
+  }
+  /**
+   * A tenant's store once it is ready (a Postgres store loads first), null when the tenant has no
+   * store, 'down' when it cannot load.
+   * @param {string} tenant @param {boolean} create @returns {Promise<any>}
+   */
+  async function readyStore(tenant, create) {
+    const s = storeFor(tenant, create);
+    if (!s || !s.ready) return s;
+    try { await s.ready; return s; } catch (err) {
+      log(`store for tenant ${tenant} is not available: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+      return 'down';
+    }
   }
   /** Last use of each map's engine or handler, for idle eviction. @type {Map<string, number>} */
   const lastUsed = new Map();
@@ -162,7 +198,7 @@ export async function startService({
     lastUsed.set(key, Date.now());
     let e = engines.get(key);
     if (!e) {
-      e = makeEngine({ store: storeFor(tenant, true), id, tenant });
+      e = makeEngine({ store: storeFor(tenant, true), id, tenant, ...(config?.model ? { clientFor: config.model } : {}) });
       e.catch(() => engines.delete(key));
       engines.set(key, e);
     }
@@ -230,8 +266,11 @@ export async function startService({
     if (next) next();
   };
   let buildSeq = 0;
-  /** @param {string} tenant @param {string} id @param {any} brief @param {number|undefined} depth */
-  function startBuild(tenant, id, brief, depth) {
+  /**
+   * @param {string} tenant @param {string} id @param {any} brief @param {number|undefined} depth
+   * @param {Principal} p @param {string[]} names the sources this build may use
+   */
+  function startBuild(tenant, id, brief, depth, p, names) {
     const key = `${tenant}/${id}`;
     const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined) };
     builds.set(key, b);
@@ -241,7 +280,9 @@ export async function startService({
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
         const engine = await engineFor(tenant, id);
-        await engine.build(brief, depth ? { depth } : undefined);
+        const principal = publicPrincipal(p, tenant);
+        const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
+        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools });
         b.state = 'done';
       } catch (err) {
         b.state = 'failed';
@@ -249,11 +290,11 @@ export async function startService({
         log(`build ${key} failed: ${b.error}`);
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
-        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error } }); } catch { /* gone */ }
+        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error }, actor: p.actor }); } catch { /* gone */ }
       } finally {
         lastUsed.set(key, Date.now());
         release();
-        try { storeFor(tenant, true).flush(id); } catch { /* renamed or gone */ }
+        try { Promise.resolve(storeFor(tenant, true).flush(id)).catch(() => {}); } catch { /* renamed or gone */ }
       }
     })();
   }
@@ -346,15 +387,25 @@ export async function startService({
   }
 
   // ---- auth ----
-  /** @param {http.IncomingMessage} req @returns {Principal|null|'bad'} */
-  function authenticate(req) {
-    if (!authRequired) return { name: null, tenant: null, scopes: ['admin'], via: 'open' };
+  /** A token's principal: actor "token:<name>", the sources it holds. @param {import('./tokens.js').TokenRow} row */
+  const tokenPrincipal = (row) => ({
+    name: row.name, tenant: row.tenant, scopes: row.scopes,
+    actor: { id: `token:${row.name}`, kind: 'service' },
+    sources: heldSources(entries, { scopes: row.scopes, sources: row.sources }),
+  });
+  /**
+   * Who is calling: I1's tokens and sessions, or the config's identity port.
+   * @param {http.IncomingMessage} req @returns {Promise<Principal|null|'bad'>}
+   */
+  async function authenticate(req) {
+    if (identity) return fromIdentity(req);
+    if (!authRequired) return { name: null, tenant: null, scopes: ['admin'], via: 'open', actor: { id: 'local', kind: 'human' }, sources: entries.map((e) => e.name) };
     const rows = currentTokens();
     const authz = req.headers.authorization;
     if (authz !== undefined) {
       const m = /^Bearer\s+(\S+)\s*$/i.exec(String(authz));
       const row = m ? checkToken(rows, m[1]) : null;
-      return row ? { name: row.name, tenant: row.tenant, scopes: row.scopes, via: 'bearer', hash: row.hash } : 'bad';
+      return row ? { ...tokenPrincipal(row), via: 'bearer', hash: row.hash } : 'bad';
     }
     const sid = cookieValue(req.headers.cookie, COOKIE);
     if (sid === null) return null;
@@ -362,12 +413,56 @@ export async function startService({
     if (!s || s.expires < Date.now()) { if (s) sessions.delete(sid); return 'bad'; }
     const row = rows.find((r) => r.name === s.name && r.hash === s.hash); // revoked tokens end their sessions
     if (!row) { sessions.delete(sid); return 'bad'; }
-    return { name: row.name, tenant: row.tenant, scopes: row.scopes, via: 'cookie', hash: row.hash, sid };
+    return { ...tokenPrincipal(row), via: 'cookie', hash: row.hash, sid };
+  }
+  /**
+   * The identity port's principal, checked: an actor with a string id and a known kind, a valid
+   * tenant, scopes from the ladder. Anything else (or a throw) is refused, never half-trusted.
+   * @param {http.IncomingMessage} req @returns {Promise<Principal|null|'bad'>}
+   */
+  async function fromIdentity(req) {
+    let got;
+    try { got = await /** @type {any} */ (identity).authenticate(req); } catch (err) {
+      log(`identity port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+      return 'bad';
+    }
+    if (got === null || got === undefined) return null;
+    const a = got?.actor;
+    const ok = a && typeof a.id === 'string' && a.id && ['human', 'agent', 'service'].includes(a.kind)
+      && typeof got.tenant === 'string' && TENANT_RE.test(got.tenant)
+      && Array.isArray(got.scopes) && got.scopes.every((/** @type {any} */ s) => ['read', 'ask', 'build', 'admin'].includes(s));
+    if (!ok) { log('identity port returned a principal without a valid actor, tenant or scopes: refused'); return 'bad'; }
+    const actor = { id: a.id, kind: a.kind, ...(typeof a.via === 'string' ? { via: a.via } : {}) };
+    const scopes = [...got.scopes];
+    const sources = heldSources(entries, { scopes, sources: Array.isArray(got.sources) ? got.sources : undefined });
+    return { name: actor.id, tenant: got.tenant, scopes, via: 'identity', actor, sources };
+  }
+  /** What ports see of a principal (never the token hash or the session id). @param {Principal} p */
+  /** @param {Principal} p @param {string} [tenant] the request's tenant (open mode reaches every tenant) */
+  const publicPrincipal = (p, tenant) => ({ actor: p.actor, tenant: p.tenant ?? tenant ?? 'default', scopes: [...p.scopes], sources: [...p.sources] });
+  /**
+   * The policy port, never throwing: a failing custom policy denies.
+   * @param {Principal} p @param {import('./policy.js').Action} action @param {{ tenant: string, mapId?: string|null, map?: any }} ctx
+   */
+  async function can(p, action, ctx) {
+    try { return (await policy.can(publicPrincipal(p, ctx.tenant), action, { mapId: null, map: null, ...ctx })) === true; } catch (err) {
+      log(`policy port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+      return false;
+    }
+  }
+  /**
+   * The sources a run on a map may use: a build's picks; for a job or ask, the principal's public
+   * sources plus the private ones the map is already private for (a click never adds a private source).
+   * @param {Principal} p @param {any} map
+   */
+  function jobSources(p, map) {
+    const already = new Set(Array.isArray(map?.privateSources) ? map.privateSources : []);
+    return p.sources.filter((n) => entries.find((e) => e.name === n)?.visibility === 'public' || already.has(n));
   }
   /** Whether a principal still stands (its token not revoked, its session not ended or expired). @param {Principal} p */
   function stillValid(p) {
     if (closing) return false;
-    if (p.via === 'open') return true;
+    if (p.via === 'open' || p.via === 'identity') return true;
     if (!currentTokens().some((r) => r.name === p.name && r.hash === p.hash)) return false;
     if (p.via === 'cookie') {
       const s = sessions.get(/** @type {string} */ (p.sid));
@@ -387,7 +482,7 @@ export async function startService({
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res @param {string} method */
   async function session(req, res, method) {
     if (method === 'GET' || method === 'HEAD') {
-      const p = authenticate(req);
+      const p = await authenticate(req);
       if (p === null || p === 'bad') return fail(res, 401, 'Sign in with a token.');
       return json(res, 200, { ok: true, tenant: p.tenant ?? 'default', scopes: p.scopes, open: p.via === 'open' });
     }
@@ -395,6 +490,7 @@ export async function startService({
       if (req.headers.origin !== undefined && !originMatches(req)) return fail(res, 403, 'forbidden origin');
       const body = await readBody(req, res, 4096);
       if (!body) return;
+      if (identity) return fail(res, 400, 'This server signs in through its identity port.');
       if (!authRequired) return fail(res, 400, 'This server has no tokens: no sign-in needed.');
       const row = checkToken(currentTokens(), body.token);
       if (!row) return fail(res, 401, 'That token was not accepted.');
@@ -427,7 +523,7 @@ export async function startService({
    */
   async function tenantRoute(req, res, rawPath, query) {
     const method = req.method || 'GET';
-    const p = authenticate(req);
+    const p = await authenticate(req);
     if (p === null || p === 'bad') {
       // A browser opening a map link without a session: to the home page's sign-in, then back.
       const browser = (method === 'GET' || method === 'HEAD') && req.headers.authorization === undefined
@@ -438,7 +534,10 @@ export async function startService({
       }
       return fail(res, 401, p === null ? 'Sign in with a token.' : 'That token was not accepted.');
     }
-    if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req) : p.via === 'open' && req.headers.origin !== undefined && !originMatches(req))) {
+    // A principal from the identity port may ride on a browser cookie (a sign-in proxy): a POST that
+    // carries a foreign Origin is refused, as in open mode.
+    if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req)
+      : (p.via === 'open' || p.via === 'identity') && req.headers.origin !== undefined && !originMatches(req))) {
       return fail(res, 403, 'forbidden origin');
     }
     const parts = rawPath.split('/'); // ['', 'v1', 't', tenant, ...rest]
@@ -451,47 +550,80 @@ export async function startService({
       if (!ownsTenant(p, tenant) && !admin) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
-      const store = storeFor(tenant, false);
+      const store = await readyStore(tenant, false);
+      if (store === 'down') return fail(res, 503, 'the store is not available');
       const note = checkOpenNote();
+      // Sources: every configured one for an admin, the ones it holds for anyone else. Names only.
+      const shown = srcs ? (admin ? srcs.names() : p.sources) : [];
+      const sourceRows = srcs ? (await srcs.status({ names: shown, principal: publicPrincipal(p, tenant) }))
+        .map((s) => ({ name: s.name, visibility: s.visibility, reachable: s.reachable })) : null;
       return json(res, 200, {
         tenant,
         // The server's own paths are for admins only.
-        ...(admin ? { home: store ? store.root : path.join(home, 'tenants', tenant) } : {}),
-        store: 'files',
-        auth: authRequired ? 'tokens' : 'open',
+        ...(admin ? { home: store && store.root ? store.root : path.join(home, 'tenants', tenant) } : {}),
+        ...(admin && configPath ? { config: configPath } : {}),
+        store: ports.store,
+        auth: identity ? 'identity' : authRequired ? 'tokens' : 'open',
         ...(note ? { note } : {}),
         maps: store ? store.list({ drafts: true }).length : 0,
-        tokens: currentTokens().filter((r) => r.tenant === tenant).map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes] })),
+        tokens: currentTokens().filter((r) => r.tenant === tenant)
+          .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], ...(r.sources ? { sources: [...r.sources] } : {}) })),
         server: { version, startedAt },
+        ...(config ? { ports } : {}),
+        ...(sourceRows ? { sources: sourceRows } : {}),
       });
     }
     if (!ownsTenant(p, tenant)) return fail(res, 404, 'not found'); // never reveal another tenant's maps
+    /** @param {import('./policy.js').Action} action */
+    const needs = (action) => `This token needs the ${ACTION_SCOPE[action] ?? action} scope.`;
+
+    // /v1/t/:tenant/sources: the sources the caller holds, for the New map picker.
+    if (rest.length === 1 && rest[0] === 'sources') {
+      if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
+      if (!await can(p, 'read', { tenant })) return fail(res, 403, needs('read'));
+      return json(res, 200, entries.filter((e) => p.sources.includes(e.name)).map((e) => ({ name: e.name, visibility: e.visibility })));
+    }
     if (rest[0] !== 'maps') return fail(res, 404, 'not found');
 
     // /v1/t/:tenant/maps
     if (rest.length === 1) {
       if (method === 'GET' || method === 'HEAD') {
-        if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
-        const store = storeFor(tenant, false);
-        const rows = store ? store.list({ drafts: true }).map((/** @type {any} */ m) => ({
-          id: m.id, name: m.name, root: m.root, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft),
-        })) : [];
+        if (!await can(p, 'read', { tenant })) return fail(res, 403, needs('read'));
+        const store = await readyStore(tenant, false);
+        if (store === 'down') return fail(res, 503, 'the store is not available');
+        /** @type {any[]} */
+        const rows = [];
+        for (const m of store ? store.list({ drafts: true }) : []) {
+          const map = store.read(m.id);
+          // A map the caller may not read is left out, as if it did not exist.
+          if (!await can(p, 'read', { tenant, mapId: m.id, map })) continue;
+          rows.push({ id: m.id, name: m.name, root: m.root, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft),
+            ...(map?.visibility === 'private' ? { visibility: 'private' } : srcs ? { visibility: 'public' } : {}) });
+        }
         return json(res, 200, rows);
       }
       if (method === 'POST') {
-        if (!has(p, 'build')) return fail(res, 403, 'This token needs the build scope.');
+        if (!await can(p, 'build', { tenant })) return fail(res, 403, needs('build'));
         const body = await readBody(req, res);
         if (!body) return;
         if (!body.brief || typeof body.brief !== 'object' || Array.isArray(body.brief)) return fail(res, 400, 'brief must be an object (from maps/check)');
         if (body.name !== undefined && (typeof body.name !== 'string' || body.name.length > 120)) return fail(res, 400, 'name must be a string of at most 120 characters');
         if (body.depth !== undefined && !(Number.isInteger(body.depth) && body.depth >= 1 && body.depth <= 5)) return fail(res, 400, 'depth must be a whole number from 1 to 5');
+        if (body.sources !== undefined && (!Array.isArray(body.sources) || body.sources.length > 50 || body.sources.some((/** @type {any} */ s) => typeof s !== 'string'))) {
+          return fail(res, 400, 'sources must be a list of source names');
+        }
+        // Only sources the caller holds; with no list, every one it holds.
+        const notHeld = (body.sources ?? []).filter((/** @type {string} */ s) => !p.sources.includes(s));
+        if (notHeld.length) return fail(res, 400, `You do not hold the source "${String(notHeld[0]).slice(0, 40)}".`);
+        const names = body.sources ? [...new Set(/** @type {string[]} */ (body.sources))] : [...p.sources];
         if (closing) return fail(res, 503, 'the server is stopping');
         if (running >= Math.max(1, maxBuilds) && waiting(tenant) >= maxQueued) {
           return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
         }
-        const store = storeFor(tenant, true);
+        const store = await readyStore(tenant, true);
+        if (store === 'down' || !store) return fail(res, 503, 'the store is not available');
         const id = store.createDraft(body.brief, body.name || undefined);
-        startBuild(tenant, id, body.brief, body.depth);
+        startBuild(tenant, id, body.brief, body.depth, p, names);
         const base = mapBase(tenant, id);
         return json(res, 202, { id, viewUrl: `${base}/view`, eventsUrl: `${base}/events` });
       }
@@ -499,7 +631,7 @@ export async function startService({
     }
     // /v1/t/:tenant/maps/check
     if (rest.length === 2 && rest[1] === 'check') {
-      if (!has(p, 'build')) return fail(res, 403, 'This token needs the build scope.');
+      if (!await can(p, 'build', { tenant })) return fail(res, 403, needs('build'));
       if (method !== 'POST') return fail(res, 405, 'method not allowed');
       const body = await readBody(req, res);
       if (!body) return;
@@ -513,7 +645,7 @@ export async function startService({
       inflight.set(key, (inflight.get(key) ?? 0) + 1);
       try {
         const engine = await engineFor(tenant, CHECK_KEY);
-        const r = await engine.check(context, answers);
+        const r = await engine.check(context, answers, { principal: publicPrincipal(p, tenant) });
         return json(res, 200, {
           ready: Boolean(r?.ready),
           ...(r?.brief ? { brief: r.brief } : {}), ...(r?.name ? { name: r.name } : {}),
@@ -532,14 +664,17 @@ export async function startService({
     const id = rest[1];
     const sub = rest.slice(2).join('/');
     const isApi = rest[2] === 'api';
-    /** @type {Record<string, string>} */
-    const SCOPE = { actions: 'build', save: 'build', 'api/action': 'build', chat: 'ask', 'api/chat': 'ask' };
-    const scope = SCOPE[sub] ?? 'read';
-    if (!has(p, scope)) return fail(res, 403, `This token needs the ${scope} scope.`);
-    const store = storeFor(tenant, false);
+    const action = actionFor(sub);
+    if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));
+    const store = await readyStore(tenant, false);
+    if (store === 'down') return fail(res, 503, 'the store is not available');
     if (!store || !MAP_ID_RE.test(id) || !store.list({ drafts: true }).some((/** @type {any} */ m) => m.id === id)) {
       return fail(res, 404, 'not found');
     }
+    // The read rule: a map the caller may not read does not exist for it (404, never 403).
+    const map = store.read(id);
+    if (!await can(p, 'read', { tenant, mapId: id, map })) return fail(res, 404, 'not found');
+    if (action !== 'read' && !await can(p, action, { tenant, mapId: id, map })) return fail(res, 403, needs(action));
     const key = `${tenant}/${id}`;
     const base = mapBase(tenant, id);
     if (sub === 'view') {
@@ -575,7 +710,7 @@ export async function startService({
       await drop(key);
       builds.delete(key);
       try {
-        const saved = store.save(id, body.name);
+        const saved = store.save(id, body.name, { actor: p.actor });
         return json(res, 200, { ok: true, id: saved, viewUrl: `${mapBase(tenant, saved)}/view` });
       } catch (err) {
         const msg = String(/** @type {Error} */ (err).message);
@@ -590,7 +725,19 @@ export async function startService({
       const stream = apiPath === '/api/events' && (method === 'GET' || method === 'HEAD');
       if (stream && !holdLong(p, res)) return fail(res, 429, `This token already has ${maxStreamsPerToken} open streams and waits.`);
       const h = await handlerFor(tenant, id);
-      const handled = await h.handleApi(req, res, apiPath, query, { valid: () => stillValid(p) });
+      const principal = publicPrincipal(p, tenant);
+      const handled = await h.handleApi(req, res, apiPath, query, {
+        valid: () => stillValid(p),
+        actor: p.actor,
+        principal,
+        // A job's or an ask's source tools, made only when one runs.
+        tools: async () => {
+          const names = srcs ? jobSources(p, store.read(id)) : [];
+          return names.length && srcs ? srcs.toolset(principal, names) : null;
+        },
+        // Other maps this caller may read (the fuse picker and fuse's `with`).
+        canRead: async (/** @type {string} */ other) => can(p, 'read', { tenant, mapId: other, map: store.read(other) }),
+      });
       lastUsed.set(key, Date.now());
       if (handled) return;
     }
@@ -668,7 +815,11 @@ export async function startService({
       for (const h of handlers.values()) {
         try { await (await h).close(); } catch { /* never built */ }
       }
-      for (const s of stores.values()) { try { s.flush(); } catch { /* best effort */ } }
+      for (const s of stores.values()) {
+        try { await s.flush(); } catch { /* best effort */ }
+        try { await s.close?.(); } catch { /* best effort */ }
+      }
+      try { await srcs?.close(); } catch { /* best effort */ }
       server.closeAllConnections?.();
       await done;
     },

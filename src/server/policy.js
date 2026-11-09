@@ -1,0 +1,51 @@
+// @ts-check
+// The default policy port: I1's scope ladder plus the read rule for private maps.
+// A config's `policy.can(principal, action, { tenant, mapId, map })` replaces it. The tenant rule is
+// the router's and no policy can widen it: a principal reaches only its own tenant.
+import { hasScope } from './tokens.js';
+
+/** @typedef {'read'|'build'|'ask'|'job'|'save'|'export'|'admin'} Action */
+/** @typedef {{ actor: { id: string, kind: string, via?: string }, tenant: string, scopes: string[], sources: string[] }} Principal */
+
+export const ACTIONS = /** @type {const} */ (['read', 'build', 'ask', 'job', 'save', 'export', 'admin']);
+
+/** The scope each action needs on the I1 ladder (read < ask < build < admin). @type {Record<Action, string>} */
+export const ACTION_SCOPE = { read: 'read', export: 'read', ask: 'ask', build: 'build', job: 'build', save: 'build', admin: 'admin' };
+
+/**
+ * Whether a principal may read a map: always for a public map; for a private map only if it holds
+ * every private source the map used, or is admin.
+ * @param {Principal} principal @param {any} map a folded ontology (or null: no map yet)
+ */
+export function canRead(principal, map) {
+  if (!map || map.visibility !== 'private') return true;
+  if (hasScope(principal.scopes, 'admin')) return true;
+  const held = new Set(Array.isArray(principal.sources) ? principal.sources : []);
+  return (Array.isArray(map.privateSources) ? map.privateSources : []).every((name) => held.has(name));
+}
+
+export const defaultPolicy = {
+  name: 'default',
+  /**
+   * @param {Principal} principal @param {Action} action
+   * @param {{ tenant: string, mapId?: string|null, map?: any }} ctx
+   * @returns {boolean}
+   */
+  can(principal, action, ctx) {
+    const scope = ACTION_SCOPE[action];
+    if (!scope || !hasScope(principal.scopes, scope)) return false;
+    return canRead(principal, ctx?.map ?? null);
+  },
+};
+
+/**
+ * The action a map route needs (the table in the contract).
+ * @param {string} sub the path after /maps/:id/ ("snapshot", "actions", "api/chat", ...)
+ * @returns {Action}
+ */
+export function actionFor(sub) {
+  if (sub === 'actions' || sub === 'api/action') return 'job';
+  if (sub === 'chat' || sub === 'api/chat') return 'ask';
+  if (sub === 'save') return 'save';
+  return 'read';
+}

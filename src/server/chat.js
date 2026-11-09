@@ -213,9 +213,10 @@ export function findAttachment(home, id, hash) {
  * away aborts the model call (the engine then records chat.failed "Stopped."). The engine appends
  * chat.asked / chat.answered / chat.failed itself; the server appends nothing.
  * @param {{ engine: any, req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse,
- *           input: { text: string, images: any[], lens?: string|null }, idleMs?: number, totalMs?: number }} o
+ *           input: { text: string, images: any[], lens?: string|null }, askOpts?: any, idleMs?: number, totalMs?: number }} o
+ *   askOpts: the run options for engine.ask (actor, principal, tools) in service mode; none on the one-map server.
  */
-export async function relayAsk({ engine, req, res, input, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
+export async function relayAsk({ engine, req, res, input, askOpts = {}, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   const ctl = new AbortController();
   const onClose = () => ctl.abort();
@@ -230,7 +231,7 @@ export async function relayAsk({ engine, req, res, input, idleMs = IDLE_MS, tota
   let it = null;
   try {
     if (typeof engine.ask !== 'function') throw new Error('chat: not built yet');
-    it = engine.ask(input, { signal: ctl.signal })[Symbol.asyncIterator]();
+    it = engine.ask(input, { signal: ctl.signal, ...askOpts })[Symbol.asyncIterator]();
     for (;;) {
       // Never wait forever on an engine: no item for idleMs, or totalMs in all, stops the answer.
       const wait = Math.min(idleMs, totalMs - (Date.now() - started));

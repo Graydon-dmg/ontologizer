@@ -304,15 +304,16 @@ export function openStore(home, { tenant = 'default' } = {}) {
       return () => { e.subs.delete(fn); };
     },
 
-    /** @param {string} id @param {string} name @param {{ overwrite?: boolean }} [opts] */
-    save(id, name, { overwrite = false } = {}) {
+    /** @param {string} id @param {string} name @param {{ overwrite?: boolean, actor?: any }} [opts]
+     *  actor: stamped on the ontology.renamed event (service mode); without it the event is as before. */
+    save(id, name, { overwrite = false, actor = null } = {}) {
       assertName(name);
       const e = load(id);
       if (name !== id) {
         const taken = fs.existsSync(dir(name)) || readIndex().ontologies.some((r) => r.id === name);
         if (taken && !overwrite) throw new Error(`"${name}" already exists. Pick another name or overwrite it.`);
       }
-      this.append(id, { t: 'ontology.renamed', at: now(id), name });
+      this.append(id, { t: 'ontology.renamed', at: now(id), name, ...(actor ? { actor } : {}) });
       flush(id);
       if (name !== id) {
         if (fs.existsSync(dir(name))) {
