@@ -7,7 +7,21 @@ const CSS = `
 .server-btn { font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; cursor: pointer;
   border: 1px solid var(--muted); background: var(--panel); color: var(--fg); }
 .server-btn[aria-expanded="true"] { background: var(--fg); color: var(--bg); }
-#server-panel.server-pop-host { position: relative; }
+.server-btn .server-icon { display: none; }
+/* Where the one-map top bar fits on one row (1279 px and up), the Server button must not push it to
+   two. 1279-1380 (the tightest band: up to 1366 the search box and map name give way too, and just
+   above it they take their room back): it leaves the row and sits as a small icon just under the
+   bar's right end. 1381-1440: an icon in the row, flush with its neighbour. */
+@media (min-width: 1279px) and (max-width: 1440px) {
+  .server-btn { padding: 2px 3px; line-height: 0; }
+  .server-btn .server-text { display: none; }
+  .server-btn .server-icon { display: block; }
+  #server-panel.server-pop-host { margin-left: -6px; }
+}
+@media (min-width: 1279px) and (max-width: 1380px) {
+  #server-panel.server-pop-host { position: absolute; right: 8px; top: calc(100% + 4px); margin-left: 0; }
+  .server-btn { background: var(--panel); }
+}
 .server-pop { position: fixed; z-index: 25; width: 300px; box-sizing: border-box; padding: 10px; overflow: auto;
   background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 8px; }
 .server-pop[hidden] { display: none; }
@@ -20,6 +34,26 @@ const CSS = `
 .server-msg, .server-help { color: var(--muted); }
 .server-help code { color: var(--fg); }
 `;
+
+/** A small server icon (two stacked boxes), drawn in the text color. */
+function serverIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'server-icon');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M2.5 2.5h11v4.5h-11zM2.5 9h11v4.5h-11zM5 4.75h.01M5 11.25h.01');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.append(path);
+  return svg;
+}
 
 /** Add the one style element, once. */
 function ensureStyle() {
@@ -116,7 +150,12 @@ export function mountServerPanel(el, opts) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'server-btn';
-  btn.textContent = 'Server';
+  btn.setAttribute('aria-label', 'Server');
+  btn.title = 'Server status';
+  const text = document.createElement('span');
+  text.className = 'server-text';
+  text.textContent = 'Server';
+  btn.append(text, serverIcon());
   btn.setAttribute('aria-haspopup', 'dialog');
   btn.setAttribute('aria-expanded', 'false');
   const pop = document.createElement('div');
