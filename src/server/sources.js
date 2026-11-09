@@ -117,6 +117,18 @@ function withTimeout(p, ms, what) {
   return Promise.race([p, t]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * What kind of error, never its text: a code (ECONNREFUSED, -32603), or the error's class name.
+ * For a private source's errors in the log. @param {any} err @returns {string}
+ */
+export const errKind = (err) => {
+  const code = err?.code;
+  if (typeof code === 'string' && /^[A-Z0-9_]{2,40}$/.test(code)) return code;
+  if (typeof code === 'number' && Number.isFinite(code)) return `code ${code}`;
+  const name = typeof err?.name === 'string' && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'Error';
+  return name;
+};
+
 /** @param {any} err @returns {string} */
 const msg = (err) => String(err?.message ?? err).split('\n')[0].slice(0, 300);
 
@@ -243,7 +255,11 @@ export function createSources(entries, { connect = defaultConnect, log = () => {
       const offered = new Map();
       for (const e of entries.filter((x) => names.includes(x.name))) {
         let tools;
-        try { tools = await listTools(e, principal); } catch (err) { log(`source ${e.name} skipped: ${msg(err)}`); continue; }
+        try { tools = await listTools(e, principal); } catch (err) {
+          // A private source's error text may carry private data: the log gets only its kind.
+          log(`source ${e.name} skipped: ${e.visibility === 'private' ? errKind(err) : msg(err)}`);
+          continue;
+        }
         const verdicts = new Map(offeredTools(e, tools).map((v) => [v.name, v]));
         for (const t of tools) {
           if (!verdicts.get(t.name)?.offered) continue;
@@ -273,7 +289,7 @@ export function createSources(entries, { connect = defaultConnect, log = () => {
             return { ...base, isError: res?.isError === true, text: resultText(res), refs: refsFrom(entry.name, res) };
           } catch (err) {
             if (h) forgetRec(h.rec);
-            if (priv) { log(`source ${entry.name} call failed: ${msg(err)}`); return hidden; }
+            if (priv) { log(`source ${entry.name} call failed: ${errKind(err)}`); return hidden; }
             return { ...base, isError: true, text: `The ${entry.name} source failed: ${msg(err)}`, refs: [] };
           } finally { h?.release(); }
         },

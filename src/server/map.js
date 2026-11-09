@@ -27,7 +27,7 @@ function sleep(ms, c) {
  *   event sent; also watched while its chat answer is written);
  * - sync(): resolves when every write so far is stored (a Postgres store); awaited before a write's 2xx;
  * - isPrivate(mapId): whether another map is private (fuse keeps its id out of this map's log).
- * @typedef {{ valid?: (ev?: any) => boolean, actor?: any, principal?: any, tools?: () => Promise<any>,
+ * @typedef {{ valid?: (ev?: any) => boolean|Promise<boolean>, actor?: any, principal?: any, tools?: () => Promise<any>,
  *   canRead?: (mapId: string) => boolean|Promise<boolean>, sync?: () => Promise<void>,
  *   isPrivate?: (mapId: string) => boolean }} RequestCtx
  */
@@ -67,9 +67,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
 
   /**
    * @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {number} from
-   * @param {(ev?: any) => boolean} valid whether the caller may still read (checked on every ping and before
-   *   every event, with that event; false ends the stream before it is written: a revoked token, an expired
-   *   session, or a map that just became private to someone who cannot read it, stops receiving at once)
+   * @param {(ev?: any) => boolean|Promise<boolean>} valid whether the caller may still read (checked on every
+   *   ping and before every event, with that event; false ends the stream before it is written: a revoked
+   *   token, an expired session, or a map that just became private to someone who cannot read it, stops
+   *   receiving at once). A Promise answer (an async policy) is awaited, and events wait behind it in order.
    */
   function sse(req, res, from, valid = () => true) {
     res.writeHead(200, {
@@ -84,11 +85,22 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     const buffer = [];
     let live = false;
     let nextIdx = from;
+    const stop = () => { if (!conn.gone) { cleanup(); res.end(); } };
+    /** @param {boolean} ok @param {any} ev */
+    const deliver = (ok, ev) => {
+      if (conn.gone) return;
+      if (ok !== true) { stop(); return; }
+      res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    };
+    /** Events waiting behind an async check, so they go out in order. @type {Promise<void>|null} */
+    let queue = null;
     /** @param {any} ev */
     const send = (ev) => {
       if (conn.gone) return;
-      if (!valid(ev)) { cleanup(); res.end(); return; }
-      res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      if (queue) { queue = queue.then(async () => { if (!conn.gone) deliver(await valid(ev), ev); }).catch(stop); return; }
+      const v = valid(ev);
+      if (v === true || v === false) { deliver(v, ev); return; }
+      queue = Promise.resolve(v).then((ok) => deliver(ok, ev)).catch(stop);
     };
     /** @param {any} ev */
     const sendLive = (ev) => send(ev);
@@ -105,8 +117,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     });
     const ping = setInterval(() => {
       if (conn.gone) return;
-      if (!valid()) { cleanup(); res.end(); return; }
-      res.write(': ping\n\n');
+      const v = valid();
+      const pong = (/** @type {boolean} */ ok) => { if (conn.gone) return; if (ok !== true) { stop(); return; } res.write(': ping\n\n'); };
+      if (v === true || v === false) pong(v);
+      else Promise.resolve(v).then(pong, stop);
     }, pingMs);
     const cleanup = () => {
       if (conn.gone) return;
@@ -429,15 +443,15 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       }
       const tools = ctx.tools ? await ctx.tools() : null;
       const askOpts = { ...(ctx.actor ? { actor: ctx.actor } : {}), ...(ctx.principal ? { principal: ctx.principal } : {}), ...(tools ? { tools } : {}) };
-      // The answer stops if the asker may no longer read the map (a raise, sources rewritten, a revoke).
+      // The answer stops if the asker may no longer read the map (a raise, sources rewritten, a revoke):
+      // checked before every chunk is sent, and on every event of the map (so the model stops too).
       const stillOk = ctx.valid;
-      const off = stillOk ? store.subscribe(id, (/** @type {any} */ ev) => { if (!stillOk(ev)) res.destroy(); }) : null;
-      const watch = stillOk ? setInterval(() => { if (!stillOk()) res.destroy(); }, 1000) : null;
+      const cut = (/** @type {any} */ v) => { if (v === false) res.destroy(); else if (v !== true) Promise.resolve(v).then((ok) => { if (ok !== true) res.destroy(); }, () => res.destroy()); };
+      const off = stillOk ? store.subscribe(id, (/** @type {any} */ ev) => cut(stillOk(ev))) : null;
       try {
-        await relayAsk({ engine, req, res, input, askOpts, ...(ctx.sync ? { sync: ctx.sync } : {}), ...chatTimeouts });
+        await relayAsk({ engine, req, res, input, askOpts, ...(ctx.sync ? { sync: ctx.sync } : {}), ...(stillOk ? { allow: stillOk } : {}), ...chatTimeouts });
       } finally {
         off?.();
-        if (watch) clearInterval(watch);
       }
     } finally {
       chatBusy = false;

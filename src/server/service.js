@@ -15,6 +15,7 @@ import { createMapHandler } from './map.js';
 import { defaultPolicy, actionFor, ACTION_SCOPE } from './policy.js';
 import { createSources, heldSources } from './sources.js';
 import { portNames } from './config.js';
+import { slug } from '../core/engine/ids.js';
 
 export const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 export const COOKIE = 'ontologizer_session';
@@ -29,7 +30,7 @@ const MAP_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const VIEW_RE = /^\/v1\/t\/[a-z0-9][a-z0-9-]{0,62}\/maps\/[a-z0-9][a-z0-9-]*\/view$/;
 const CHECK_KEY = 'draft-pending'; // the engine that answers maps/check (it writes nothing)
 const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
-const MAX_STORES = 256;          // tenants with an open store at once
+const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
 
 /** A --host that is loopback. @param {string} host */
@@ -93,7 +94,7 @@ function refusal(message) {
  */
 export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
-  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs,
+  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
 }) {
   // ---- ports: each one is the config's, or I1's own behaviour ----
@@ -161,25 +162,28 @@ export async function startService({
   /** @type {Map<string, any>} */
   const stores = new Map();
   /**
-   * A tenant's store, opened on first use. Without `create`, a tenant that does not exist is null and
-   * opens nothing: for files, a tenant folder that is not there; for a config store, its optional
-   * `store.exists(tenant)` saying false.
+   * A tenant's store, opened on first use (the existence check is readyStore's). Without `create`, a
+   * files tenant whose folder is not there is null and opens nothing.
    * @param {string} tenant @param {boolean} create
    */
   function storeFor(tenant, create) {
     let s = stores.get(tenant);
     if (s) return s;
     if (config?.store) {
-      if (!create && typeof config.store.exists === 'function' && !config.store.exists(tenant)) return null;
       s = config.store(tenant);
       if (!s) return null;
       stores.set(tenant, s);
       return s;
     }
     if (!create && tenant !== 'default' && !fs.existsSync(path.join(home, 'tenants', tenant))) return null;
-    s = openStore(home, { tenant });
+    s = openStore(home, { tenant, repair: true, log });
     stores.set(tenant, s);
     return s;
+  }
+  /** Close a store and forget it (a failed one is never kept). @param {string} tenant @param {any} s */
+  function dropStore(tenant, s) {
+    if (stores.get(tenant) === s) stores.delete(tenant);
+    try { Promise.resolve(s?.close?.()).catch(() => {}); } catch { /* best effort */ }
   }
   /**
    * A tenant's store once it is ready (a Postgres store loads first), null when the tenant has no
@@ -187,39 +191,80 @@ export async function startService({
    * @param {string} tenant @param {boolean} create @returns {Promise<any>}
    */
   async function readyStore(tenant, create) {
-    // At most MAX_STORES tenants open at once: one more is refused, never opened.
-    if (!stores.has(tenant) && stores.size >= MAX_STORES) { log(`too many tenants open (${MAX_STORES}): ${tenant} refused`); return 'down'; }
-    const s = storeFor(tenant, create);
-    if (!s || !s.ready) return s;
-    try { await s.ready; return s; } catch (err) {
-      log(`store for tenant ${tenant} is not available: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
-      return 'down';
+    const open = stores.get(tenant);
+    if (open) {
+      if (open.failed) return 'down';                     // a failed store serves nothing (503)
+      if (open.ready) { try { await open.ready; } catch { return 'down'; } }
+      return open;
     }
+    // A config store's optional exists(tenant) (sync or async) decides before anything is opened.
+    if (config?.store && !create && typeof config.store.exists === 'function') {
+      let there = false;
+      try { there = (await config.store.exists(tenant)) === true; } catch { return 'down'; }
+      if (!there) return null;
+    }
+    // At most maxStores tenants open at once: one more is refused, never opened.
+    if (stores.size >= Math.max(1, maxStores)) { log(`too many tenants open (${maxStores}): ${tenant} refused`); return 'down'; }
+    const s = storeFor(tenant, create);
+    if (!s) return s;
+    if (s.ready) {
+      try { await s.ready; } catch (err) {
+        // Never keep a store whose ready failed: it would hold its slot (and maybe connections) for nothing.
+        dropStore(tenant, s);
+        log(`store for tenant ${tenant} is not available: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+        return 'down';
+      }
+    }
+    markInterrupted(tenant, s);
+    return s;
+  }
+  /**
+   * A tenant's store for a look only (another tenant's status): an open one, or for files a read-only
+   * view of its index on disk. Never opens a config store, never creates a folder.
+   * @param {string} tenant @returns {any}
+   */
+  function peekStore(tenant) {
+    const open = stores.get(tenant);
+    if (open) return open.failed ? 'down' : open;
+    if (config?.store) return null;
+    const file = tenant === 'default' ? path.join(home, 'index.json') : path.join(home, 'tenants', tenant, 'index.json');
+    /** @type {any[]} */
+    let rows = [];
+    try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); rows = Array.isArray(j?.ontologies) ? j.ontologies : []; } catch { return null; }
+    return { root: path.dirname(file), list: () => rows };
+  }
+  /**
+   * Builds lost to a restart: a draft that has its ontology.created (written when the build was asked
+   * for) but no node and no failure was waiting or starting when the server stopped. It is marked
+   * failed, so it shows in the jobs tray instead of vanishing. Runs once, when the tenant's store opens.
+   * @param {string} tenant @param {any} store
+   */
+  function markInterrupted(tenant, store) {
+    try {
+      for (const row of store.list({ drafts: true })) {
+        if (!row.draft || builds.has(`${tenant}/${row.id}`)) continue;
+        const o = store.read(row.id);
+        if (!o.root || Object.keys(o.nodes).length) continue;
+        if (Object.values(o.jobs).some((j) => j && j.kind === 'build' && j.state === 'failed')) continue;
+        store.append(row.id, { t: 'job.failed', at: store.now(row.id), job: { id: `build-interrupted-${++buildSeq}`, kind: 'build', error: 'Interrupted by a restart' } });
+        log(`build ${tenant}/${row.id} was interrupted by a restart: marked failed`);
+      }
+    } catch (err) { log(`could not check ${tenant} for interrupted builds: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`); }
   }
   /** Wait until every write so far is stored (a Postgres store's sync; the file store has none). @param {any} store */
   const durable = async (store) => { if (store && typeof store.sync === 'function') await store.sync(); };
 
   /**
-   * Builds that picked private sources and have not written their raise yet (still queued): their
-   * maps count as private for those sources from the moment the draft exists. By "tenant/id".
-   * @type {Map<string, string[]>}
+   * What the read rule sees of a map in a list: its index row's visibility (no fold).
+   * @param {string} _tenant @param {string} _id @param {any} m an index row or a folded map
    */
-  const pendingPrivate = new Map();
-  /**
-   * What the read rule sees of a map: from its index row (no fold), or the folded map, with a
-   * pending build's private sources added.
-   * @param {string} tenant @param {string} id @param {any} m an index row or a folded map
-   */
-  function visibilityOf(tenant, id, m) {
-    const pend = pendingPrivate.get(`${tenant}/${id}`);
-    const own = m?.visibility === 'private' ? (Array.isArray(m.privateSources) ? m.privateSources : []) : null;
-    if (!pend && !own) return { visibility: 'public', privateSources: [] };
-    return { visibility: 'private', privateSources: [...new Set([...(own ?? []), ...(pend ?? [])])].sort() };
+  function visibilityOf(_tenant, _id, m) {
+    if (m?.visibility !== 'private') return { visibility: 'public', privateSources: [] };
+    return { visibility: 'private', privateSources: [...(Array.isArray(m.privateSources) ? m.privateSources : [])].sort() };
   }
-  /** The map as policies see it on a map route: the folded map with a pending raise applied. @param {string} tenant @param {string} id @param {any} store */
-  function mapFor(tenant, id, store) {
-    const map = store.read(id);
-    return pendingPrivate.has(`${tenant}/${id}`) ? { ...map, ...visibilityOf(tenant, id, map) } : map;
+  /** The map as policies see it on a map route: the folded map. @param {string} _tenant @param {string} id @param {any} store */
+  function mapFor(_tenant, id, store) {
+    return store.read(id);
   }
 
   /** Last use of each map's engine or handler, for idle eviction. @type {Map<string, number>} */
@@ -306,7 +351,7 @@ export async function startService({
    * @param {string} tenant @param {string} id @param {any} brief @param {number|undefined} depth
    * @param {Principal} p @param {string[]} names the sources this build may use
    */
-  function startBuild(tenant, id, brief, depth, p, names) {
+  function startBuild(tenant, id, brief, depth, p, names, picked = null) {
     const key = `${tenant}/${id}`;
     const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined) };
     builds.set(key, b);
@@ -318,8 +363,8 @@ export async function startService({
         const engine = await engineFor(tenant, id);
         const principal = publicPrincipal(p, tenant);
         const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
-        const privateSources = pendingPrivate.get(key) ?? [];
-        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(privateSources.length ? { privateSources } : {}) });
+        // picked: the sources chosen in New map (the build is told to search them for every category).
+        await engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
         b.state = 'done';
       } catch (err) {
         b.state = 'failed';
@@ -499,30 +544,34 @@ export async function startService({
     return row ? { ...p, ...tokenPrincipal(row) } : null;
   }
   /**
-   * Whether a stream (or a chat) may go on: called on every ping and before every event. It re-checks
-   * the principal and the read rule against the map as it is now. A policy that answers with a Promise
-   * is checked in the background (its last answer stands meanwhile), but a visibility.raised event is
-   * never sent until a synchronous answer allows it.
+   * Whether a stream (or a chat) may go on: called on every ping, before every event a stream sends and
+   * before every chunk a chat sends. It re-checks the principal (its token row as it is now) and the
+   * read rule against the map as it is now. The answer is remembered until either changes (the
+   * principal's scopes or sources, the map's visibility or private sources), so the common case costs
+   * a file stat and a comparison. A policy that answers with a Promise gets a Promise back: the stream
+   * waits for it, in order (map.js), and only a true lets the event out.
    * @param {Principal} p @param {string} tenant @param {string} id @param {any} store
-   * @returns {(ev?: any) => boolean}
+   * @returns {(ev?: any) => boolean|Promise<boolean>}
    */
   function streamValid(p, tenant, id, store) {
-    let last = true;
-    let checking = false;
-    return (ev) => {
+    /** @type {string|null} */ let memoKey = null;
+    let memo = false;
+    return (_ev) => {
+      if (store.failed) return false;
       const cur = currentPrincipal(p);
       if (!cur) return false;
+      let map;
+      try { map = mapFor(tenant, id, store); } catch { return false; }
+      const key = JSON.stringify([cur.scopes, cur.sources, map?.visibility ?? 'public', map?.privateSources ?? []]);
+      if (key === memoKey) return memo;
       let r;
-      try { r = policy.can(publicPrincipal(cur, tenant), 'read', { tenant, mapId: id, map: mapFor(tenant, id, store) }); } catch { return false; }
+      try { r = policy.can(publicPrincipal(cur, tenant), 'read', { tenant, mapId: id, map }); } catch { return false; }
       if (r && typeof (/** @type {any} */ (r)).then === 'function') {
-        if (!checking) {
-          checking = true;
-          /** @type {Promise<any>} */ (r).then((v) => { last = v === true; }, () => { last = false; }).finally(() => { checking = false; });
-        }
-        return last && !(ev && ev.t === 'visibility.raised');
+        return Promise.resolve(r).then((v) => { memoKey = key; memo = v === true; return memo; }, () => false);
       }
-      last = r === true;
-      return last;
+      memoKey = key;
+      memo = r === true;
+      return memo;
     };
   }
   /** Reachability of sources for status, remembered for 30 s per source. @type {Map<string, { at: number, reachable: boolean }>} */
@@ -645,7 +694,10 @@ export async function startService({
       if (!ownsTenant(p, tenant) && !admin) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
-      const store = await readyStore(tenant, false);
+      // Another tenant's status (an admin's) never opens its store or takes its lock: only an open
+      // store, or for files the tenant's index on disk, is read.
+      const own = (p.tenant ?? 'default') === tenant;
+      const store = own ? await readyStore(tenant, false) : peekStore(tenant);
       if (store === 'down') return fail(res, 503, 'the store is not available');
       const note = checkOpenNote();
       // Sources: every configured one for an admin, the ones it holds for anyone else. Names only.
@@ -659,12 +711,12 @@ export async function startService({
       return json(res, 200, {
         tenant,
         // The server's own paths are for admins only.
-        ...(admin ? { home: store && store.root ? store.root : path.join(home, 'tenants', tenant) } : {}),
+        ...(admin ? { home: store && store.root ? store.root : config?.store ? null : (tenant === 'default' ? home : path.join(home, 'tenants', tenant)) } : {}),
         ...(admin && configPath ? { config: configPath } : {}),
         store: ports.store,
         auth: identity ? 'identity' : authRequired ? 'tokens' : 'open',
         ...(note ? { note } : {}),
-        maps: count,
+        maps: store ? count : (config?.store && !own ? null : 0),
         tokens: currentTokens().filter((r) => r.tenant === tenant)
           .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], ...(r.sources ? { sources: [...r.sources] } : {}) })),
         server: { version, startedAt },
@@ -721,13 +773,20 @@ export async function startService({
         }
         const store = await readyStore(tenant, true);
         if (store === 'down' || !store) return fail(res, 503, 'the store is not available');
-        // A build that picks a private source is private from the moment its draft exists: the draft
-        // takes no display name (the name would show while it waits), and the engine raises it first thing.
-        const picked = names.filter((n) => entries.find((e) => e.name === n)?.visibility === 'private').sort();
-        const id = store.createDraft(body.brief, picked.length ? undefined : (body.name || undefined));
-        if (picked.length) pendingPrivate.set(`${tenant}/${id}`, picked);
+        // When private sources were picked, the draft is written with its ontology.created and their
+        // raise, in one write (one transaction on Postgres), stored before the 202: a queued private
+        // build is private from the start, and stays so across a crash or a restart. (Other builds
+        // write their own log, exactly as before.)
+        const privatePicked = names.filter((n) => entries.find((e) => e.name === n)?.visibility === 'private').sort();
+        const subject = String(body.brief.subject ?? '');
+        /** @type {any[]} */
+        const first = privatePicked.length ? [
+          { t: 'ontology.created', at: 0, name: subject, root: slug(subject), brief: body.brief, categories: [], actor: p.actor },
+          { t: 'visibility.raised', at: 0, to: 'private', reason: 'sources-picked', sources: privatePicked, actor: p.actor },
+        ] : [];
+        const id = store.createDraft(body.brief, body.name || undefined, { events: first });
         try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
-        startBuild(tenant, id, body.brief, body.depth, p, names);
+        startBuild(tenant, id, body.brief, body.depth, p, names, Array.isArray(body.sources) ? names : null);
         const base = mapBase(tenant, id);
         return json(res, 202, { id, viewUrl: `${base}/view`, eventsUrl: `${base}/events` });
       }
@@ -878,6 +937,8 @@ export async function startService({
     if (rawPath === '/v1/session') return session(req, res, method);
     if (rawPath === '/v1/health/live') return json(res, 200, { ok: true });
     if (rawPath === '/v1/health/ready') {
+      // Not ready while any open store has failed (its tenant answers 503 until a restart).
+      if ([...stores.values()].some((s) => s && s.failed)) return fail(res, 503, 'a store has failed');
       try { fs.accessSync(home, fs.constants.R_OK); return json(res, 200, { ok: true }); }
       catch { return fail(res, 503, 'the home is not readable'); }
     }
@@ -911,6 +972,9 @@ export async function startService({
     });
   });
 
+  // With files, the home tenant opens at start, so builds a restart interrupted are marked failed at
+  // once. A config store opens on first use (and is checked then).
+  if (!config?.store) { try { await readyStore('default', true); } catch { /* reported on first use */ } }
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => resolve(undefined));

@@ -218,8 +218,10 @@ export function findAttachment(home, id, hash) {
  *   askOpts: the run options for engine.ask (actor, principal, tools) in service mode; none on the one-map server.
  *   sync: service mode with a store that writes behind (Postgres): the question (chat.asked) is stored
  *   before the stream's 200 goes out; a store that cannot store it answers 503 instead.
+ *   allow: service mode: whether the asker may still read the map, checked before every chunk is sent;
+ *   anything but true stops the answer there (the model call is aborted).
  */
-export async function relayAsk({ engine, req, res, input, askOpts = {}, sync, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
+export async function relayAsk({ engine, req, res, input, askOpts = {}, sync, allow, idleMs = IDLE_MS, totalMs = TOTAL_MS }) {
   const head = () => { if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' }); };
   if (!sync) head();
   const ctl = new AbortController();
@@ -260,6 +262,8 @@ export async function relayAsk({ engine, req, res, input, askOpts = {}, sync, id
       }
       if (next.done || ctl.signal.aborted) break;
       const item = next.value;
+      // The asker must still be allowed to read the map before this chunk goes out.
+      if (allow && (await allow()) !== true) { ctl.abort(); res.destroy(); break; }
       send(item);
       if (item && (item.type === 'done' || item.type === 'error')) { ended = true; break; }
     }
