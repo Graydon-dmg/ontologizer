@@ -104,7 +104,7 @@ ontologizer token create --name me          # prints the token once; only its ha
 ontologizer serve --host 0.0.0.0            # every /v1/t/ route now needs the token
 ```
 
-`new`, `load` and the one-map page work exactly as before. Details are in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#10-service-mode) and in [SECURITY.md](SECURITY.md#network-mode).
+The server speaks plain HTTP: beyond this machine, put it behind an HTTPS reverse proxy. `new`, `load` and the one-map page work exactly as before. Details are in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#10-service-mode) and in [SECURITY.md](SECURITY.md#network-mode).
 
 ## Requirements
 

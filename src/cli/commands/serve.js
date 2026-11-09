@@ -8,16 +8,14 @@ import { packageVersion } from '../banner.js';
 import { resolveHome } from './status.js';
 import { startService, isLoopback } from '../../server/service.js';
 import { tokensPath } from '../../server/tokens.js';
-import { openStore, TENANT_RE } from '../../core/store.js';
+import { openStore, listTenants } from '../../core/store.js';
 
 /** Maps in every tenant of the home (saved and drafts). @param {string} home */
 function countMaps(home) {
-  let n = openStore(home).list({ drafts: true }).length;
-  try {
-    for (const e of fs.readdirSync(path.join(home, 'tenants'), { withFileTypes: true })) {
-      if (e.isDirectory() && TENANT_RE.test(e.name) && e.name !== 'default') n += openStore(home, { tenant: e.name }).list({ drafts: true }).length;
-    }
-  } catch { /* no tenants */ }
+  let n = 0;
+  for (const t of listTenants(home)) {
+    try { n += openStore(home, t === 'default' ? {} : { tenant: t }).list({ drafts: true }).length; } catch { /* unreadable tenant */ }
+  }
   return n;
 }
 
@@ -31,6 +29,12 @@ function writeAtomic(file, data) {
 /** What --tokens takes, without repeating the value given. @param {string} home */
 export function tokensFlagMessage(home) {
   return `--tokens takes the path of a tokens file, not a token. Tokens live in ${path.join(home, 'tokens.json')} (made by \`ontologizer token create\`); serve finds them there on its own.`;
+}
+
+/** The one-time warning for a network bind: this server speaks plain HTTP. @param {string} host */
+export function plainHttpWarning(host) {
+  return `Warning: ${host} is plain HTTP. Tokens and session cookies travel unencrypted to anyone on the network. `
+    + 'Put it behind an HTTPS reverse proxy (and name the proxy\'s host with --allow-host), or bind 127.0.0.1.\n';
 }
 
 /** @param {any} argv */
@@ -103,8 +107,10 @@ export async function handler(argv) {
 
   const n = countMaps(home);
   deps.stdout.write(`Serving ${n} ${n === 1 ? 'map' : 'maps'} at ${srv.url}  (Ctrl-C to stop)\n`);
-  if (!isLoopback(host)) deps.stdout.write(`Listening on ${host}: every /v1/t/ route needs a token.\n`);
-  else if (!srv.tokensLoaded) deps.stdout.write('No tokens loaded: loopback only, open to this machine.\n');
+  if (!isLoopback(host)) {
+    deps.stdout.write(`Listening on ${host}: every /v1/t/ route needs a token.\n`);
+    deps.stderr.write(plainHttpWarning(host));
+  } else if (!srv.tokensLoaded) deps.stdout.write('No tokens loaded: loopback only, open to this machine.\n');
   if (argv.open) await deps.openBrowser(srv.url);
 
   try {

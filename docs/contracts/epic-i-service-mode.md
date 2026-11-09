@@ -117,7 +117,7 @@ Scopes are a **ladder**, each implying the ones before it: `read` < `ask` < `bui
 - `read`: list, snapshot, events, view, wait, status, attachments. Strictly read-only.
 - `ask`: chat (ask the map). It calls the model (costs money) and writes the chat and any images into the map.
 - `build`: check, build, actions, save.
-- `admin`: everything in its own tenant, plus every tenant's status and the server's paths in it. An admin token still gets 404 on another tenant's maps.
+- `admin`: everything in its own tenant, plus the server's paths in its status. Only an admin token of tenant `default` may read other tenants' status (any other token gets 404 there). An admin token still gets 404 on another tenant's maps.
 
 `token create` defaults to `read,build` (build implies ask and read).
 
