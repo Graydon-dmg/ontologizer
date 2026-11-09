@@ -21,7 +21,7 @@ export default {
     .positional('target', { type: 'string', describe: 'Token name (revoke)' })
     .option('name', { type: 'string', describe: 'Token name (create)' })
     .option('tenant', { type: 'string', default: 'default', describe: 'Tenant the token opens (create)' })
-    .option('scopes', { type: 'string', default: 'read,build', describe: `Comma list of ${SCOPES.join(', ')} (create)` })
+    .option('scopes', { type: 'string', default: 'read,build', describe: `Comma list of ${SCOPES.join(', ')}; each implies the ones before it (create)` })
     .option('home', { type: 'string', describe: 'Store home directory' })
     .option('json', { type: 'boolean', default: false, describe: 'Print JSON (list)' }),
   handler: async (/** @type {any} */ argv) => {

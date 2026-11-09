@@ -84,10 +84,16 @@ function pidAlive(pid) {
   }
 }
 
+/** Names a map can never take: `tenants` is the folder that holds the other tenants' maps. */
+export const RESERVED_NAMES = ['tenants'];
+
 /** @param {string} name */
 function assertName(name) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) {
     throw new Error(`Invalid name "${name}": use lowercase letters, digits and hyphens (kebab-case).`);
+  }
+  if (RESERVED_NAMES.includes(name)) {
+    throw new Error(`"${name}" is a reserved name (it holds service mode's tenants). Pick another name.`);
   }
 }
 

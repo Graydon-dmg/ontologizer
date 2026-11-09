@@ -49,7 +49,7 @@ test('token errors exit 1', async () => {
   assert.equal((await run(['token', 'create', '--name', 'ci', '--home', home], home)).code, 1);
   const bad = await run(['token', 'create', '--name', 'x', '--scopes', 'read,root', '--home', home], home);
   assert.equal(bad.code, 1);
-  assert.match(bad.stderr, /read, build, admin/);
+  assert.match(bad.stderr, /read, ask, build, admin/);
   assert.equal((await run(['token', 'revoke', 'nope', '--home', home], home)).code, 1);
   assert.equal((await run(['token', '--home', home], home)).code, 1);
   const ok = await run(['token', 'revoke', 'ci', '--home', home], home);

@@ -7,7 +7,22 @@ import { TENANT_RE } from '../core/store.js';
 
 /** @typedef {{ name: string, tenant: string, scopes: string[], hash: string, created: string }} TokenRow */
 
-export const SCOPES = ['read', 'build', 'admin'];
+/**
+ * Scopes are a ladder: each implies the ones before it. read only reads; ask also asks the map (it
+ * calls the model and writes the chat to the map); build also builds and changes maps; admin is all,
+ * plus every tenant's status.
+ */
+export const SCOPES = ['read', 'ask', 'build', 'admin'];
+
+/**
+ * Whether `scopes` (a token's) cover `need`.
+ * @param {string[]} scopes @param {string} need
+ */
+export function hasScope(scopes, need) {
+  const want = SCOPES.indexOf(need);
+  if (want < 0) return false;
+  return (Array.isArray(scopes) ? scopes : []).some((s) => SCOPES.indexOf(s) >= want);
+}
 export const TOKEN_RE = /^ont_[A-Za-z0-9_-]{43}$/;
 export const NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
 
