@@ -46,7 +46,7 @@ export function packagesOf(inputs) {
 /** esbuild options shared by the probe and the real build. @param {string} entry */
 function options(entry) {
   return {
-    entryPoints: [path.join(ROOT, 'web', 'embed', entry)],
+    entryPoints: [path.resolve(ROOT, 'web', 'embed', entry)], // an absolute entry is used as is (tests)
     bundle: true,
     format: /** @type {const} */ ('iife'),
     minify: true,
@@ -89,12 +89,27 @@ export function licenceComment(pkgs) {
   return `/*!\n${body}\n*/\n`;
 }
 
-/** @param {{ outdir?: string, quiet?: boolean }} [opts] @returns {Promise<{ file: string, bytes: number }[]>} */
-export async function buildEmbed({ outdir = DIST_DIR, quiet = false } = {}) {
+/**
+ * Inside a classic <script>, `<!--` followed later by `<script` puts the HTML parser in its
+ * "double escaped" state, and the real </script> then no longer ends the element. Rewriting either
+ * in minified code is not always safe (in a regular expression `\s` would change meaning), so a
+ * bundle that contains one is refused instead.
+ * @param {string} code @returns {string[]} what was found
+ */
+export function inlineHazards(code) {
+  return ['<!--', '<script'].filter((t) => code.toLowerCase().includes(t));
+}
+
+/**
+ * @param {{ outdir?: string, quiet?: boolean, entries?: ReadonlyArray<readonly [string, string]> }} [opts]
+ *   entries: [entry under web/embed/ (or an absolute path), output file name]; tests only.
+ * @returns {Promise<{ file: string, bytes: number }[]>}
+ */
+export async function buildEmbed({ outdir = DIST_DIR, quiet = false, entries = ENTRIES } = {}) {
   const { build } = await import('esbuild');
   mkdirSync(outdir, { recursive: true });
   const out = [];
-  for (const [entry, name] of ENTRIES) {
+  for (const [entry, name] of entries) {
     const file = path.join(outdir, name);
     // First pass: find which packages go in. Second pass: write the bundle with their licences on top.
     const licences = licenceComment(await bundledPackages(entry));
@@ -107,6 +122,10 @@ export async function buildEmbed({ outdir = DIST_DIR, quiet = false } = {}) {
       footer: { js: GUARD_CLOSE },
     });
     const code = res.outputFiles[0].text;
+    const hazards = inlineHazards(code);
+    if (hazards.length) {
+      throw new Error(`${name} contains ${hazards.map((h) => `"${h}"`).join(' and ')}, which would break the <script> it is inlined in (a dependency update?). Find where it comes from and avoid it; the bundle was not written.`);
+    }
     // Atomic, and only when it changed: tests (and `npm pack`, which runs this) may read it meanwhile.
     if (!existsSync(file) || readFileSync(file, 'utf8') !== code) {
       const tmp = `${file}.${process.pid}.tmp`;

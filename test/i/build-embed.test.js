@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildEmbed, bundledPackages, licenceText } from '../../scripts/build-embed.js';
+import { buildEmbed, bundledPackages, licenceText, inlineHazards } from '../../scripts/build-embed.js';
 import { exportMap } from '../../src/core/export/index.js';
 import { bundleText, networkProblems, ROOT, demo, licenceHeader, licenceHeaderProblems } from './build-check.js';
 
@@ -66,6 +66,25 @@ test('the licence comment survives into html and embed exports', async () => {
   const header = /** @type {string} */ (licenceHeader(code));
   for (const format of /** @type {const} */ (['html', 'embed'])) {
     assert.ok(exportMap(demo(), { format, bundle: code }).includes(header), format);
+  }
+});
+
+test('neither bundle contains "<!--" or "<script" (which would break the <script> it is inlined in)', async () => {
+  assert.deepEqual(inlineHazards(await bundleText()), []);
+  assert.deepEqual(inlineHazards(await bundleText(true)), []);
+});
+
+test('planted fault: a bundle containing "<!--<script>" fails the build, and nothing is written', async () => {
+  assert.deepEqual(inlineHazards('x="<!--<SCRIPT>"'), ['<!--', '<script']);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-hazard-'));
+  try {
+    const entry = path.join(dir, 'entry.js');
+    fs.writeFileSync(entry, 'globalThis.planted = "<!--<script>";\n');
+    await assert.rejects(buildEmbed({ outdir: dir, quiet: true, entries: [[entry, 'bad.js']] }),
+      /bad\.js contains "<!--" and "<script", which would break the <script> it is inlined in/);
+    assert.ok(!fs.existsSync(path.join(dir, 'bad.js')), 'the bundle was not written');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

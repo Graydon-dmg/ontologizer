@@ -110,6 +110,16 @@ test('a label that tries to close the script tag stays data, and round-trips', a
   assert.ok(`<script type="application/json">${JSON.stringify(m)}</script>`.match(/<\/script>/g).length > 1);
 });
 
+test('planted fault: exportMap refuses a bundle containing "<!--<script>" (second guard after the build)', () => {
+  for (const bundle of ['var s="<!--<script>";', 'var s="<!--";', 'var s="<Script>";']) {
+    for (const format of /** @type {const} */ (['html', 'embed'])) {
+      assert.throws(() => exportMap(demo(), { format, bundle }), /cannot be inlined in a <script> safely/, `${format}: ${bundle}`);
+    }
+  }
+  // A plain </script inside the code is still split, not refused.
+  assert.ok(exportMap(demo(), { format: 'embed', bundle: 'var s="</script>";' }).includes('var s="<\\/script>";'));
+});
+
 test('the map name and a hostile liveUrl are escaped or refused', () => {
   const o = { ...demo(), name: '"><img src=x onerror=alert(1)>' };
   const html = exportMap(o, { format: 'html', bundle: 'void 0', liveUrl: 'javascript:alert(1)' });

@@ -40,6 +40,10 @@ export function scriptJson(value) {
  * @returns {string}
  */
 export function scriptCode(code) {
+  // `<!--` then `<script` would put the parser in its "double escaped" state, where the real
+  // </script> no longer ends the element. The build refuses such a bundle; this is the second guard.
+  const found = ['<!--', '<script'].filter((t) => String(code).toLowerCase().includes(t));
+  if (found.length) throw new Error(`The embed bundle contains ${found.map((t) => `"${t}"`).join(' and ')} and cannot be inlined in a <script> safely (the build refuses such a bundle).`);
   return String(code).replace(/<\/(script)/gi, '<\\/$1');
 }
 
