@@ -18,6 +18,12 @@
  *  { t: 'chat.failed', at, chatId, replyTo, error, msgId? }   msgId defaults to 'err:' + replyTo
  *    The three chat events append to ontology.chat in order (roles user / assistant / error).
  *    Only the fields above are kept; unknown fields are dropped. A repeated msgId is ignored.
+ *  { t: 'visibility.raised', at, to: 'private', reason: 'source'|'fuse', sources: [names] }
+ *    The map used a private source (or fused a private map). ontology.visibility becomes 'private' and
+ *    ontology.privateSources gains the names. Nothing lowers visibility: there is no event for it.
+ *
+ * Service mode stamps an optional top-level `actor: { id, kind, via? }` on every event a request
+ * causes; fold ignores it.
  *
  * Unknown event types are ignored (forward compatible). A node.added whose parent is missing is
  * still folded; views must tolerate a parent that arrives later.
@@ -57,6 +63,8 @@ export function emptyOntology() {
     jobs: {},
     insights: [],
     chat: [],
+    visibility: 'public',
+    privateSources: [],
   };
 }
 
@@ -157,6 +165,12 @@ export function fold(o, e) {
       const chat = o.chat ?? [];
       if (!m || chat.some((x) => x.msgId === m.msgId)) return o.chat ? o : { ...o, chat };
       return { ...o, chat: [...chat, m] };
+    }
+    case 'visibility.raised': {
+      if (e.to !== 'private') return o; // only ever raised; anything else is ignored
+      const names = new Set(Array.isArray(o.privateSources) ? o.privateSources : []);
+      for (const n of Array.isArray(e.sources) ? e.sources : []) if (typeof n === 'string' && n) names.add(n);
+      return { ...o, visibility: 'private', privateSources: [...names].sort() };
     }
     default:
       return o; // unknown event types are ignored
