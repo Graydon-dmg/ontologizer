@@ -4,13 +4,11 @@
 
 Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the open-source packages below.
 
-- **Installed:** npm installs these packages next to Ontologizer.
+- **Bundled into exports:** `web/dist/embed.js` copies the d3 code it uses, and `web/dist/embed-3d.js` also `three`, into one file that `ontologizer export --format html` or `embed` puts inside every exported page. Each bundle starts with the full licence text and copyright line of every package it includes.
 - **Served to your browser:** the local web page that `ontologizer` opens serves the d3 packages and `three` to your browser straight from `node_modules`.
-- **Bundled into exports:** `web/dist/embed.js` (built when the package is packed) copies the d3 code it uses, and `web/dist/embed-3d.js` also `three`, into one file that `ontologizer export --format html` or `embed` puts inside every exported page. Each bundle starts with the licence texts of the packages it includes.
-- **Platform binaries:** `@napi-rs/keyring` and `esbuild` ship one prebuilt binary per platform; npm installs only the one for your system.
-- **Build tools, not shipped:** rows marked "build tool" (`esbuild` and its binaries) are development dependencies: they build the bundles and are not part of the published package.
+- **Platform binaries:** `@napi-rs/keyring` ships one prebuilt binary per platform; npm installs only the one for your system.
 
-112 packages: MIT 91, ISC 17, Apache-2.0 2, BSD-3-Clause 1, Unlicense 1.
+86 shipped packages: MIT 65, ISC 17, Apache-2.0 2, BSD-3-Clause 1, Unlicense 1. Plus 26 build-only packages (MIT 26), listed under Build tools at the end: never shipped.
 
 ## Packages
 
@@ -18,31 +16,6 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 |---|---|---|---|
 | @anthropic-ai/sdk | 1.6.0 | Apache-2.0 | copyright notice that is included in or attached to the work |
 | @babel/runtime | 7.29.13 | MIT | Copyright (c) 2014-present Sebastian McKenzie and other contributors |
-| @esbuild/aix-ppc64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/android-arm | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/android-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/android-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/darwin-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/darwin-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/freebsd-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/freebsd-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-arm | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-ia32 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-loong64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-mips64el | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-ppc64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-riscv64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-s390x | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/linux-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/netbsd-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/netbsd-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/openbsd-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/openbsd-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/sunos-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/win32-arm64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/win32-ia32 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
-| @esbuild/win32-x64 | 0.24.2 | MIT | (build tool, not shipped) (platform-specific prebuilt binary of esbuild; same project and licence) |
 | @inquirer/ansi | 2.0.10 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/checkbox | 5.2.8 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/confirm | 6.3.5 | MIT | Copyright (c) 2025 Simon Boudrias |
@@ -95,7 +68,6 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 | default-browser-id | 5.0.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | define-lazy-prop | 3.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | emoji-regex | 10.6.0 | MIT | Copyright Mathias Bynens <https://mathiasbynens.be/> |
-| esbuild | 0.24.2 | MIT | (build tool, not shipped) Copyright (c) 2020 Evan Wallace |
 | escalade | 3.2.0 | MIT | Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com) |
 | fast-sha256 | 1.3.0 | Unlicense | Author: Dmitry Chestnykh |
 | fast-string-truncated-width | 3.0.3 | MIT | Copyright (c) 2024-present Fabio Spampinato |
@@ -517,7 +489,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Used by: @napi-rs/keyring@2.1.2, esbuild@0.24.2, fast-wrap-ansi@0.2.2, json-schema-to-ts@3.1.1, safer-buffer@2.1.2, ts-algebra@2.0.0
+Used by: @napi-rs/keyring@2.1.2, fast-wrap-ansi@0.2.2, json-schema-to-ts@3.1.1, safer-buffer@2.1.2, ts-algebra@2.0.0
 
 ```text
 MIT License
@@ -696,7 +668,7 @@ THE SOFTWARE.
 
 No licence file shipped by: standardwebhooks@1.1.1. Their `package.json` declares MIT.
 
-Platform binaries under this licence (text as for their parent package above): @esbuild/aix-ppc64, @esbuild/android-arm, @esbuild/android-arm64, @esbuild/android-x64, @esbuild/darwin-arm64, @esbuild/darwin-x64, @esbuild/freebsd-arm64, @esbuild/freebsd-x64, @esbuild/linux-arm, @esbuild/linux-arm64, @esbuild/linux-ia32, @esbuild/linux-loong64, @esbuild/linux-mips64el, @esbuild/linux-ppc64, @esbuild/linux-riscv64, @esbuild/linux-s390x, @esbuild/linux-x64, @esbuild/netbsd-arm64, @esbuild/netbsd-x64, @esbuild/openbsd-arm64, @esbuild/openbsd-x64, @esbuild/sunos-x64, @esbuild/win32-arm64, @esbuild/win32-ia32, @esbuild/win32-x64, @napi-rs/keyring-darwin-arm64, @napi-rs/keyring-darwin-x64, @napi-rs/keyring-freebsd-x64, @napi-rs/keyring-linux-arm-gnueabihf, @napi-rs/keyring-linux-arm64-gnu, @napi-rs/keyring-linux-arm64-musl, @napi-rs/keyring-linux-riscv64-gnu, @napi-rs/keyring-linux-x64-gnu, @napi-rs/keyring-linux-x64-musl, @napi-rs/keyring-win32-arm64-msvc, @napi-rs/keyring-win32-ia32-msvc, @napi-rs/keyring-win32-x64-msvc.
+Platform binaries under this licence (text as for @napi-rs/keyring above): @napi-rs/keyring-darwin-arm64, @napi-rs/keyring-darwin-x64, @napi-rs/keyring-freebsd-x64, @napi-rs/keyring-linux-arm-gnueabihf, @napi-rs/keyring-linux-arm64-gnu, @napi-rs/keyring-linux-arm64-musl, @napi-rs/keyring-linux-riscv64-gnu, @napi-rs/keyring-linux-x64-gnu, @napi-rs/keyring-linux-x64-musl, @napi-rs/keyring-win32-arm64-msvc, @napi-rs/keyring-win32-ia32-msvc, @napi-rs/keyring-win32-x64-msvc.
 
 ### Unlicense
 
@@ -728,3 +700,36 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <http://unlicense.org>
 ```
+
+## Build tools: installed for development only, never shipped or bundled
+
+These are development dependencies. They build `web/dist/` from source and are not part of the published package or of any exported page.
+
+| Package | Version | Licence | Copyright |
+|---|---|---|---|
+| @esbuild/aix-ppc64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-arm | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/darwin-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/darwin-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/freebsd-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/freebsd-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-arm | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-ia32 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-loong64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-mips64el | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-ppc64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-riscv64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-s390x | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/netbsd-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/netbsd-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/openbsd-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/openbsd-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/sunos-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-arm64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-ia32 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-x64 | 0.24.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| esbuild | 0.24.2 | MIT | Copyright (c) 2020 Evan Wallace |
