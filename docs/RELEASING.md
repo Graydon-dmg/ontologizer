@@ -68,6 +68,8 @@ The workflow runs two jobs:
 1. **verify** (no publish rights): refuses to go on unless the tag is exactly `v` + the `package.json` version, installs exactly the locked dependencies (`npm ci --ignore-scripts`) and runs the full check.
 2. **publish** (only after verify passes **and** you approve): checks out the same commit and runs `npm publish --access public --ignore-scripts`; npm attaches provenance automatically. This job installs no dependencies and runs no tests.
 
+**The export bundle.** The package ships `web/dist/embed.js` and `web/dist/embed-3d.js`, built from `web/embed/` by esbuild, a development dependency. `verify` builds them (`npm run check` runs the build first) and uploads `web/dist/` as a short-lived artifact; `publish` downloads it, checks both files are there and non-empty, and packs them. Publish only receives files: it never installs or runs a dependency, so the rule above still holds.
+
 Check the result on npmjs.com: the version page shows a **Provenance** badge linking to the exact commit and workflow run.
 
 ### Verifying a release
@@ -78,7 +80,7 @@ Check the result on npmjs.com: the version page shows a **Provenance** badge lin
 V=X.Y.Z
 D=$(mktemp -d) && mkdir "$D/pub" "$D/loc"
 (cd "$D/pub" && npm pack "ontologizer@$V" && tar -xzf "ontologizer-$V.tgz")
-git archive "v$V" | tar -x -C "$D/loc" && (cd "$D/loc" && npm pack && tar -xzf "ontologizer-$V.tgz")
+git archive "v$V" | tar -x -C "$D/loc" && (cd "$D/loc" && npm ci --ignore-scripts && npm pack && tar -xzf "ontologizer-$V.tgz")
 diff -r "$D/pub/package" "$D/loc/package" && echo identical
 ```
 
