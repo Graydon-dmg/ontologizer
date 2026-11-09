@@ -28,8 +28,11 @@ const JOB_KINDS = new Set(['research', 'explain', 'sources']);
  * - principal: who asked; passed to the model port with the call's purpose.
  * - tools: a ToolSet of configured sources (src/server/sources.js), or null.
  * - privateSources (build only): private sources picked in New map; the map is raised to private
- *   (reason 'sources-picked') right after ontology.created, before anything else is written.
- * @typedef {{ actor?: any, principal?: any, tools?: import('./run.js').ToolSet|null, privateSources?: string[] }} RunOpts
+ *   (reason 'sources-picked') right after ontology.created, before anything else is written (skipped
+ *   when the map already has its ontology.created: service mode writes both with the draft).
+ * - picked (build only): every source picked in New map; the build's prompts say they are the
+ *   reader's chosen references, to be searched for each category.
+ * @typedef {{ actor?: any, principal?: any, tools?: import('./run.js').ToolSet|null, privateSources?: string[], picked?: string[] }} RunOpts
  * @typedef {'check'|'build'|'research'|'explain'|'sources'|'ask'|'fuse'|'rosetta'} Purpose
  */
 
@@ -65,13 +68,14 @@ export function createEngine({ store, id, client = null, models = defaultModels(
    * model port with this purpose, and `{ useTools: true }` on a call offers the run's source tools.
    * @param {Purpose} purpose @param {RunOpts} [o]
    */
-  function runCtx(purpose, { actor = null, principal = null, tools = null, privateSources = [] } = {}) {
+  function runCtx(purpose, { actor = null, principal = null, tools = null, privateSources = [], picked = [] } = {}) {
     /** @param {string} t @param {object} fields */
     const emitAs = actor ? (t, fields) => emit(t, { ...fields, actor }) : emit;
     const run = createRun({ tools, emit: emitAs, read: () => store.read(id), durable });
     return {
       store, id, models, queue, actor, run, durable,
       picked: Array.isArray(privateSources) ? privateSources.filter((n) => typeof n === 'string' && n) : [],
+      chosen: Array.isArray(picked) ? picked.filter((n) => typeof n === 'string' && n) : [],
       getClient: () => getClient(purpose, principal),
       emit: emitAs,
       /** @param {any} params @param {(obj: any) => void} onObject */

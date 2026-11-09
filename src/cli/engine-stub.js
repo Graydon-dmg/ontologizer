@@ -33,12 +33,15 @@ export function createEngine({ store, id, client: _client = null }) {
     async build(brief, opts) {
       const actor = opts?.actor ?? null; // service mode stamps who asked on every event
       const picked = Array.isArray(opts?.privateSources) ? [...new Set(opts.privateSources)].sort() : [];
+      // Service mode wrote ontology.created (and any picked raise) with the draft: start from there.
+      const already = Boolean(store.read(id).root);
       const speed = Number(process.env.ONTOLOGIZER_STUB_SPEED) || 1;
       let prev = 0;
       for (const ev of fixtureEvents()) {
         const wait = ((ev.at ?? 0) - prev) / speed;
         if (wait > 0) await sleep(wait);
         prev = ev.at ?? prev;
+        if (ev.t === 'ontology.created' && already) continue;
         const e = ev.t === 'ontology.created' ? { ...ev, brief } : ev;
         store.append(id, actor ? { ...e, actor } : e);
         // As the real engine: picked private sources raise the map right after ontology.created.

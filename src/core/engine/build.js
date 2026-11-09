@@ -11,7 +11,18 @@ import { sourcesNote } from './run.js';
  * @param {any} ectx @param {{ system: string, prompt: string }} p
  */
 function grounded(ectx, p) {
-  return ectx.run?.hasTools ? { ...p, system: p.system + sourcesNote(ectx.run.tools), useTools: true } : p;
+  return ectx.run?.hasTools ? { ...p, system: p.system + sourcesNote(ectx.run.tools) + pickedNote(ectx.chosen), useTools: true } : p;
+}
+
+/**
+ * When the reader picked sources in New map: they are the reader's chosen references, and each
+ * category is searched in them before its nodes are written. Nothing is added when none were picked.
+ * @param {string[]|undefined} chosen
+ */
+export function pickedNote(chosen) {
+  if (!Array.isArray(chosen) || !chosen.length) return '';
+  return `
+The reader chose these sources as the references for this map: ${chosen.join(', ')}. Before you write the lines for a category, search these sources for it with their tools, and base the lines on what they return, citing each document you use. Use general knowledge only where they have nothing.`;
 }
 
 /** The verified refs of a line (only refs a tool returned in this run); [] without tools. @param {any} ectx @param {any} obj */
@@ -116,10 +127,13 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   ectx.resetClock();
   const subject = String(brief.subject);
   const root = slug(subject);
-  ectx.emit('ontology.created', { name: subject, root, brief, categories: [] });
+  // Service mode writes ontology.created (and a picked private source's raise) with the draft, before
+  // the build is even queued: then the build starts from there instead of writing them again.
+  const already = Boolean(ectx.store.read(ectx.id).root);
+  if (!already) ectx.emit('ontology.created', { name: subject, root, brief, categories: [] });
   // Private sources picked in New map make the map private before anything else is written (not even
   // the root node is ever public), durably, whether or not the build ends up using them.
-  if (ectx.picked?.length) {
+  if (ectx.picked?.length && !already) {
     ectx.emit('visibility.raised', { to: 'private', reason: 'sources-picked', sources: [...new Set(/** @type {string[]} */ (ectx.picked))].sort() });
     await ectx.durable?.();
   }
