@@ -8,6 +8,7 @@ export const FEATURES = [
   { id: 'serve',   epic: 'I1', cli: 'serve',   ui: { page: 'web/home/index.html', id: 'new-map' } },
   { id: 'status',  epic: 'I1', cli: 'status',  ui: { page: 'web/home/index.html', id: 'server-panel' } },
   { id: 'token',   epic: 'I1', cli: 'token',   ui: { page: 'web/home/index.html', id: 'server-tokens' } },
+  { id: 'new-map-from-map', epic: 'I1', cli: 'serve', ui: { page: 'web/index.html', id: 'brand-menu' } },
   { id: 'sources-picker', epic: 'I2', cli: 'sources', ui: { page: 'web/home/index.html', id: 'sources-picker' } },
   { id: 'private-badge',  epic: 'I2', cli: 'list',    ui: { page: 'web/index.html',      id: 'private-badge' } },
   { id: 'source-refs',    epic: 'I2', cli: 'sources', ui: { page: 'web/index.html',      id: 'node-sources' } },

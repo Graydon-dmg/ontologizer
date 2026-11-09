@@ -2,7 +2,7 @@
 import * as tokens from '../shared/tokens.js';
 import { loadChoice, applyTheme } from '../shell/theme.js';
 import { mountServerPanel } from '../shell/ui/server.js';
-import { getSession, signIn, listMaps, checkContext, startBuild, listSources, buildBody, nextStep, cleanAnswers, addAnswers, safeNext, describeFailure, relTime } from './flow.js';
+import { getSession, signIn, listMaps, checkContext, startBuild, listSources, buildBody, nextStep, cleanAnswers, addAnswers, safeNext, newMapRequested, describeFailure, relTime } from './flow.js';
 
 const $ = (/** @type {string} */ id) => /** @type {any} */ (document.getElementById(id));
 const f = globalThis.fetch.bind(globalThis);
@@ -276,5 +276,11 @@ async function boot() {
   if (back) { location.replace(back); return; }
   mountServerPanel($('server-panel'), { tenant, fetch: f, popover: false });
   loadMaps();
+  // "New map" from a map page: open the dialog at once, and drop ?new=1 so a reload does not reopen it.
+  const wanted = newMapRequested(location.search);
+  if (wanted.open) {
+    history.replaceState(history.state, '', `${location.pathname}${wanted.search}${location.hash}`);
+    openNew();
+  }
 }
 boot();

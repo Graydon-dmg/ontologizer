@@ -34,15 +34,16 @@ function sleep(ms, c) {
 
 /**
  * @param {{ store: any, engine: any, id: string, replay?: null | { speed: number },
- *   openDraft?: null | ((draftId: string) => Promise<DraftServer>),
+ *   openDraft?: null | ((draftId: string) => Promise<DraftServer>), onFuseSettled?: (draftId: string) => void,
  *   originOk?: (origin: string|undefined) => boolean,
  *   chatTimeouts?: { idleMs?: number, totalMs?: number }, pingMs?: number }} opts
  * openDraft makes a fused draft reachable and says where (the one-map server starts a second server;
  * the service router answers with the draft's view URL). Without it, fuse is refused.
+ * onFuseSettled says a fuse has stopped writing into its draft (done or failed).
  * originOk decides the Origin of POST /api/action and /api/chat (default: any).
  * pingMs is the event stream's keep-alive interval (tests make it short).
  */
-export function createMapHandler({ store, engine, id, replay = null, openDraft = null, originOk = () => true, chatTimeouts = {}, pingMs = PING_MS }) {
+export function createMapHandler({ store, engine, id, replay = null, openDraft = null, onFuseSettled = () => {}, originOk = () => true, chatTimeouts = {}, pingMs = PING_MS }) {
   /** @type {Set<import('node:http').ServerResponse>} */
   const sseClients = new Set();
   let closed = false;
@@ -385,7 +386,11 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
           : String(err?.message ?? err);
         try { store.append(id, as({ t: 'job.failed', at: store.now(id), job: { ...job, error } })); } catch { /* store gone */ }
       })
-      .finally(() => { fuseRuns.delete(key); ready(null); })
+      .finally(() => {
+        fuseRuns.delete(key);
+        ready(null);
+        if (run.draftId) { try { onFuseSettled(run.draftId); } catch { /* never breaks the fuse */ } }
+      })
       .catch(() => {}); // never an unhandled rejection: errors are already job.failed events
     /** @type {any} */
     let t;

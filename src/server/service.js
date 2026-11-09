@@ -8,9 +8,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { resolveVendorPath } from '../core/vendor.js';
-import { openStore, TENANT_RE } from '../core/store.js';
+import { openStore, TENANT_RE, tenantsIsMap, TENANTS_MAP_WARNING } from '../core/store.js';
 import { readTokens, checkToken, hasScope } from './tokens.js';
-import { PKG_ROOT, WEB_ROOT, json, plain, sendFile, serveFile, sendPage, readBody } from './http.js';
+import { PKG_ROOT, WEB_ROOT, PAGE_HEADERS, json, plain, sendFile, serveFile, sendPage, readBody } from './http.js';
 import { createMapHandler } from './map.js';
 import { defaultPolicy, actionFor, ACTION_SCOPE } from './policy.js';
 import { createSources, heldSources } from './sources.js';
@@ -19,7 +19,12 @@ import { slug } from '../core/engine/ids.js';
 
 export const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 export const COOKIE = 'ontologizer_session';
-export const PROXY_HEADERS = ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip'];
+// Headers a proxy or CDN adds. Open mode refuses a request carrying any of them. This is a heuristic,
+// not a boundary: a proxy that adds none of these gets through, which is why open mode is loopback only.
+export const PROXY_HEADERS = [
+  'forwarded', 'via', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port',
+  'x-forwarded-server', 'x-real-ip', 'x-client-ip', 'cf-connecting-ip', 'true-client-ip', 'fastly-client-ip',
+];
 export const TOKENS_FOUND_NOTE = 'tokens found: restart serve to require them';
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const MAX_SESSIONS = 1000;
@@ -28,10 +33,11 @@ const WAIT_DEFAULT = 30000;
 const WAIT_MAX = 300000;
 const MAP_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const VIEW_RE = /^\/v1\/t\/[a-z0-9][a-z0-9-]{0,62}\/maps\/[a-z0-9][a-z0-9-]*\/view$/;
-const CHECK_KEY = 'draft-pending'; // the engine that answers maps/check (it writes nothing)
+const CHECK_KEY = ':check'; // the engine that answers maps/check (it writes nothing); never a map id
 const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
 const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
+const SAVING = 'The map is being saved under a new name: open it by its new name.';
 
 /** A --host that is loopback. @param {string} host */
 export const isLoopback = (host) => LOOPBACK.includes(String(host).replace(/^\[|\]$/g, ''));
@@ -108,6 +114,9 @@ export async function startService({
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
   const startedAt = new Date().toISOString();
   const allow = allowHosts.map((a) => String(a).trim().toLowerCase()).filter(Boolean);
+  // A map saved as `tenants` before service mode: it stays a map, and only tenant default is served.
+  const noTenants = tenantsIsMap(home);
+  if (noTenants) log(TENANTS_MAP_WARNING);
 
   // ---- tokens: read at start; re-read when the file changes (a revoke takes effect at once). ----
   let tokenRows = tokensFile ? readTokens(tokensFile) : [];
@@ -289,25 +298,52 @@ export async function startService({
   const handlers = new Map();
   /** The handlers that are ready, by key (busy() and eviction read them synchronously). @type {Map<string, ReturnType<typeof createMapHandler>>} */
   const live = new Map();
+  /** Maps being saved (renamed) right now: nothing may open or write to them. @type {Set<string>} */
+  const saving = new Set();
+  /** Fused drafts a fuse is still writing into (its job events are on the source map). @type {Set<string>} */
+  const fusing = new Set();
   /** @param {string} tenant @param {string} id */
-  function handlerFor(tenant, id) {
+  const mapExists = (tenant, id) => Boolean(storeFor(tenant, false)?.list({ drafts: true }).some((/** @type {any} */ m) => m.id === id));
+  /** @param {string} tenant @param {string} id */
+  function handlerPromise(tenant, id) {
     const key = `${tenant}/${id}`;
     lastUsed.set(key, Date.now());
     let h = handlers.get(key);
     if (!h) {
-      h = engineFor(tenant, id).then((engine) => {
-        const made = createMapHandler({
+      const made = engineFor(tenant, id).then((engine) => {
+        const m = createMapHandler({
           store: storeFor(tenant, true), engine, id, ...(pingMs ? { pingMs } : {}),
           // Fuse makes the draft a new map in this process: its URL is its view, no new server or port.
-          openDraft: async (draftId) => ({ url: `${mapBase(tenant, draftId)}/view`, close: async () => {} }),
+          openDraft: async (draftId) => {
+            fusing.add(`${tenant}/${draftId}`);
+            return { url: `${mapBase(tenant, draftId)}/view`, close: async () => {} };
+          },
+          onFuseSettled: (draftId) => { fusing.delete(`${tenant}/${draftId}`); },
         });
-        if (handlers.get(key) === h) live.set(key, made);
-        return made;
+        if (handlers.get(key) === made) live.set(key, m);
+        else m.close().catch(() => {}); // dropped while it was being made: never left running unseen
+        return m;
       });
-      h.catch(() => handlers.delete(key));
-      handlers.set(key, h);
+      h = made;
+      made.catch(() => { if (handlers.get(key) === made) handlers.delete(key); });
+      handlers.set(key, made);
     }
     return h;
+  }
+  /**
+   * A map's handler, or null when it cannot be had now: the map is being saved, is gone, or was
+   * dropped twice while its handler was being made (the caller answers 409, 404 or 503).
+   * @param {string} tenant @param {string} id
+   */
+  async function handlerFor(tenant, id) {
+    const key = `${tenant}/${id}`;
+    for (let tries = 0; tries < 2; tries++) {
+      if (saving.has(key) || !mapExists(tenant, id)) return null;
+      const h = handlerPromise(tenant, id);
+      const made = await h;
+      if (handlers.get(key) === h) return made; // still the live one, not an orphan of a drop
+    }
+    return null;
   }
   /** Drop a map's handler (ending its streams and any chat) and its engine. @param {string} key */
   async function drop(key) {
@@ -384,7 +420,9 @@ export async function startService({
   /** @param {string} tenant @param {string} id */
   function busy(tenant, id) {
     const key = `${tenant}/${id}`;
-    return activeWork(builds.get(key), storeFor(tenant, true).read(id).jobs, Boolean(live.get(key)?.chatting()));
+    const work = activeWork(builds.get(key), storeFor(tenant, true).read(id).jobs, Boolean(live.get(key)?.chatting()));
+    if (fusing.has(key)) work.push({ id: 'fuse', kind: 'fuse', state: 'running' });
+    return work;
   }
 
   // ---- idle eviction: a map nobody watches and nothing runs on gives back its engine ----
@@ -591,7 +629,8 @@ export async function startService({
   function sendNotFoundPage(res) {
     let html;
     try { html = fs.readFileSync(path.join(webRoot, 'home', 'not-found.html')); } catch { return plain(res, 404, 'not found'); }
-    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    // Like every HTML page: no framing, no type sniffing (PAGE_HEADERS).
+    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...PAGE_HEADERS });
     res.end(html);
   }
   /**
@@ -688,10 +727,11 @@ export async function startService({
     const tenant = parts[3] ?? '';
     const rest = parts.slice(4);
     if (!TENANT_RE.test(tenant)) return fail(res, 404, 'not found');
+    if (tenant !== 'default' && noTenants) return fail(res, 404, 'not found');
     const admin = has(p, 'admin');
-    // Status: your own tenant with read; any tenant with admin.
+    // Status: your own tenant with read; any tenant only with an admin token of tenant default.
     if (rest.length === 1 && rest[0] === 'status') {
-      if (!ownsTenant(p, tenant) && !admin) return fail(res, 404, 'not found');
+      if (!ownsTenant(p, tenant) && !(admin && p.tenant === 'default')) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
       // Another tenant's status (an admin's) never opens its store or takes its lock: only an open
@@ -869,11 +909,14 @@ export async function startService({
       if (typeof body.name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.name)) {
         return fail(res, 400, 'name must be lowercase letters, digits and hyphens');
       }
+      if (saving.has(key)) return fail(res, 409, SAVING);
       if (busy(tenant, id).length) return fail(res, 409, 'The map is still being built, has jobs running, or a chat answer is being written: wait for it, then save.');
-      // The map's id changes: end its streams and drop its engine first.
-      await drop(key);
-      builds.delete(key);
+      // The map's id changes: end its streams and drop its engine first. While it is saving,
+      // nothing may open a new handler on the old id (handlerFor and the routes below answer 409).
+      saving.add(key);
       try {
+        await drop(key);
+        builds.delete(key);
         const saved = store.save(id, body.name, { actor: p.actor });
         try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
         return json(res, 200, { ok: true, id: saved, viewUrl: `${mapBase(tenant, saved)}/view` });
@@ -883,6 +926,8 @@ export async function startService({
         // Never say whether another map holds the name (it may be one this caller cannot see).
         if (/already exists/.test(msg)) return fail(res, 409, 'That name is not available.');
         return fail(res, 400, msg);
+      } finally {
+        saving.delete(key);
       }
     }
     // The map's own routes: today's /api/* under its base, and their /v1 names.
@@ -891,8 +936,14 @@ export async function startService({
     const apiPath = isApi ? `/${sub}` : alias[sub];
     if (apiPath) {
       const stream = apiPath === '/api/events' && (method === 'GET' || method === 'HEAD');
+      if (saving.has(key)) return fail(res, 409, SAVING);
       if (stream && !holdLong(p, res)) return fail(res, 429, `This token already has ${maxStreamsPerToken} open streams and waits.`);
       const h = await handlerFor(tenant, id);
+      if (!h) {
+        if (saving.has(key)) return fail(res, 409, SAVING);
+        if (!mapExists(tenant, id)) return fail(res, 404, 'not found');
+        return fail(res, 503, 'The map was busy changing: try again.', { 'Retry-After': '1' });
+      }
       const principal = publicPrincipal(p, tenant);
       const handled = await h.handleApi(req, res, apiPath, query, {
         // Re-checked on every ping and before every event sent: the token (or session), its current

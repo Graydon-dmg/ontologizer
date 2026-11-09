@@ -420,9 +420,13 @@ ontologizer serve                      # http://127.0.0.1:8787/, loopback only, 
 ontologizer serve --open               # the same, and opens the maps home in your browser
 ```
 
-**The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar.
+**The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar, and the logo at the top bar's left opens a menu with **All maps** and **New map**.
 
 **Tokens.** To listen on anything other than loopback (`--host 0.0.0.0`, a LAN address), create a token first; `serve` refuses to start without one.
+
+**Open mode is for this machine only.** With no tokens, the server trusts that nothing but this machine can reach its port. Never expose it through a reverse proxy, a tunnel (`ssh -R`, ngrok) or a port forward: create a token first. The server does refuse requests that carry proxy headers, but that is a safety net, not a lock.
+
+**Use HTTPS beyond this machine.** The server speaks plain HTTP, so tokens and the sign-in cookie cross the network unencrypted. On a non-loopback `--host`, `serve` prints a warning saying so. Put it behind a reverse proxy that serves HTTPS (see below), or keep it on `127.0.0.1`.
 
 ```bash
 ontologizer token create --name laptop                    # scopes read,build; tenant default
@@ -431,6 +435,8 @@ ontologizer token list                                    # names, tenants, scop
 ontologizer token revoke ci                               # takes effect at once, even while serving
 ontologizer status                                        # home, tenants, tokens, running server
 ```
+
+Revoking a token ends its browser sessions and event streams on its next request. An answer the model is already writing finishes.
 
 A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps only its SHA-256 hash. In the browser, the home asks for the token once and keeps a session cookie. Scripts send `Authorization: Bearer <token>`. Opening a map link while signed out takes you to the home to sign in, then back to the map. Scopes are a ladder, each including the ones before it: `read` (list, view, events, wait, status), `ask` (ask the map: it calls the model and saves the conversation), `build` (check, build, node actions, save), `admin` (every tenant's status and the server's paths).
 
@@ -452,7 +458,7 @@ A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps o
 | `GET /v1/t/<tenant>/status` | Tenant, store, map count, tokens (names and scopes) |
 | `GET /v1/health/live`, `/v1/health/ready` | Health checks (no token) |
 
-`--max-builds` (default 2) caps builds running at once; more wait in a queue, at most `--max-queued` (default 10) per tenant, started in turn across tenants. `--max-checks` (default 4) caps context checks at once. Past a limit the server answers 429. Fuse from a map page makes the fused draft a new map on the same server. A map cannot be named `tenants` (that folder holds the other tenants).
+`--max-builds` (default 2) caps builds running at once; more wait in a queue, at most `--max-queued` (default 10) per tenant, started in turn across tenants. `--max-checks` (default 4) caps context checks at once. Past a limit the server answers 429. These caps limit new-map builds only. A `build` token can still start research, explain, fuse and rosetta jobs, and an `ask` token can chat, all on your Anthropic credits. Give `build` or `ask` only to people you trust with your API spend. Fuse from a map page makes the fused draft a new map on the same server. A map cannot be named `tenants` (that folder holds the other tenants).
 
 **Behind a reverse proxy**, create a token first, then pass `--allow-host <name>` (or set `ONTOLOGIZER_ALLOW_HOST=name1,name2`) for the name the proxy forwards. Without tokens, `serve` refuses `--allow-host`, and refuses any request that came through a proxy: an open server is for this machine only. If the proxy sends `X-Forwarded-Proto: https`, the sign-in cookie is marked `Secure`. While it runs, `serve` writes `<home>/serve.json` (pid, URL, start time, auth mode) and removes it on exit (Ctrl-C or SIGTERM). A server started without tokens stays open until restarted, even if you create one meanwhile; `ontologizer status` and the Server panel say "tokens found: restart serve to require them".
 
@@ -461,10 +467,10 @@ A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps o
 ```bash
 docker build -t ontologizer .
 docker run --rm -v "$PWD/data:/data" ontologizer token create --name me
-docker run -p 8787:8787 -e ANTHROPIC_API_KEY -v "$PWD/data:/data" ontologizer
+docker run -p 127.0.0.1:8787:8787 -e ANTHROPIC_API_KEY -v "$PWD/data:/data" ontologizer
 ```
 
-Behind a proxy, add `-e ONTOLOGIZER_ALLOW_HOST=maps.example.com`.
+`-p 127.0.0.1:8787:8787` publishes the port to this machine only. To reach it from elsewhere, put an HTTPS reverse proxy in front and add `-e ONTOLOGIZER_ALLOW_HOST=maps.example.com`.
 
 Service mode never asks for an API key. Without one, the server still runs, and a build fails with "No Anthropic API key" on the map.
 

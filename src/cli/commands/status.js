@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openStore, TENANT_RE } from '../../core/store.js';
+import { openStore, listTenants, tenantsIsMap, TENANTS_MAP_WARNING } from '../../core/store.js';
 import { readTokens, tokensPath, publicRows } from '../../server/tokens.js';
 import { CliError } from '../deps.js';
 import { findConfig, loadConfig, portNames } from '../../server/config.js';
@@ -33,17 +33,6 @@ function readServer(home) {
   return null;
 }
 
-/** @param {string} home */
-function tenantNames(home) {
-  const names = ['default'];
-  try {
-    for (const e of fs.readdirSync(path.join(home, 'tenants'), { withFileTypes: true })) {
-      if (e.isDirectory() && TENANT_RE.test(e.name) && e.name !== 'default') names.push(e.name);
-    }
-  } catch { /* no tenants dir */ }
-  return [...names.slice(0, 1), ...names.slice(1).sort()];
-}
-
 /** @param {string} home @param {string} tenant */
 function countMaps(home, tenant) {
   // Do not create a home or tenant dir just to count zero.
@@ -62,7 +51,8 @@ export default {
   handler: async (/** @type {any} */ argv) => {
     const deps = argv.deps;
     const home = resolveHome(argv, deps);
-    const tenants = tenantNames(home).map((tenant) => ({ tenant, maps: countMaps(home, tenant) }));
+    if (tenantsIsMap(home)) deps.stderr.write(`ontologizer: ${TENANTS_MAP_WARNING}\n`);
+    const tenants = listTenants(home).map((tenant) => ({ tenant, maps: countMaps(home, tenant) }));
     let tokens;
     try {
       tokens = publicRows(readTokens(tokensPath(home)));

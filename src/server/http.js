@@ -21,6 +21,16 @@ export const TYPES = {
   '.map': 'application/json; charset=utf-8',
 };
 
+/**
+ * Sent on every HTML page (both servers): no other site may frame it (clickjacking a paid build or
+ * chat), and the browser must not guess another content type.
+ */
+export const PAGE_HEADERS = Object.freeze({
+  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+});
+
 /** @param {import('node:http').ServerResponse} res @param {number} code @param {any} obj @param {Record<string, string|string[]>} [headers] */
 export function json(res, code, obj, headers = {}) {
   const body = JSON.stringify(obj);
@@ -40,9 +50,11 @@ export async function sendFile(res, abs) {
     const st = await fs.promises.stat(abs);
     if (!st.isFile()) return plain(res, 404, 'not found');
     const data = await fs.promises.readFile(abs);
+    const ext = path.extname(abs).toLowerCase();
     res.writeHead(200, {
-      'Content-Type': TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream',
+      'Content-Type': TYPES[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
+      ...(ext === '.html' || ext === '.htm' ? PAGE_HEADERS : {}),
     });
     res.end(data);
   } catch {
@@ -79,7 +91,7 @@ export async function sendPage(res, webRoot, file, base = '') {
     const tag = `<script type="importmap">${map.trim()}</script>`;
     html = html.split('<!--importmap-->').join(tag);
     if (base) html = html.split('<meta name="ontologizer-base" content="">').join(`<meta name="ontologizer-base" content="${attr(base)}">`);
-    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store' });
+    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store', ...PAGE_HEADERS });
     return res.end(html);
   } catch {
     return plain(res, 404, 'not found');

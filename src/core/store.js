@@ -118,6 +118,34 @@ function rowVisibility(row, onto) {
 /** Valid tenant names: 'default' is the home itself; others live under <home>/tenants/<tenant>/. */
 export const TENANT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+/** Said by serve and status when <home>/tenants is a map, not the tenants folder. */
+export const TENANTS_MAP_WARNING = "a map named 'tenants' exists; rename it to use multiple tenants";
+
+/** @param {string} [home] */
+const homeDir = (home) => home ?? process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer');
+
+/**
+ * Whether <home>/tenants is a saved map from before service mode (it holds events.jsonl). Then it
+ * stays a map: no tenants are read from it and nothing is ever written inside it.
+ * @param {string} [home]
+ */
+export function tenantsIsMap(home) {
+  return fs.existsSync(path.join(homeDir(home), 'tenants', 'events.jsonl'));
+}
+
+/** The tenants of a home: 'default' first, then the folders under <home>/tenants/, sorted. @param {string} [home] */
+export function listTenants(home) {
+  if (tenantsIsMap(home)) return ['default'];
+  /** @type {string[]} */
+  const names = [];
+  try {
+    for (const e of fs.readdirSync(path.join(homeDir(home), 'tenants'), { withFileTypes: true })) {
+      if (e.isDirectory() && TENANT_RE.test(e.name) && e.name !== 'default') names.push(e.name);
+    }
+  } catch { /* no tenants folder */ }
+  return ['default', ...names.sort()];
+}
+
 /**
  * @param {string} [home]
  * @param {{ tenant?: string, repair?: boolean, log?: (line: string) => void }} [opts]
@@ -128,7 +156,8 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
   if (typeof tenant !== 'string' || !TENANT_RE.test(tenant)) {
     throw new Error(`Invalid tenant "${tenant}": use lowercase letters, digits and hyphens (at most 63 characters).`);
   }
-  const base = home ?? process.env.ONTOLOGIZER_HOME ?? path.join(os.homedir(), '.ontologizer');
+  const base = homeDir(home);
+  if (tenant !== 'default' && tenantsIsMap(base)) throw new Error(`Cannot open tenant "${tenant}": ${TENANTS_MAP_WARNING}.`);
   const root = tenant === 'default' ? base : path.join(base, 'tenants', tenant);
   fs.mkdirSync(root, { recursive: true });
   const indexFile = path.join(root, 'index.json');

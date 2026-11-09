@@ -1,6 +1,9 @@
 # Service mode in a container: `ontologizer serve` on 0.0.0.0:8787 with the maps in /data.
 # It refuses to start without tokens (by design): create one first, into the same /data:
 #   docker run --rm -v "$PWD/data:/data" ontologizer token create --name me
+# The server speaks plain HTTP: tokens and cookies are unencrypted on the wire. Publish the port on
+# loopback only and put an HTTPS reverse proxy in front (name its host with ONTOLOGIZER_ALLOW_HOST):
+#   docker run -p 127.0.0.1:8787:8787 -v "$PWD/data:/data" ontologizer
 FROM node:22-slim
 
 ENV NODE_ENV=production \
