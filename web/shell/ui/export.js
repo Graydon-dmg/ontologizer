@@ -2,7 +2,7 @@
 // "Export" in the top bar: the page's side of `ontologizer export`. It runs the same exportMap on the
 // map the page is showing; the page and embed formats inline the built bundle from /dist/embed.js.
 import { exportMap, estimateTokens } from '../../../src/core/export/index.js';
-import { placeList } from '../dropdown.js';
+import { keepFitted } from './fit.js';
 
 /** The menu items, in order. `id` is the element id; `#export-context` is "Copy for an agent". */
 export const EXPORT_ITEMS = /** @type {const} */ ([
@@ -12,24 +12,15 @@ export const EXPORT_ITEMS = /** @type {const} */ ([
   { id: 'export-context', label: 'Copy for an agent', format: 'context', action: 'copy' },
 ]);
 
-/** Popovers keep this far from every edge of the window. */
-export const EDGE = 8;
-
 /**
- * Where the menu goes: under its button (above it when there is no room), fully inside the window
- * with an EDGE margin. The shell's placeList keeps 4 px from the edges, so it runs in a frame
- * shrunk by the difference. `pop` is the menu's size after capping it to the window.
- * @param {{ left: number, top: number, bottom: number, width: number }} btn
- * @param {{ width: number, height: number }} pop
- * @param {{ w: number, h: number }} vp
+ * The box the menu opens from: the button's columns, but the whole top bar's bottom, so the menu
+ * opens under every row of a wrapped bar instead of over the rows below the button.
+ * @param {{ left: number, right: number, top: number, bottom: number }} btn
+ * @param {{ bottom: number }|null} bar
  */
-export function placeMenu(btn, pop, vp) {
-  const d = EDGE - 4;
-  const shifted = { left: btn.left - d, top: btn.top - d, bottom: btn.bottom - d, width: btn.width };
-  // Right-align the menu with its button, as the stylesheet did, then let placeList clamp it.
-  shifted.left = btn.left + btn.width - pop.width - d;
-  const p = placeList(shifted, pop, { w: vp.w - 2 * d, h: vp.h - 2 * d }, 6);
-  return { left: p.left + d, top: p.top + d };
+export function menuAnchor(btn, bar) {
+  const bottom = bar ? Math.max(btn.bottom, bar.bottom) : btn.bottom;
+  return { left: btn.left, right: btn.right, width: btn.right - btn.left, top: btn.top, bottom, height: bottom - btn.top };
 }
 
 /** The context pack size the menu copies, in estimated tokens. */
@@ -158,19 +149,15 @@ export function mountExport(el, shell) {
     list.append(b);
   }
 
-  // Placed in window coordinates, so a narrow window or a wrapped top bar never pushes it off
-  // an edge; capped to the window, with its own scroll; placed again on resize.
-  const place = () => {
-    if (pop.hidden) return;
-    Object.assign(pop.style, {
-      position: 'fixed', right: 'auto', boxSizing: 'border-box',
-      maxWidth: `${innerWidth - 2 * EDGE}px`, maxHeight: `${innerHeight - 2 * EDGE}px`, overflowY: 'auto',
-    });
-    const p = placeMenu(btn.getBoundingClientRect(), { width: pop.offsetWidth, height: pop.offsetHeight }, { w: innerWidth, h: innerHeight });
-    pop.style.left = `${p.left}px`;
-    pop.style.top = `${p.top}px`;
-  };
-  addEventListener('resize', place);
+  // The shell's placement for top-bar panels: fixed, inside the window with an 8 px margin, capped
+  // with its own scroll, placed again on resize (and below, when its status line changes).
+  // Anchored under the whole top bar, not just the button: on a narrow window the bar wraps to
+  // several rows, and a menu opened mid-bar would cover the buttons on the rows below.
+  const bar = el.closest('#topbar');
+  const anchor = /** @type {HTMLElement} */ (/** @type {unknown} */ ({
+    getBoundingClientRect: () => menuAnchor(btn.getBoundingClientRect(), bar ? bar.getBoundingClientRect() : null),
+  }));
+  const place = keepFitted(pop, anchor, { align: 'right' });
   /** A status line changes the menu's height: place it again. @param {string} text */
   const say = (text) => { msg.textContent = text; place(); };
   const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
