@@ -15,7 +15,10 @@ import { api } from './base.js';
 /**
  * @param {{ search?: string, speed?: number, fetch?: typeof fetch, EventSource?: any,
  *           setTimeout?: (fn: () => void, ms: number) => any, base?: string,
- *           jobDelayMs?: number, reconnectMs?: number, actMs?: number }} [params]
+ *           jobDelayMs?: number, reconnectMs?: number, actMs?: number,
+ *           checkAccess?: () => Promise<boolean> }} [params]
+ * checkAccess (service mode only): after the stream drops, whether the page may still read the map.
+ *   false means it is signed out (a 401): the status becomes 'signed-out' and it stops retrying.
  */
 export function createSource(params = {}) {
   const search = params.search ?? (globalThis.location ? globalThis.location.search : '');
@@ -49,20 +52,20 @@ export function createSource(params = {}) {
     }
   }
 
-  /** @type {'connecting'|'live'|'lost'} */
+  /** @type {'connecting'|'live'|'lost'|'signed-out'} */
   let status = 'connecting';
   /** @type {Set<(s: string) => void>} */
   const statusListeners = new Set();
-  /** @param {'connecting'|'live'|'lost'} s */
+  /** @param {'connecting'|'live'|'lost'|'signed-out'} s */
   const setStatus = (s) => {
-    if (s === status) return;
+    if (s === status || status === 'signed-out') return; // signed out is final until the page reloads
     status = s;
     for (const fn of statusListeners) { try { fn(s); } catch (err) { console.error(err); } }
   };
 
   const common = {
     snapshot: () => ontology,
-    /** 'connecting' | 'live' | 'lost' (server mode: the event stream's state) */
+    /** 'connecting' | 'live' | 'lost' | 'signed-out' (server mode: the event stream's state) */
     status: () => status,
     /** @param {(s: string) => void} fn */
     onStatus(fn) { statusListeners.add(fn); return () => { statusListeners.delete(fn); }; },
@@ -133,8 +136,20 @@ export function createSource(params = {}) {
     es.onerror = () => {
       setStatus('lost');
       if (es) es.close();
-      if (!closed) later(open, reconnectMs);
+      if (closed) return;
+      if (!params.checkAccess) { later(open, reconnectMs); return; }
+      // Service mode: a stream that ended because the token was revoked or the session ended
+      // would only fail again. Ask once; signed out stops the retries.
+      Promise.resolve().then(params.checkAccess).then(
+        (ok) => { if (ok === false) signOut(); else if (!closed) later(open, reconnectMs); },
+        () => { if (!closed) later(open, reconnectMs); },
+      );
     };
+  };
+  const signOut = () => {
+    closed = true;
+    if (es) es.close();
+    setStatus('signed-out');
   };
   open();
   return {
@@ -163,9 +178,12 @@ export function createSource(params = {}) {
       }
       let body = null;
       try { body = await res.json(); } catch { body = null; }
+      if (res.status === 401 && params.checkAccess) signOut();
       if (!res.ok) return { ok: false, error: (body && body.error) || `HTTP ${res.status}` };
       return body || { ok: true };
     },
+    /** Service mode: the page lost access (a 401 anywhere). Stops the stream and its retries. */
+    signOut() { if (params.checkAccess) signOut(); },
     /** Drop the event stream and resume from the last folded event. */
     reconnect() { if (es) es.close(); open(); },
     close() { closed = true; if (es) es.close(); },

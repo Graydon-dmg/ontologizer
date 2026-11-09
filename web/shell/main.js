@@ -23,7 +23,8 @@ import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests } from './explain.js';
-import { TENANT } from './base.js';
+import { TENANT, api } from './base.js';
+import { connBanner, stillSignedIn } from './conn.js';
 import { mountServerPanel } from './ui/server.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -41,7 +42,11 @@ const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.get
 }
 
 const layout = createGraphLayout({ width: innerWidth, height: innerHeight });
-const source = createSource({ search: location.search });
+// Service mode: a dropped stream first asks whether the page is still signed in (a 401 stops it).
+const source = createSource({
+  search: location.search,
+  ...(TENANT ? { checkAccess: () => stillSignedIn(fetch, api('/api/snapshot')) } : {}),
+});
 
 /** @type {Map<string, Set<Function>>} */
 const handlers = new Map();
@@ -189,6 +194,17 @@ setInterval(() => {
   let t = null;
   const show = (/** @type {string} */ s) => {
     clearTimeout(t);
+    if (s === 'signed-out') {
+      // Service mode only: access was lost (a 401). Offer sign-in, coming back to this page.
+      const b = /** @type {any} */ (connBanner(s, location.pathname));
+      const a = document.createElement('a');
+      a.href = b.link.href;
+      a.textContent = b.link.text;
+      a.style.color = 'inherit';
+      banner.replaceChildren(b.text, a);
+      banner.hidden = false;
+      return;
+    }
     if (s === 'lost') t = setTimeout(() => { banner.hidden = false; }, 1500);
     else banner.hidden = true;
   };

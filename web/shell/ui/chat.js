@@ -4,7 +4,7 @@ import {
   emptyAnswer, applyChatItem, suggestionAction, researchBusy, scaleSize, pickEncoding, MAX_IMAGES,
 } from '../chat.js';
 import { renderMarkdown } from '../chat-render.js';
-import { api } from '../base.js';
+import { api, TENANT } from '../base.js';
 
 /** The Chat pane (in the side panel) and the top-bar "Chat" button.
  * @param {HTMLElement} el  #chat @param {any} shell */
@@ -146,6 +146,8 @@ export function mountChat(el, shell) {
     paint();
     const r = await postChat(fetch, body, (item) => { live = applyChatItem(/** @type {any} */ (live), item); paint(); });
     busy = false; send.disabled = false;
+    // Service mode: a 401 here is this page's sign-in, not the API key.
+    if (r.status === 401 && TENANT && shell.source.signOut) shell.source.signOut();
     if (!r.ok) {
       live = null; pendingText = '';
       err.textContent = r.error || 'The question could not be sent.';
