@@ -100,7 +100,8 @@ export function readSse(url, p, n, headers = {}, timeoutMs = 5000) {
       res.on('data', (c) => {
         buf += c;
         let i;
-        while ((i = buf.indexOf('\n\n')) >= 0) {
+        // Stop at exactly n: one chunk can carry many events (newer Node versions deliver bigger chunks).
+        while (events.length < n && (i = buf.indexOf('\n\n')) >= 0) {
           const msg = buf.slice(0, i); buf = buf.slice(i + 2);
           if (msg.startsWith('data: ')) events.push(JSON.parse(msg.slice(6)));
         }
