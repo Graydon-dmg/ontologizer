@@ -3,6 +3,8 @@
 // map the page is showing; the page and embed formats inline the built bundle from /dist/embed.js.
 import { exportMap, estimateTokens } from '../../../src/core/export/index.js';
 import { keepFitted } from './fit.js';
+import { openConnectPanel } from './connect.js';
+import { TENANT } from '../base.js';
 
 /** The menu items, in order. `id` is the element id; `#export-context` is "Copy for an agent". */
 export const EXPORT_ITEMS = /** @type {const} */ ([
@@ -11,6 +13,12 @@ export const EXPORT_ITEMS = /** @type {const} */ ([
   { id: 'export-json', label: 'Download JSON', format: 'json', action: 'download' },
   { id: 'export-context', label: 'Copy for an agent', format: 'context', action: 'copy' },
 ]);
+
+/** The last menu item opens the Connect panel instead of exporting. */
+export const CONNECT_ITEM = /** @type {const} */ ({ id: 'connect-agent', label: 'Connect an agent…', action: 'connect' });
+
+/** Everything the menu shows: the four exports, then Connect an agent. */
+export const MENU_ITEMS = /** @type {const} */ ([...EXPORT_ITEMS, CONNECT_ITEM]);
 
 /**
  * The box the menu opens from: the button's columns, but the whole top bar's bottom, so the menu
@@ -138,14 +146,17 @@ export function mountExport(el, shell) {
   pop.append(head, list, msg);
   el.append(btn, pop);
 
-  for (const item of EXPORT_ITEMS) {
+  for (const item of MENU_ITEMS) {
     const b = document.createElement('button');
     b.type = 'button';
     b.id = item.id;
     b.className = 'fuse-item';
     b.setAttribute('role', 'menuitem');
     b.textContent = item.label;
-    b.addEventListener('click', () => run(item));
+    b.addEventListener('click', () => {
+      if (item.action === 'connect') { close(); openConnectPanel(menuAnchorEl, { service: TENANT !== null, opener: btn }); return; }
+      run(/** @type {any} */ (item));
+    });
     list.append(b);
   }
 
@@ -157,6 +168,7 @@ export function mountExport(el, shell) {
   const anchor = /** @type {HTMLElement} */ (/** @type {unknown} */ ({
     getBoundingClientRect: () => menuAnchor(btn.getBoundingClientRect(), bar ? bar.getBoundingClientRect() : null),
   }));
+  const menuAnchorEl = anchor;
   const place = keepFitted(pop, anchor, { align: 'right' });
   /** A status line changes the menu's height: place it again. @param {string} text */
   const say = (text) => { msg.textContent = text; place(); };
@@ -166,7 +178,7 @@ export function mountExport(el, shell) {
   pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); btn.focus(); } });
   document.addEventListener('mousedown', (e) => { if (!pop.hidden && !el.contains(/** @type {Node} */ (e.target))) close(); }, true);
 
-  /** @param {typeof EXPORT_ITEMS[number]} item */
+  /** @param {{ format: 'html'|'embed'|'json'|'context' }} item */
   async function run(item) {
     say('Working…');
     try {
