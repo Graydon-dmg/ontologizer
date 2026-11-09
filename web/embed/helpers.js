@@ -55,10 +55,14 @@ export function nodeDetails(ontology, id) {
   const seen = new Set();
   for (const s of [...(n.sources || []), ...(a && a.sources ? a.sources : [])]) {
     if (!s) continue;
-    const key = String(s.url || '');
+    // A source ref (a document from a configured source) reads "<source> · <title or ref>", as in the
+    // live page's details panel, and is told apart by source and ref (many have no url).
+    const isRef = typeof s.source === 'string';
+    const key = isRef ? `ref\u0000${s.source}\u0000${s.ref}` : String(s.url || '');
     if (seen.has(key)) continue;
     seen.add(key);
-    sources.push({ title: String(s.title || s.url || ''), href: safeHref(s.url) });
+    const title = isRef ? `${s.source} · ${s.title || s.ref || ''}` : String(s.title || s.url || '');
+    sources.push({ title, href: safeHref(s.url) });
   }
   const childCount = Object.values(ontology.nodes).filter((x) => x.parent === id).length;
   const collapsed = !!(ontology.view && Array.isArray(ontology.view.collapsed) && ontology.view.collapsed.includes(id));
