@@ -54,6 +54,17 @@ export async function handler(argv) {
   if (!Number.isInteger(maxChecks) || maxChecks < 1 || maxChecks > 64) throw new CliError('--max-checks must be a whole number from 1 to 64.', 1);
   const maxStores = Number(argv.maxStores);
   if (!Number.isInteger(maxStores) || maxStores < 1 || maxStores > 1024) throw new CliError('--max-stores must be a whole number from 1 to 1024.', 1);
+  /** @param {string} flag @param {unknown} v @returns {number|null} */
+  const limitOf = (flag, v) => {
+    if (v === undefined) return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1) throw new CliError(`${flag} must be a positive whole number.`, 1);
+    return n;
+  };
+  const limitCalls = limitOf('--limit-calls', argv.limitCalls);
+  const limitTokens = limitOf('--limit-tokens', argv.limitTokens);
+  const buildTimeoutMin = Number(argv.buildTimeout ?? 15);
+  if (!Number.isInteger(buildTimeoutMin) || buildTimeoutMin < 1 || buildTimeoutMin > 1440) throw new CliError('--build-timeout must be a whole number of minutes from 1 to 1440.', 1);
   /** @type {string|null} */
   let tokensFile = null;
   if (argv.tokens !== undefined) {
@@ -88,11 +99,12 @@ export async function handler(argv) {
   try {
     srv = await startService({
       home, host, port, tokensFile, allowHosts, maxBuilds, maxQueued, maxChecks, maxStores,
+      limitCalls, limitTokens, buildTimeoutMs: buildTimeoutMin * 60000,
       watchTokensFile: tokensPath(home),
       version: await packageVersion(),
       // A missing API key fails the model call (shown on the map), never the server.
       config, configPath,
-      makeEngine: ({ store, id, clientFor }) => engineFor({ deps, store, id, needKey: false, ...(clientFor ? { clientFor } : {}) }),
+      makeEngine: ({ store, id, clientFor, meter }) => engineFor({ deps, store, id, needKey: false, ...(clientFor ? { clientFor } : {}), ...(meter ? { meter } : {}) }),
       log: (line) => deps.stderr.write(`${line}\n`),
     });
   } catch (err) {
@@ -121,6 +133,10 @@ export async function handler(argv) {
 
   const n = countMaps(home);
   deps.stdout.write(`Serving ${n} ${n === 1 ? 'map' : 'maps'} at ${srv.url}  (Ctrl-C to stop)\n`);
+  if (limitCalls !== null || limitTokens !== null) {
+    const parts = [...(limitCalls !== null ? [`${limitCalls} model calls`] : []), ...(limitTokens !== null ? [`${limitTokens} tokens`] : [])];
+    deps.stdout.write(`Daily limits per tenant: ${parts.join(', ')} (UTC day; counted, not priced).\n`);
+  }
   if (config) deps.stdout.write(`Config: ${configPath}\n`);
   if (!isLoopback(host)) {
     deps.stdout.write(`Listening on ${host}: every /v1/t/ route needs a token.\n`);
@@ -160,6 +176,9 @@ export default {
     .option('max-queued', { type: 'number', default: 10, describe: 'Builds that may wait per tenant; more get 429' })
     .option('max-checks', { type: 'number', default: 4, describe: 'Context checks at once; more get 429' })
     .option('max-stores', { type: 'number', default: 16, describe: 'Tenants with a store open at once (a Postgres store holds connections); keep it well below the database\'s max_connections' })
+    .option('limit-calls', { type: 'number', describe: 'Model calls per tenant per UTC day; more get 429 (default: no limit)' })
+    .option('limit-tokens', { type: 'number', describe: 'Tokens (in + out) per tenant per UTC day; more get 429 (default: no limit)' })
+    .option('build-timeout', { type: 'number', default: 15, describe: 'Minutes a build may run before it is stopped (1 to 1440)' })
     .option('allow-host', { type: 'string', array: true, describe: 'Extra Host name to accept behind a reverse proxy (needs tokens); repeatable. Also ONTOLOGIZER_ALLOW_HOST=a,b' })
     .option('config', { type: 'string', describe: 'Config file (ontologizer.config.js); default: ONTOLOGIZER_CONFIG, else <home>/ontologizer.config.js. It runs as code.' })
     .option('open', { type: 'boolean', default: false, describe: 'Open the maps home in a browser' })

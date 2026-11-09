@@ -14,9 +14,10 @@ import { startServer } from '../server/index.js';
  * The key only ever goes into the SDK client object.
  * clientFor: the model port from a config (service mode). With it, every model call gets its client
  *   from the port; the default client is still made, unused, so nothing else changes.
- * @param {{ deps: import('./deps.js').Deps, store: any, id: string, needKey: boolean, clientFor?: any }} opts
+ * @param {{ deps: import('./deps.js').Deps, store: any, id: string, needKey: boolean, clientFor?: any, meter?: (client: any) => any }} opts
+ * meter: wraps every model client the engine gets (usage counting, limits, the build timeout).
  */
-export async function engineFor({ deps, store, id, needKey, clientFor = null }) {
+export async function engineFor({ deps, store, id, needKey, clientFor = null, meter = null }) {
   let client;
   try {
     const { key } = await getApiKey({
@@ -37,7 +38,9 @@ export async function engineFor({ deps, store, id, needKey, clientFor = null }) 
       throw new CliError(/** @type {Error} */ (e).message, 1); // a refused ANTHROPIC_BASE_URL
     }
   }
-  return loadEngine({ store, id, client, env: deps.env, ...(clientFor ? { clientFor } : {}) });
+  const metered = meter ? meter(client) : client;
+  const portFor = clientFor && meter ? (/** @type {any} */ o) => meter(clientFor(o)) : clientFor;
+  return loadEngine({ store, id, client: metered, env: deps.env, ...(portFor ? { clientFor: portFor } : {}) });
 }
 
 /** Turn an SDK 401 into the contract message; rethrow anything else. @param {unknown} err */
