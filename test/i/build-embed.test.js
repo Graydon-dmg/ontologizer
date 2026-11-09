@@ -87,7 +87,7 @@ function scriptProblems(pkg) {
   const builds = (/** @type {string|undefined} */ cmd) => typeof cmd === 'string' && /^(node scripts\/build-embed\.js|npm run build)( |$)/.test(cmd);
   for (const name of ['check', 'check:i', 'dev', 'prepack']) if (!builds(s[name])) problems.push(`"${name}" does not build the bundle first`);
   if (s.build !== 'node scripts/build-embed.js') problems.push('"build" is not node scripts/build-embed.js');
-  if (pkg.devDependencies?.esbuild !== '0.24.2') problems.push('esbuild is not pinned to exactly 0.24.2');
+  if (pkg.devDependencies?.esbuild !== '0.28.2') problems.push('esbuild is not pinned to exactly 0.28.2');
   if (pkg.exports?.['./export'] !== './src/core/export/index.js') problems.push('no "./export" in exports');
   return problems;
 }
