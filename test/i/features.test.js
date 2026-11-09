@@ -23,12 +23,15 @@ async function registered() {
 }
 
 /**
+ * A button is "in the page" when its id is in the page's HTML, or is a quoted string in a module the
+ * page loads (a menu item the shell renders, e.g. `id: 'export-context'`).
  * @param {Array<{ id: string, epic: string, cli: string, ui: { page: string, id: string } }>} features
  * @param {Set<string>} commands
  * @param {(page: string) => string|null} readPage
+ * @param {(page: string) => string} [readModules] the text of the modules the page loads
  * @returns {string[]}
  */
-function featureProblems(features, commands, readPage) {
+function featureProblems(features, commands, readPage, readModules = () => '') {
   const problems = [];
   const ids = new Set();
   for (const f of features) {
@@ -38,10 +41,33 @@ function featureProblems(features, commands, readPage) {
     if (!commands.has(f.cli)) problems.push(`${f.id}: command "${f.cli}" is not registered`);
     const html = readPage(f.ui?.page);
     if (html === null) problems.push(`${f.id}: page ${f.ui?.page} does not exist`);
-    else if (!new RegExp(`\\bid=["']${f.ui.id}["']`).test(html)) problems.push(`${f.id}: no element #${f.ui.id} in ${f.ui.page}`);
+    else if (!new RegExp(`\\bid=["']${f.ui.id}["']`).test(html) && !new RegExp(`['"\`]${f.ui.id}['"\`]`).test(readModules(f.ui.page))) {
+      problems.push(`${f.id}: no element #${f.ui.id} in ${f.ui.page}`);
+    }
   }
   return problems;
 }
+
+/** @param {string} dir @returns {string[]} */
+function jsUnder(dir) {
+  /** @type {string[]} */
+  const out = [];
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) out.push(...jsUnder(p));
+    else if (e.name.endsWith('.js')) out.push(fs.readFileSync(p, 'utf8'));
+  }
+  return out;
+}
+
+/** The modules a page loads: the shell's, and the page's own folder's. @param {string} page */
+const readModules = (page) => {
+  const root = new URL('.', ROOT).pathname;
+  const own = page.split('/').slice(0, -1).join('/');
+  return [...jsUnder(`${root}web/shell`), ...(own && own !== 'web' ? jsUnder(`${root}${own}`) : [])].join('\n');
+};
 
 /** @param {string} page */
 const readPage = (page) => {
@@ -51,7 +77,7 @@ const readPage = (page) => {
 test('every feature has a registered command and its button in its page', async () => {
   const commands = await registered();
   assert.ok(FEATURES.length >= 3);
-  assert.deepEqual(featureProblems(FEATURES, commands, readPage), []);
+  assert.deepEqual(featureProblems(FEATURES, commands, readPage, readModules), []);
   for (const id of ['serve', 'status', 'token']) assert.ok(FEATURES.some((f) => f.id === id && f.epic === 'I1'), id);
   // The map page has the Server panel's mount point too (shown in service mode only).
   assert.match(fs.readFileSync(new URL('web/index.html', ROOT), 'utf8'), /<div id="server-panel" hidden><\/div>/);
@@ -60,7 +86,11 @@ test('every feature has a registered command and its button in its page', async 
 test('planted faults: a feature row with a missing button, or an unregistered command, is reported', async () => {
   const commands = await registered();
   const missingButton = [{ id: 'x', epic: 'I1', cli: 'serve', ui: { page: 'web/home/index.html', id: 'no-such-button' } }];
-  assert.deepEqual(featureProblems(missingButton, commands, readPage), ['x: no element #no-such-button in web/home/index.html']);
+  assert.deepEqual(featureProblems(missingButton, commands, readPage, readModules), ['x: no element #no-such-button in web/home/index.html']);
+  // A button the shell renders counts (its id is a quoted string in a shell module); a missing one does not.
+  const rendered = [{ id: 'r', epic: 'I4', cli: 'serve', ui: { page: 'web/index.html', id: 'menu-only' } }];
+  assert.deepEqual(featureProblems(rendered, commands, readPage, () => "const ITEMS = [{ id: 'menu-only' }];"), []);
+  assert.equal(featureProblems(rendered, commands, readPage, () => "const ITEMS = [{ id: 'other' }];").length, 1);
   const missingCommand = [{ id: 'y', epic: 'I1', cli: 'nope', ui: { page: 'web/home/index.html', id: 'new-map' } }];
   assert.deepEqual(featureProblems(missingCommand, commands, readPage), ['y: command "nope" is not registered']);
   const missingPage = [{ id: 'z', epic: 'I1', cli: 'serve', ui: { page: 'web/nope.html', id: 'new-map' } }];
