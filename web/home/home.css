@@ -23,7 +23,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visib
 .map-root { color: var(--muted); font-size: 12px; }
 .map-draft { font-size: 10px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; opacity: .8; }
 dialog { background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
-  border-radius: 10px; padding: 16px; width: min(480px, calc(100vw - 32px)); box-sizing: border-box; }
+  border-radius: 10px; padding: 16px; width: min(480px, calc(100vw - 32px)); box-sizing: border-box;
+  max-height: calc(100vh - 16px); overflow: auto; }
 dialog::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparent); }
 dialog h2 { margin: 0 0 10px; font-size: 15px; color: var(--fg); text-transform: none; letter-spacing: 0; }
 dialog form { display: flex; flex-direction: column; gap: 10px; }

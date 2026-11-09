@@ -1,5 +1,6 @@
 // @ts-check
 import { panelRows, tokenLines, NO_TOKENS, HELP, failureText, noteText } from '../server-panel.js';
+import { keepFitted } from './fit.js';
 
 const STYLE_ID = 'server-panel-style';
 const CSS = `
@@ -7,7 +8,7 @@ const CSS = `
   border: 1px solid var(--muted); background: var(--panel); color: var(--fg); }
 .server-btn[aria-expanded="true"] { background: var(--fg); color: var(--bg); }
 #server-panel.server-pop-host { position: relative; }
-.server-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; width: 300px; box-sizing: border-box; padding: 10px;
+.server-pop { position: fixed; z-index: 25; width: 300px; box-sizing: border-box; padding: 10px; overflow: auto;
   background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 8px; }
 .server-pop[hidden] { display: none; }
 .server-body { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
@@ -126,12 +127,15 @@ export function mountServerPanel(el, opts) {
   pop.append(body);
   el.append(btn, pop);
 
+  // Fixed beside the button, always inside the window (re-placed on resize and when it fills in).
+  const place = keepFitted(pop, btn);
   const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
   btn.addEventListener('click', () => {
     if (!pop.hidden) { close(); return; }
     pop.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
-    load();
+    place();
+    load().then(place, place);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { close(); btn.focus(); } });
   document.addEventListener('pointerdown', (e) => { if (!pop.hidden && !el.contains(/** @type {Node} */ (e.target))) close(); });
