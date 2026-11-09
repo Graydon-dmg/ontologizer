@@ -1,5 +1,6 @@
 // @ts-check
 // Chat logic (no DOM): safe light markdown, citations, starters, images, the streamed answer.
+import { api } from './base.js';
 
 /** @typedef {{ t: 'text', v: string } | { t: 'b', c: Inline[] } | { t: 'i', c: Inline[] } | { t: 'code', v: string }
  *   | { t: 'link', href: string, c: Inline[] } | { t: 'cite', id: string }} Inline */
@@ -309,7 +310,7 @@ export function chatErrorText(status, error) {
 export async function postChat(fetchFn, body, onItem, o = {}) {
   let res;
   try {
-    res = await fetchFn(`${o.base || ''}/api/chat`, {
+    res = await fetchFn(o.base ? `${o.base}/api/chat` : api('/api/chat'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
       body: JSON.stringify(body),

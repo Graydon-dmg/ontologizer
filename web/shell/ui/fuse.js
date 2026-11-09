@@ -1,5 +1,7 @@
 // @ts-check
 import { fuseCandidates, slugName, submitFuse } from '../fuse.js';
+import { api } from '../base.js';
+import { keepFitted } from './fit.js';
 
 /** "Fuse" in the top bar: pick another saved map, optionally name the result, open it in a new tab.
  * @param {HTMLElement} el @param {any} shell */
@@ -91,7 +93,7 @@ export function mountFuse(el, shell) {
   const load = async () => {
     list.replaceChildren(Object.assign(document.createElement('p'), { className: 'fuse-empty', textContent: 'Loading your maps…' }));
     try {
-      const res = await fetch('/api/maps');
+      const res = await fetch(api('/api/maps'));
       maps = res.ok ? await res.json() : [];
       if (!res.ok) hint.textContent = `Could not list your maps (HTTP ${res.status}).`;
     } catch {
@@ -102,15 +104,18 @@ export function mountFuse(el, shell) {
     render();
   };
 
+  // Fixed beside the button, always inside the window (re-placed on resize and as the list fills in).
+  const place = keepFitted(pop, btn);
   const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
   const open = () => {
     pop.hidden = false; btn.setAttribute('aria-expanded', 'true');
     picked = null; search.value = ''; name.value = ''; hint.textContent = '';
-    load(); search.focus();
+    place();
+    load().then(place, place); search.focus();
   };
   btn.addEventListener('click', () => (pop.hidden ? open() : close()));
   cancel.addEventListener('click', close);
-  search.addEventListener('input', render);
+  search.addEventListener('input', () => { render(); place(); });
   name.addEventListener('input', () => {
     const s = slugName(name.value);
     hint.textContent = name.value.trim() && s !== name.value.trim() ? `Will be saved as "${s || '…'}".` : '';

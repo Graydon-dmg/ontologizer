@@ -88,8 +88,24 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer key [action]` | Show, set or clear the Anthropic API key |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place |
 | `ontologizer completion [shell]` | Print a shell completion script (zsh, bash or fish) |
+| `ontologizer serve` | Service mode: serve every map, build new ones from the browser |
+| `ontologizer status` | Show the home, tenants, tokens and the running server |
+| `ontologizer token create / list / revoke` | Manage access tokens for service mode |
 
 Every command takes `--help`. Full detail is in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md).
+
+## Service mode
+
+`ontologizer serve` runs one server for every map in your home, without opening a browser. Open `http://127.0.0.1:8787/` for the maps home: your maps, a **New map** button, and a read-only **Server** panel. Agents and scripts use the same server over HTTP (`/v1/...`).
+
+It listens on `127.0.0.1` only, unless you create a token and pass `--host`:
+
+```bash
+ontologizer token create --name me          # prints the token once; only its hash is stored
+ontologizer serve --host 0.0.0.0            # every /v1/t/ route now needs the token
+```
+
+`new`, `load` and the one-map page work exactly as before. Details are in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#10-service-mode) and in [SECURITY.md](SECURITY.md#network-mode).
 
 ## Export
 

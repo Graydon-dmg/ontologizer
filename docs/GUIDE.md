@@ -18,6 +18,7 @@ Ontologizer builds a live, color-coded map of any topic with Claude and streams 
 7. [Cost](#7-cost)
 8. [Privacy](#8-privacy)
 9. [Troubleshooting](#9-troubleshooting)
+10. [Service mode](#10-service-mode)
 
 ---
 
@@ -158,6 +159,9 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer key [set\|clear]` | Show, set or clear the Anthropic API key. |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place. |
 | `ontologizer completion [zsh\|bash\|fish]` | Print a shell completion script. |
+| `ontologizer serve [--host] [--port] [--home] [--tokens] [--max-builds] [--allow-host] [--open]` | Service mode: serve every map. See [Service mode](#10-service-mode). |
+| `ontologizer status [--home] [--json]` | The home, tenants, tokens and the running server. |
+| `ontologizer token create\|list\|revoke` | Access tokens for service mode. |
 | `ontologizer --version`, `-h` / `--help` | Version and help. |
 
 ### new
@@ -420,3 +424,63 @@ Doctor exits with an error code only if a row says `fail`.
 **`No current draft to save.`**: `save` only works on a draft; the map may already be saved, or you have not built one.
 
 **Something else broke.** Set `ONTOLOGIZER_DEBUG=1` and run it again to print a stack trace with the error.
+
+---
+
+## 10. Service mode
+
+Service mode is opt-in. `ontologizer serve` runs one server, without a browser, for every map in your home (`~/.ontologizer` or `--home <dir>`). It suits a laptop you leave running, a terminal on another machine, or a Linux host. Nothing about `new`, `load` or the one-map page changes.
+
+```bash
+ontologizer serve                      # http://127.0.0.1:8787/, loopback only, no tokens needed
+ontologizer serve --open               # the same, and opens the maps home in your browser
+```
+
+**The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar, and the logo at the top bar's left opens a menu with **All maps** and **New map**.
+
+**Tokens.** To listen on anything other than loopback (`--host 0.0.0.0`, a LAN address), create a token first; `serve` refuses to start without one.
+
+```bash
+ontologizer token create --name laptop                    # scopes read,build; tenant default
+ontologizer token create --name ci --scopes read          # read-only
+ontologizer token list                                    # names, tenants, scopes, created dates
+ontologizer token revoke ci                               # takes effect at once, even while serving
+ontologizer status                                        # home, tenants, tokens, running server
+```
+
+A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps only its SHA-256 hash. In the browser, the home asks for the token once and keeps a session cookie. Scripts send `Authorization: Bearer <token>`. Opening a map link while signed out takes you to the home to sign in, then back to the map. Scopes are a ladder, each including the ones before it: `read` (list, view, events, wait, status), `ask` (ask the map: it calls the model and saves the conversation), `build` (check, build, node actions, save), `admin` (every tenant's status and the server's paths).
+
+**Tenants.** A token belongs to one tenant (`--tenant`, default `default`). The `default` tenant is your home itself; any other tenant's maps live under `<home>/tenants/<tenant>/`. A token never sees another tenant's maps.
+
+**The HTTP API** (every route under `/v1/t/<tenant>/` needs a token when tokens are loaded):
+
+| Route | What it does |
+|---|---|
+| `GET /v1/t/<tenant>/maps` | The maps |
+| `POST /v1/t/<tenant>/maps/check` `{ context, answers? }` | The context check: `{ ready, brief?, name?, questions? }` |
+| `POST /v1/t/<tenant>/maps` `{ brief, name?, depth? }` | Start a build: 202 `{ id, viewUrl, eventsUrl }` at once |
+| `GET /v1/t/<tenant>/maps/<id>/wait?timeout=ms` | Waits until the map is idle: `{ state, jobs }` |
+| `GET /v1/t/<tenant>/maps/<id>/snapshot` | The map as JSON |
+| `GET /v1/t/<tenant>/maps/<id>/events?from=n` | The event stream (server-sent events) |
+| `POST /v1/t/<tenant>/maps/<id>/actions` | A node action, as the page sends it |
+| `POST /v1/t/<tenant>/maps/<id>/save` `{ name }` | Save a draft under a name |
+| `GET /v1/t/<tenant>/maps/<id>/view` | The map page |
+| `GET /v1/t/<tenant>/status` | Tenant, store, map count, tokens (names and scopes) |
+| `GET /v1/health/live`, `/v1/health/ready` | Health checks (no token) |
+
+`--max-builds` (default 2) caps builds running at once; more wait in a queue, at most `--max-queued` (default 10) per tenant, started in turn across tenants. `--max-checks` (default 4) caps context checks at once. Past a limit the server answers 429. Fuse from a map page makes the fused draft a new map on the same server. A map cannot be named `tenants` (that folder holds the other tenants).
+
+**Behind a reverse proxy**, create a token first, then pass `--allow-host <name>` (or set `ONTOLOGIZER_ALLOW_HOST=name1,name2`) for the name the proxy forwards. Without tokens, `serve` refuses `--allow-host`, and refuses any request that came through a proxy: an open server is for this machine only. If the proxy sends `X-Forwarded-Proto: https`, the sign-in cookie is marked `Secure`. While it runs, `serve` writes `<home>/serve.json` (pid, URL, start time, auth mode) and removes it on exit (Ctrl-C or SIGTERM). A server started without tokens stays open until restarted, even if you create one meanwhile; `ontologizer status` and the Server panel say "tokens found: restart serve to require them".
+
+**In a container.** The repository has a `Dockerfile` (`node:22-slim`, a non-root user, maps in `/data`, `serve --host 0.0.0.0`). It refuses to start until `/data` has a token:
+
+```bash
+docker build -t ontologizer .
+docker run --rm -v "$PWD/data:/data" ontologizer token create --name me
+docker run -p 8787:8787 -e ANTHROPIC_API_KEY -v "$PWD/data:/data" ontologizer
+```
+
+Behind a proxy, add `-e ONTOLOGIZER_ALLOW_HOST=maps.example.com`.
+
+Service mode never asks for an API key. Without one, the server still runs, and a build fails with "No Anthropic API key" on the map.
+

@@ -1,11 +1,14 @@
 // @ts-check
-// Every Epic I feature has a command and a button on the localhost page (issue #1).
-// `cli` is the yargs command name; `ui.id` is an element id on `ui.page` (in its html, or rendered
-// by the shell modules that page loads).
-/** @typedef {{ id: string, epic: string, cli: string, ui: { page: string, id: string } }} Feature */
+// Every Epic I feature, with its CLI command and its button on the localhost page (issue #1: "any new
+// features have a button on the localhost and a command-line function"). test/i/features.test.js
+// fails if a command is not registered or a button's element id is not in its page.
+// `cli` is the yargs command name; `ui.id` is an element id in `ui.page`.
 
-/** @type {Feature[]} */
 export const FEATURES = [
+  { id: 'serve',   epic: 'I1', cli: 'serve',   ui: { page: 'web/home/index.html', id: 'new-map' } },
+  { id: 'status',  epic: 'I1', cli: 'status',  ui: { page: 'web/home/index.html', id: 'server-panel' } },
+  { id: 'token',   epic: 'I1', cli: 'token',   ui: { page: 'web/home/index.html', id: 'server-tokens' } },
+  { id: 'new-map-from-map', epic: 'I1', cli: 'serve', ui: { page: 'web/index.html', id: 'brand-menu' } },
   { id: 'export', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export' } },
   { id: 'export-context', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export-context' } },
 ];

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ontologizer</title>
+<link rel="icon" href="/shared/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/shared/brand/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/shared/brand/apple-touch-icon.png">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--importmap-->
+<link rel="stylesheet" href="/shell/shell.css">
+<link rel="stylesheet" href="/shell/panels.css">
+<link rel="stylesheet" href="/shell/controls.css">
+<link rel="stylesheet" href="/home/home.css">
+<script type="module" src="/home/main.js"></script>
+</head>
+<body>
+<header class="home-bar">
+  <span class="brand-mark" aria-hidden="true"><img class="brand-dark" src="/shared/brand/symbol-dark.svg" alt="" width="22" height="22"><img class="brand-light" src="/shared/brand/symbol-light.svg" alt="" width="22" height="22"></span>
+  <h1>Ontologizer</h1>
+  <button type="button" id="new-map" class="primary">New map</button>
+</header>
+<main class="home">
+  <section aria-labelledby="maps-h">
+    <h2 id="maps-h">Maps</h2>
+    <p id="maps-msg" class="muted" role="status"></p>
+    <ul id="maps-list" class="maps-list"></ul>
+  </section>
+  <section aria-labelledby="server-h">
+    <h2 id="server-h">Server</h2>
+    <div id="server-panel" hidden>
+      <ul id="server-tokens"></ul>
+    </div>
+  </section>
+</main>
+
+<dialog id="signin-dialog" aria-labelledby="signin-h">
+  <form id="signin-form" method="dialog">
+    <h2 id="signin-h">Sign in</h2>
+    <label for="signin-token">Access token</label>
+    <input id="signin-token" type="password" autocomplete="off" required>
+    <p id="signin-msg" class="msg" role="alert"></p>
+    <div class="row"><button type="submit" class="primary" id="signin-go">Sign in</button></div>
+  </form>
+</dialog>
+
+<dialog id="new-dialog" aria-labelledby="new-h">
+  <form id="new-form" method="dialog">
+    <h2 id="new-h">New map</h2>
+    <div id="step-context">
+      <label for="new-context">What do you want to explore, and why?</label>
+      <textarea id="new-context" rows="4"></textarea>
+    </div>
+    <div id="step-questions" hidden></div>
+    <div id="step-confirm" hidden></div>
+    <p id="new-msg" class="msg" role="alert"></p>
+    <div class="row">
+      <button type="button" id="new-cancel">Cancel</button>
+      <button type="submit" id="new-go" class="primary">Continue</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>
