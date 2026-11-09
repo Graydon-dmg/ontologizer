@@ -89,9 +89,13 @@ ontologizer serve [--host 127.0.0.1] [--port 8787] [--home <dir>] [--tokens <fil
     Serves every map in the home. Never opens a browser unless --open.
     Tokens: --tokens <file>, else <home>/tokens.json if it exists. A file with no rows is no tokens.
     A --host that is not loopback (127.0.0.1, ::1, localhost) with no tokens loaded:
-      exit 1, "Refusing to listen on <host> without tokens: create one with `ontologizer token create`, or pass --tokens."
+      exit 1, "Refusing to listen on <host>: no tokens in <home>/tokens.json. Create one with
+               `ontologizer token create --name <name> --home <home>`, then run serve again with the same --home."
+    --tokens <value> that starts with ont_ or is not an existing file: exit 1, "--tokens takes the path of a tokens
+      file, not a token. Tokens live in <home>/tokens.json (made by `ontologizer token create`); serve finds them
+      there on its own." The value given is never echoed.
     --allow-host (or ONTOLOGIZER_ALLOW_HOST=a,b) with no tokens loaded:
-      exit 1, "Refusing --allow-host without tokens: a server behind a proxy must require tokens. ..."
+      exit 1, "Refusing --allow-host: no tokens in <home>/tokens.json, and a server behind a proxy must require tokens. ..."
     Writes <home>/serve.json { pid, url, startedAt, auth: "open"|"tokens" } while running; removes it on exit.
     Prints: "Serving <n> maps at <url>  (Ctrl-C to stop)". Ctrl-C and SIGTERM stop it gracefully.
     An unhandled rejection is logged as one line ("an operation failed in the background: ...") and never stops the server.
@@ -103,6 +107,7 @@ ontologizer status [--home <dir>] [--json]
 
 ontologizer token create --name <name> [--tenant default] [--scopes read,build] [--home <dir>]
     Prints the new token once ("ont_" + 43 base64url chars). Stores only its SHA-256 in <home>/tokens.json.
+    Ends with "Start the server with: ontologizer serve --home <home> --host 0.0.0.0" (no --home for the default home).
 ontologizer token list [--home <dir>] [--json]       names, tenants, scopes, created dates
 ontologizer token revoke <name> [--home <dir>]
     (One yargs command, `token [action] [target]`; `token` alone prints usage and exits 1.)
@@ -198,6 +203,7 @@ export const TENANT = /* the tenant in a service-mode BASE, else null */;
 - **W2 · Router.** `src/server/service.js` with auth, the routes above, the engine registry with idle eviction, async build with per-tenant queues, `wait`, save, in-process fuse, the limits, the proxy rule; the shared handlers refactor of `src/server/index.js` into `map.js` and `http.js`, with event streams that end when their token or session does.
 - **W3 · `serve` command.** Flags, the network-bind and `--allow-host` refusals, `serve.json`, graceful shutdown (stop accepting, end streams and chats, flush stores), the unhandled-rejection guard, `Dockerfile` (`node:22-slim`, non-root user, `ONTOLOGIZER_HOME=/data`, `serve --host 0.0.0.0`, which refuses without tokens by design).
 - **W4 · Maps home and New map.** `web/home/`: the map list (name, root, nodes, updated), a **New map** button opening a dialog: context textarea → `check` → its questions as option buttons plus "Other" text → `check` again with the answers so far (up to three rounds, as the CLI) → `build` → go to `viewUrl`. A token form when the server answers 401; after sign-in, back to `?next=` if it is a map page. Uses `web/shared/tokens.js` for every color and the shell's CSS. Request and round logic in `web/home/flow.js` (no DOM).
+- **Every I1 panel stays inside the window.** The Server popover is fixed beside its button and placed by `fitPanel` (`web/shell/fit.js`): an 8 px margin, width and height capped (scrolling inside) when the window is smaller, re-placed on resize. The New map and sign-in dialogs cap their height and scroll.
 - **W5 · Server panel.** `web/shell/ui/server.js`: a read-only panel from `/v1/t/:tenant/status` (tenant, store, auth mode and its note, map count, version, tokens by name and scopes). Mounted on the home page and, in service mode, on the map page (a top-bar button `#server-panel`). Hidden on the one-map server.
 - **W6 · Base path.** `web/shell/base.js` and every `/api/` call in `web/shell/` through `api()`.
 - **W7 · Docs and features.** `src/features.js` rows for I1, `test/i/features.test.js`, README and GUIDE sections, SECURITY.md "Network mode".
@@ -223,6 +229,8 @@ export const TENANT = /* the tenant in a service-mode BASE, else null */;
 | The map name `tenants` is refused in every tenant. | A store that allows it. |
 | Build queue cap per tenant (429), round-robin start order, check slots (429), idle eviction, streams per token (429), sessions per token. | No cap; a FIFO queue; no eviction. |
 | A browser `GET .../view` without a session gets 302 to `/?next=`; API requests keep 401. | A server that redirects every unauthenticated request. |
+| `fitPanel` keeps a floating panel inside the window (8 px margin) at every size and anchor. | A placement that ignores the left edge. |
+| The refusal names the home and the exact `token create --home` command; `--tokens` given a token says what it takes; `token create` ends with the serve command. | A message that echoes the token. |
 | `test/a` to `test/h` pass unchanged. | (Their own planted faults.) |
 
 ## Try it
