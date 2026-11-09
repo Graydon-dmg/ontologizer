@@ -8,7 +8,7 @@ import { fold } from '../../src/core/events.js';
 import { feedLayout } from '../shell/feed.js';
 import { viewStateToApply, applyViewState } from '../shell/viewstate.js';
 import { readMapData } from './data.js';
-import { searchNodes, safeHref, nodeDetails, toggleCollapsed } from './helpers.js';
+import { searchNodes, safeHref, nodeDetails, toggleCollapsed, revealPatch } from './helpers.js';
 
 const TAG = 'ontologizer-map';
 const MARGIN = 12;
@@ -193,12 +193,14 @@ class OntologizerMap extends Base {
     input.setAttribute('aria-label', 'Search the map');
     input.addEventListener('input', () => {
       const ids = searchNodes(this.onto, input.value);
+      this.reveal(ids);
       if (this.view) this.view.highlight(ids);
     });
     input.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
       const first = searchNodes(this.onto, input.value)[0];
       if (!first) return;
+      this.reveal([first]);
       this.dispatch({ t: 'view.changed', at: 0, patch: { focus: first } });
       this.showDetails(first);
     });
@@ -222,6 +224,16 @@ class OntologizerMap extends Base {
     live.name = 'live';
     bar.append(live);
     return bar;
+  }
+
+  /**
+   * Open the collapsed branches that hold any of these nodes, so a search match is drawn where it
+   * is highlighted. Clearing the search leaves them open.
+   * @param {string[]} ids
+   */
+  reveal(ids) {
+    const patch = revealPatch(this.onto, ids);
+    if (patch) this.dispatch({ t: 'view.changed', at: 0, patch });
   }
 
   /** Label for the toggle: the view it would switch to. */

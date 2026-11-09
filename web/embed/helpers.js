@@ -1,5 +1,6 @@
 // @ts-check
 // Pure helpers for the embedded map: search, safe links, the details model. No DOM.
+import { ancestorsToExpand } from '../shell/search.js';
 
 /** @typedef {any} Ontology the snapshot shape, see src/core/schema.js */
 
@@ -82,4 +83,16 @@ export function nodeDetails(ontology, id) {
 export function toggleCollapsed(collapsed, id) {
   const list = Array.isArray(collapsed) ? collapsed : [];
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+}
+
+/**
+ * The view patch that opens the collapsed branches holding any of these nodes, or null when none
+ * is hidden. A search uses it so its matches are drawn where they are highlighted.
+ * @param {Ontology} ontology @param {string[]} ids
+ * @returns {{ collapsed: string[] }|null}
+ */
+export function revealPatch(ontology, ids) {
+  const collapsed = (ontology.view && Array.isArray(ontology.view.collapsed)) ? ontology.view.collapsed : [];
+  const open = ancestorsToExpand(ontology, ids, collapsed);
+  return open.length ? { collapsed: collapsed.filter((/** @type {string} */ c) => !open.includes(c)) } : null;
 }
