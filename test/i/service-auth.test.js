@@ -276,6 +276,23 @@ test('the Host check: foreign Host is refused; --allow-host lets a proxy name in
   } finally { await srv.close(); }
 });
 
+test('bound to every interface, this machine\'s own IP addresses are accepted as Host; other IPs are not', async (t) => {
+  const os = await import('node:os');
+  const ip = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)?.address;
+  if (!ip) { t.skip('no non-loopback IPv4 address'); return; }
+  const { srv } = await boot({ host: '0.0.0.0', tokens: [{ name: 'me' }] });
+  try {
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `${ip}:${srv.port}` } })).status, 200);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `203.0.113.7:${srv.port}` } })).status, 403);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `rebind.example:${srv.port}` } })).status, 403);
+  } finally { await srv.close(); }
+  // Bound to loopback, the machine's other addresses are refused.
+  const lo = await boot();
+  try {
+    assert.equal((await req(lo.srv.url, '/v1/health/live', { headers: { host: `${ip}:${lo.srv.port}` } })).status, 403);
+  } finally { await lo.srv.close(); }
+});
+
 test('without tokens (loopback only) everything is open, as the one-map server is; a foreign Origin is still refused', async () => {
   const { srv, home, origin } = await boot();
   try {

@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { resolveVendorPath } from '../core/vendor.js';
 import { openStore, TENANT_RE } from '../core/store.js';
 import { readTokens, checkToken } from './tokens.js';
@@ -189,7 +190,10 @@ export async function startService({
     const bare = name.replace(/^\[|\]$/g, '');
     if (bare === host.replace(/^\[|\]$/g, '')) return true;
     // Bound to loopback or every interface: the loopback names reach it too.
-    return (isLoopback(host) || wildcard) && LOOPBACK.includes(bare);
+    if ((isLoopback(host) || wildcard) && LOOPBACK.includes(bare)) return true;
+    // Bound to every interface: this machine's own addresses, as IP literals (a DNS-rebinding page
+    // can only send a host name, never one of these).
+    return wildcard && ownAddresses().includes(bare);
   }
   /** @param {http.IncomingMessage} req */
   function originMatches(req) {
@@ -472,6 +476,13 @@ export async function startService({
       await done;
     },
   };
+}
+
+/** This machine's interface addresses (lowercase), for a server bound to every interface. */
+function ownAddresses() {
+  try {
+    return Object.values(os.networkInterfaces()).flat().map((a) => String(a?.address ?? '').toLowerCase().replace(/%.*$/, '')).filter(Boolean);
+  } catch { return []; }
 }
 
 /** @param {string|null} file @returns {string} */
