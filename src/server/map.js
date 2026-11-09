@@ -21,12 +21,13 @@ function sleep(ms, c) {
  * @param {{ store: any, engine: any, id: string, replay?: null | { speed: number },
  *   openDraft?: null | ((draftId: string) => Promise<DraftServer>),
  *   originOk?: (origin: string|undefined) => boolean,
- *   chatTimeouts?: { idleMs?: number, totalMs?: number } }} opts
+ *   chatTimeouts?: { idleMs?: number, totalMs?: number }, pingMs?: number }} opts
  * openDraft makes a fused draft reachable and says where (the one-map server starts a second server;
  * the service router answers with the draft's view URL). Without it, fuse is refused.
  * originOk decides the Origin of POST /api/action and /api/chat (default: any).
+ * pingMs is the event stream's keep-alive interval (tests make it short).
  */
-export function createMapHandler({ store, engine, id, replay = null, openDraft = null, originOk = () => true, chatTimeouts = {} }) {
+export function createMapHandler({ store, engine, id, replay = null, openDraft = null, originOk = () => true, chatTimeouts = {}, pingMs = PING_MS }) {
   /** @type {Set<import('node:http').ServerResponse>} */
   const sseClients = new Set();
   let closed = false;
@@ -49,8 +50,12 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
   /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
   const readBody = (req, res) => readJsonBody(req, res);
 
-  /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {number} from */
-  function sse(req, res, from) {
+  /**
+   * @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {number} from
+   * @param {() => boolean} valid whether the caller may still read (checked on every ping and before every
+   *   event; false ends the stream: a revoked token or an expired session stops receiving at once)
+   */
+  function sse(req, res, from, valid = () => true) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -64,7 +69,11 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     let live = false;
     let nextIdx = from;
     /** @param {any} ev */
-    const send = (ev) => { if (!conn.gone) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+    const send = (ev) => {
+      if (conn.gone) return;
+      if (!valid()) { cleanup(); res.end(); return; }
+      res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    };
     /** @param {any} ev */
     const sendLive = (ev) => send(ev);
     liveSenders.add(sendLive);
@@ -78,7 +87,11 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       if (!live) { buffer.push([ev, idx]); return; }
       if (idx >= nextIdx) { nextIdx = idx + 1; send(ev); }
     });
-    const ping = setInterval(() => { if (!conn.gone) res.write(': ping\n\n'); }, PING_MS);
+    const ping = setInterval(() => {
+      if (conn.gone) return;
+      if (!valid()) { cleanup(); res.end(); return; }
+      res.write(': ping\n\n');
+    }, pingMs);
     const cleanup = () => {
       if (conn.gone) return;
       conn.gone = true;
@@ -326,6 +339,8 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
 
   // One chat request in flight per map (per server).
   let chatBusy = false;
+  /** The response of the chat in flight, so close() can stop it. @type {import('node:http').ServerResponse|null} */
+  let chatRes = null;
 
   /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
   async function chat(req, res) {
@@ -344,6 +359,7 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     if (ctype !== 'application/json') return refuse(415, 'Content-Type must be application/json.');
     if (chatBusy) return refuse(409, 'A chat answer is already being written for this map: wait for it to finish.');
     chatBusy = true;
+    chatRes = res;
     try {
       let raw;
       try {
@@ -371,6 +387,7 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       await relayAsk({ engine, req, res, input, ...chatTimeouts });
     } finally {
       chatBusy = false;
+      chatRes = null;
     }
   }
 
@@ -380,8 +397,9 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
    * answered, false when the path is not one of these routes (the caller answers 404).
    * @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res
    * @param {string} rawPath @param {URLSearchParams} query
+   * @param {{ valid?: () => boolean }} [o] valid: whether the caller may still read an event stream
    */
-  async function handleApi(req, res, rawPath, query) {
+  async function handleApi(req, res, rawPath, query, o = {}) {
     const method = req.method || 'GET';
     if (rawPath === '/api/action' || rawPath === '/api/chat') {
       if (method !== 'POST') { plain(res, 405, 'method not allowed'); return true; }
@@ -422,7 +440,7 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     if (rawPath === '/api/snapshot') { json(res, 200, store.read(id)); return true; }
     if (rawPath === '/api/events') {
       const from = Math.max(0, Number.parseInt(query.get('from') || '0', 10) || 0);
-      sse(req, res, from);
+      sse(req, res, from, o.valid);
       return true;
     }
     return false;
@@ -432,11 +450,14 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     handleApi,
     /** The streams open on this map right now. */
     streams: () => sseClients.size,
-    /** End every stream and close any draft servers started for fuses. */
+    /** Whether a chat answer is being written right now (it appends to the map). */
+    chatting: () => chatBusy,
+    /** End every stream, stop a chat in flight, and close any draft servers started for fuses. */
     async close() {
       if (closed) return;
       closed = true;
       for (const r of sseClients) r.end();
+      if (chatRes) chatRes.destroy(); // the relay aborts the model call
       await Promise.all([...children].map((c) => c.close().catch(() => {})));
       children.clear();
     },

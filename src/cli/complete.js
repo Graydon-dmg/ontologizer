@@ -13,7 +13,7 @@ const FLAGS = {
   fuse: ['--into'],
   rosetta: ['--as', '--name'],
   research: ['--general'],
-  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--allow-host', '--open'],
+  serve: ['--host', '--port', '--home', '--tokens', '--max-builds', '--max-queued', '--max-checks', '--allow-host', '--open'],
   status: ['--home', '--json'],
   token: ['--name', '--tenant', '--scopes', '--home', '--json'],
 };

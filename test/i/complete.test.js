@@ -11,7 +11,7 @@ function completionProblems(c) {
     [['token', ''], ['create', 'list', 'revoke']],
     [['token', 'r'], ['revoke']],
     [['serve', '--h'], ['--host', '--home']],
-    [['serve', '--max'], ['--max-builds']],
+    [['serve', '--max'], ['--max-builds', '--max-queued', '--max-checks']],
     [['status', '--j'], ['--json']],
     [['token', 'create', '--sc'], ['--scopes']],
   ]);

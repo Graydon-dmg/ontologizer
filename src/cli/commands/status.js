@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openStore, TENANT_RE } from '../../core/store.js';
 import { readTokens, tokensPath, publicRows } from '../../server/tokens.js';
 import { CliError } from '../deps.js';
+import { TOKENS_FOUND_NOTE } from '../../server/service.js';
 
 /** @param {any} argv @param {any} deps @returns {string} */
 export function resolveHome(argv, deps) {
@@ -26,7 +27,7 @@ function alive(pid) {
 function readServer(home) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(home, 'serve.json'), 'utf8'));
-    if (j && alive(j.pid)) return { url: String(j.url), pid: j.pid, startedAt: j.startedAt ?? null };
+    if (j && alive(j.pid)) return { url: String(j.url), pid: j.pid, startedAt: j.startedAt ?? null, auth: j.auth === 'open' || j.auth === 'tokens' ? j.auth : null };
   } catch { /* no server file */ }
   return null;
 }
@@ -67,8 +68,10 @@ export default {
       throw new CliError(err.message, 1);
     }
     const server = readServer(home);
+    // A server that started open stays open until restarted, even after tokens are created.
+    const note = server?.auth === 'open' && tokens.length ? TOKENS_FOUND_NOTE : null;
     if (argv.json) {
-      deps.stdout.write(`${JSON.stringify({ home, tenants, tokens, server })}\n`);
+      deps.stdout.write(`${JSON.stringify({ home, tenants, tokens, server, ...(note ? { note } : {}) })}\n`);
       return;
     }
     const out = [`Home: ${home}`, 'Tenants:'];
@@ -78,7 +81,8 @@ export default {
       out.push('Tokens:');
       for (const t of tokens) out.push(`  ${t.name}  tenant ${t.tenant}  scopes ${t.scopes.join(',')}`);
     }
-    out.push(server ? `Server: running at ${server.url} (pid ${server.pid})` : 'Server: not running');
+    out.push(server ? `Server: running at ${server.url} (pid ${server.pid})${server.auth ? `, auth: ${server.auth}` : ''}` : 'Server: not running');
+    if (note) out.push(`Note: ${note}`);
     deps.stdout.write(`${out.join('\n')}\n`);
   },
 };

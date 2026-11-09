@@ -38,6 +38,10 @@ export async function handler(argv) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new CliError('--port must be a whole number from 0 to 65535.', 1);
   const maxBuilds = Number(argv.maxBuilds);
   if (!Number.isInteger(maxBuilds) || maxBuilds < 1 || maxBuilds > 64) throw new CliError('--max-builds must be a whole number from 1 to 64.', 1);
+  const maxQueued = Number(argv.maxQueued);
+  if (!Number.isInteger(maxQueued) || maxQueued < 0 || maxQueued > 1000) throw new CliError('--max-queued must be a whole number from 0 to 1000.', 1);
+  const maxChecks = Number(argv.maxChecks);
+  if (!Number.isInteger(maxChecks) || maxChecks < 1 || maxChecks > 64) throw new CliError('--max-checks must be a whole number from 1 to 64.', 1);
   /** @type {string|null} */
   let tokensFile = null;
   if (argv.tokens !== undefined) {
@@ -46,13 +50,18 @@ export async function handler(argv) {
   } else if (fs.existsSync(tokensPath(home))) {
     tokensFile = tokensPath(home);
   }
-  const allowHosts = (Array.isArray(argv.allowHost) ? argv.allowHost : argv.allowHost ? [argv.allowHost] : []).map(String);
+  // --allow-host (repeatable) and ONTOLOGIZER_ALLOW_HOST (comma-separated, for containers).
+  const allowHosts = [
+    ...(Array.isArray(argv.allowHost) ? argv.allowHost : argv.allowHost ? [argv.allowHost] : []),
+    ...String(deps.env.ONTOLOGIZER_ALLOW_HOST ?? '').split(','),
+  ].map((h) => String(h).trim()).filter(Boolean);
   fs.mkdirSync(home, { recursive: true });
 
   let srv;
   try {
     srv = await startService({
-      home, host, port, tokensFile, allowHosts, maxBuilds,
+      home, host, port, tokensFile, allowHosts, maxBuilds, maxQueued, maxChecks,
+      watchTokensFile: tokensPath(home),
       version: await packageVersion(),
       // A missing API key fails the model call (shown on the map), never the server.
       makeEngine: ({ store, id }) => engineFor({ deps, store, id, needKey: false }),
@@ -66,8 +75,14 @@ export async function handler(argv) {
     throw new CliError(e?.message ?? String(err), 1);
   }
 
+  // One stray rejection (a model call finishing after its map was renamed, say) is logged, never fatal.
+  const onRejection = (/** @type {any} */ reason) => {
+    deps.stderr.write(`ontologizer: an operation failed in the background: ${String(reason?.message ?? reason).split('\n')[0]}\n`);
+  };
+  process.on('unhandledRejection', onRejection);
+
   const serveFile = path.join(home, 'serve.json');
-  writeAtomic(serveFile, { pid: process.pid, url: srv.url, startedAt: new Date().toISOString() });
+  writeAtomic(serveFile, { pid: process.pid, url: srv.url, startedAt: new Date().toISOString(), auth: srv.tokensLoaded ? 'tokens' : 'open' });
   const removeServeFile = () => {
     try {
       const j = JSON.parse(fs.readFileSync(serveFile, 'utf8'));
@@ -98,6 +113,7 @@ export async function handler(argv) {
     await srv.close();
     removeServeFile();
     process.off('exit', removeServeFile);
+    process.off('unhandledRejection', onRejection);
   }
 }
 
@@ -110,7 +126,9 @@ export default {
     .option('home', { type: 'string', describe: 'Store home directory' })
     .option('tokens', { type: 'string', describe: 'Tokens file (default: <home>/tokens.json if it exists)' })
     .option('max-builds', { type: 'number', default: 2, describe: 'Builds that run at once; more wait in a queue' })
-    .option('allow-host', { type: 'string', array: true, describe: 'Extra Host name to accept (behind a reverse proxy); repeatable' })
+    .option('max-queued', { type: 'number', default: 10, describe: 'Builds that may wait per tenant; more get 429' })
+    .option('max-checks', { type: 'number', default: 4, describe: 'Context checks at once; more get 429' })
+    .option('allow-host', { type: 'string', array: true, describe: 'Extra Host name to accept behind a reverse proxy (needs tokens); repeatable. Also ONTOLOGIZER_ALLOW_HOST=a,b' })
     .option('open', { type: 'boolean', default: false, describe: 'Open the maps home in a browser' })
     .option('exit-after', { type: 'number', hidden: true }),
   handler,

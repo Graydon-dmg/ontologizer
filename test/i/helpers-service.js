@@ -36,7 +36,8 @@ export function stubEngine({ store, id }) {
 
 /**
  * @param {{ home?: string, tokens?: Array<{ name: string, tenant?: string, scopes?: string[] }>,
- *   host?: string, allowHosts?: string[], makeEngine?: any, maxBuilds?: number, log?: (l: string) => void }} [o]
+ *   host?: string, allowHosts?: string[], makeEngine?: any, maxBuilds?: number, log?: (l: string) => void,
+ *   maxQueued?: number, maxChecks?: number, maxStreamsPerToken?: number, idleMs?: number, pingMs?: number }} [o]
  */
 export async function boot(o = {}) {
   const home = o.home ?? tempHome();
@@ -48,6 +49,9 @@ export async function boot(o = {}) {
     tokensFile: o.tokens ? tokensPath(home) : null,
     makeEngine: o.makeEngine ?? (async (/** @type {any} */ x) => stubEngine(x)),
     version: 'test', log: o.log,
+    ...(o.maxQueued !== undefined ? { maxQueued: o.maxQueued } : {}), ...(o.maxChecks !== undefined ? { maxChecks: o.maxChecks } : {}),
+    ...(o.maxStreamsPerToken !== undefined ? { maxStreamsPerToken: o.maxStreamsPerToken } : {}),
+    ...(o.idleMs !== undefined ? { idleMs: o.idleMs } : {}), ...(o.pingMs !== undefined ? { pingMs: o.pingMs } : {}),
   });
   return { home, srv, secrets, origin: `http://127.0.0.1:${srv.port}` };
 }

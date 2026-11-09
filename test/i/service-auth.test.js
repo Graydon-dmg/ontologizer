@@ -266,13 +266,18 @@ test('no response, log line or page contains a token secret; tokens.json holds o
   } finally { await srv.close(); }
 });
 
-test('the Host check: foreign Host is refused; --allow-host lets a proxy name in', async () => {
-  const { srv } = await boot({ allowHosts: ['maps.internal'] });
+test('the Host check: foreign Host is refused; loopback names pass on any port; --allow-host lets a proxy name in', async () => {
+  const { srv } = await boot({ allowHosts: ['maps.internal'], tokens: [{ name: 'me' }] });
   try {
     assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: 'evil.example' } })).status, 403);
-    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `127.0.0.1:${srv.port + 1}` } })).status, 403);
-    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `localhost:${srv.port}` } })).status, 200);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `evil.example:${srv.port}` } })).status, 403);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `203.0.113.7:${srv.port}` } })).status, 403);
+    // A container's -p 9000:8787 sends the outside port: loopback names pass on any port.
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: `localhost:${srv.port + 1}` } })).status, 200);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: '127.0.0.1:9000' } })).status, 200);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: '[::1]:9000' } })).status, 200);
     assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: 'maps.internal' } })).status, 200);
+    assert.equal((await req(srv.url, '/v1/health/live', { headers: { host: 'maps.internal:443' } })).status, 200);
   } finally { await srv.close(); }
 });
 
