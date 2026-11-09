@@ -103,7 +103,9 @@ export function mountExport(el, shell) {
     const small = Boolean(band?.matches);
     text.hidden = small;
     /** @type {SVGElement} */ (btn.lastElementChild).style.display = small ? 'block' : 'none';
-    btn.style.padding = small ? '3px 6px' : '';
+    btn.style.padding = small ? '3px 4px' : '';
+    // and sits 4 px from Fuse (the spacing inside a control group) instead of the bar's 8 px
+    el.style.marginLeft = small ? '-4px' : '';
   };
   band?.addEventListener?.('change', fit);
   fit();
