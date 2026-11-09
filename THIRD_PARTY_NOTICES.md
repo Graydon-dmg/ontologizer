@@ -4,11 +4,11 @@
 
 Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the open-source packages below.
 
-- **Installed, not bundled:** npm installs these packages next to Ontologizer; none of their code is copied into this package.
+- **Bundled into exports:** `web/dist/embed.js` copies the d3 code it uses, and `web/dist/embed-3d.js` also `three`, into one file that `ontologizer export --format html` or `embed` puts inside every exported page. Each bundle starts with the full licence text and copyright line of every package it includes.
 - **Served to your browser:** the local web page that `ontologizer` opens serves the d3 packages and `three` to your browser straight from `node_modules`.
 - **Platform binaries:** `@napi-rs/keyring` ships one prebuilt binary per platform; npm installs only the one for your system.
 
-86 packages: MIT 65, ISC 17, Apache-2.0 2, BSD-3-Clause 1, Unlicense 1.
+86 shipped packages: MIT 65, ISC 17, Apache-2.0 2, BSD-3-Clause 1, Unlicense 1. Plus 27 build-only packages (MIT 27), listed under Build tools at the end: never shipped.
 
 ## Packages
 
@@ -700,3 +700,37 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <http://unlicense.org>
 ```
+
+## Build tools: installed for development only, never shipped or bundled
+
+These are development dependencies. They build `web/dist/` from source and are not part of the published package or of any exported page.
+
+| Package | Version | Licence | Copyright |
+|---|---|---|---|
+| @esbuild/aix-ppc64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-arm | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/android-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/darwin-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/darwin-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/freebsd-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/freebsd-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-arm | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-ia32 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-loong64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-mips64el | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-ppc64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-riscv64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-s390x | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/linux-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/netbsd-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/netbsd-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/openbsd-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/openbsd-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/openharmony-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/sunos-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-arm64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-ia32 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| @esbuild/win32-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
+| esbuild | 0.28.2 | MIT | Copyright (c) 2020 Evan Wallace |

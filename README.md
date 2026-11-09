@@ -83,6 +83,7 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer rosetta <map>` | Add a lens that re-explains the map for a persona |
 | `ontologizer explain <name> <node>` | Write an article for one node |
 | `ontologizer research <name> <node>` | Grow the map under one node |
+| `ontologizer export <map> --format <f>` | Export a map: an offline page, an embed, JSON, or a context pack for an agent |
 | `ontologizer update` | Update ontologizer to the latest version |
 | `ontologizer key [action]` | Show, set or clear the Anthropic API key |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place |
@@ -105,6 +106,15 @@ ontologizer serve --host 0.0.0.0            # every /v1/t/ route now needs the t
 ```
 
 The server speaks plain HTTP: beyond this machine, put it behind an HTTPS reverse proxy. `new`, `load` and the one-map page work exactly as before. Details are in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#10-service-mode) and in [SECURITY.md](SECURITY.md#network-mode).
+
+## Export
+
+`ontologizer export <map> --format html` writes one page that shows the map offline: pan, zoom, click a node for its details, collapse, search. Nothing in it loads from the network. `--format embed` gives a fragment to paste into any page, `--format json` the map itself, and `--format context` a short markdown brief of the map (outline, cross-links, insights, thin areas, sources) to hand to an AI agent, trimmed to `--budget` tokens (4000 by default). On the page, the same four are in the **Export** menu; **Copy for an agent** copies the context pack.
+
+```bash
+ontologizer export demo --format html --out demo.html
+ontologizer export demo --format context --budget 1500
+```
 
 ## Requirements
 

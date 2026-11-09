@@ -1,5 +1,5 @@
 // @ts-check
-import { searchNodes } from '../search.js';
+import { searchNodes, ancestorsToExpand } from '../search.js';
 
 /** @param {HTMLElement} el @param {any} shell */
 export function mountSearch(el, shell) {
@@ -20,8 +20,16 @@ export function mountSearch(el, shell) {
     shell.act({ type: 'focus', nodeId: id });
     list.hidden = true;
   };
+  // A match inside a collapsed branch would be highlighted where nothing is drawn: open the
+  // collapsed branches that hold a match. Clearing the search leaves them open.
+  /** @param {string[]} ids */
+  const reveal = (ids) => {
+    const snap = shell.snapshot();
+    for (const nodeId of ancestorsToExpand(snap, ids, snap.view.collapsed)) shell.act({ type: 'expand', nodeId });
+  };
   const refresh = () => {
     const ids = matches();
+    reveal(ids);
     shell.activeView()?.highlight(ids);
     const nodes = shell.snapshot().nodes;
     list.replaceChildren(...ids.slice(0, 8).map((id) => {
@@ -45,4 +53,8 @@ export function mountSearch(el, shell) {
     }
   });
   shell.on('view', () => { if (input.value.trim()) shell.activeView()?.highlight(matches()); });
+  // Once an opened branch is drawn, highlight its matches again so they light up there too.
+  shell.on('event', (/** @type {any} */ d) => {
+    if (d?.event?.t === 'view.changed' && d.event.patch?.collapsed && input.value.trim()) shell.activeView()?.highlight(matches());
+  });
 }

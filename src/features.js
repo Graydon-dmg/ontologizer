@@ -9,4 +9,6 @@ export const FEATURES = [
   { id: 'status',  epic: 'I1', cli: 'status',  ui: { page: 'web/home/index.html', id: 'server-panel' } },
   { id: 'token',   epic: 'I1', cli: 'token',   ui: { page: 'web/home/index.html', id: 'server-tokens' } },
   { id: 'new-map-from-map', epic: 'I1', cli: 'serve', ui: { page: 'web/index.html', id: 'brand-menu' } },
+  { id: 'export', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export' } },
+  { id: 'export-context', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export-context' } },
 ];

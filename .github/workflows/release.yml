@@ -8,6 +8,8 @@ name: release
 # id-token permission. `publish` holds id-token: write but installs no project dependencies,
 # runs no tests and publishes with --ignore-scripts, so a compromised dependency cannot mint
 # the publish token.
+# The export bundle (web/dist/) is built in `verify` by `npm run check` and handed to `publish`
+# as an artifact: publish only receives the file, it never runs a dependency.
 
 on:
   push:
@@ -60,6 +62,14 @@ jobs:
 
       - run: npm run check
 
+      # `npm run check` built the export bundle; publish packs it without building anything.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: embed-bundle
+          path: web/dist/
+          retention-days: 1
+          if-no-files-found: error
+
   publish:
     needs: verify
     runs-on: ubuntu-latest
@@ -85,6 +95,15 @@ jobs:
       # has no install scripts, and this runs before any project dependency is present.
       - name: Upgrade npm
         run: npm install -g --ignore-scripts npm@11.21.2 && npm --version
+
+      # The bundle verify built and tested. Received as files only: nothing is installed or run.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: embed-bundle
+          path: web/dist/
+
+      - name: Check the export bundle arrived
+        run: test -s web/dist/embed.js && test -s web/dist/embed-3d.js
 
       # No `npm ci` here: npm packs straight from the checkout (the package.json `files` list),
       # so this job never downloads or runs a project dependency.
