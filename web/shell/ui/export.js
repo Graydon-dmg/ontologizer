@@ -48,7 +48,9 @@ export function liveLink(href) {
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   const loopback = host === 'localhost' || host.endsWith('.localhost')
     || /^127\.\d+\.\d+\.\d+$/.test(host)
-    || host === '::1' || /^::ffff:(127\.|7f[0-9a-f]{2}:)/.test(host);
+    || host === '::1' || /^::ffff:(127\.|7f[0-9a-f]{2}:)/.test(host)
+    // "Any address" binds: dead links for anyone else.
+    || host === '0.0.0.0' || host === '::' || /^::ffff:(0\.0\.0\.0|0:0)$/.test(host);
   if (loopback) return null;
   return `${u.origin}${u.pathname}`;
 }

@@ -48,7 +48,7 @@ export function mountSearch(el, shell) {
       reveal.now(ids);
       if (ids[0]) go(ids[0]);
     } else if (e.key === 'Escape') {
-      reveal.cancel();
+      reveal.reset();
       input.value = '';
       list.replaceChildren();
       list.hidden = true;

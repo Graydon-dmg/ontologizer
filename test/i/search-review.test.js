@@ -111,3 +111,18 @@ test('planted fault: the old per-keystroke reveal sends the same expands again a
   }
   assert.ok(sent.length > new Set(sent).size, 'the planted version repeats itself');
 });
+
+test('reviewer case: search, clear, close by hand, search again reopens (no pause in between)', () => {
+  let snap = collapsedMap;
+  /** @type {string[]} */
+  const sent = [];
+  const reveal = createReveal({ snapshot: () => snap, act: (a) => { sent.push(a.nodeId); return { ok: true }; }, setTimer: () => 0, clearTimer: () => {} });
+  reveal.now([deep.id]); // search: asks grand and parent to open
+  reveal.schedule([]); // the user clears the search (the expand lands meanwhile, never observed)
+  snap = fold(snap, { t: 'view.changed', at: 0, patch: { collapsed: [grand] } }); // and closes grand by hand
+  reveal.now([deep.id]); // same search again
+  assert.deepEqual(sent, [grand, parent, grand]);
+  reveal.reset(); // Escape also starts fresh
+  reveal.now([deep.id]);
+  assert.deepEqual(sent, [grand, parent, grand, grand]);
+});

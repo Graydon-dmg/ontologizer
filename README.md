@@ -119,13 +119,14 @@ ontologizer export demo --format context --budget 1500
 ## Requirements
 
 - Node 22+
-- An Anthropic API key
+- An Anthropic API key from the [Claude Console](https://console.anthropic.com/). Claude.ai subscription logins (Pro, Max) can't be used: Anthropic's terms keep them for its own apps.
 
 ## Cost and privacy
 
 - Model calls go to Anthropic's API using your own key. A map costs a few cents of API usage; Explain, Research and Sources (in the node menu or as commands), `fuse` and `rosetta` each make extra calls.
 - Maps are stored locally in `~/.ontologizer`.
-- The page is served only on 127.0.0.1 (your own machine).
+- The page is served only on 127.0.0.1 (your own machine). Service mode listens on the network only when you create a token.
+- Exports carry the map's nodes, summaries, articles and sources, never your API key. The page and embed leave out the chat, your original prompt and job errors; JSON leaves out the chat unless you add `--include-chat`.
 
 See [SECURITY.md](https://github.com/Graydon-dmg/ontologizer/blob/main/SECURITY.md).
 

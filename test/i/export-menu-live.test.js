@@ -28,3 +28,7 @@ test('planted fault: passing location.href straight through leaks the query and 
   assert.match(raw('https://h.example/m?token=abc'), /token/);
   assert.doesNotMatch(String(liveLink('https://h.example/m?token=abc')), /token/);
 });
+
+test('"any address" binds give no link either', () => {
+  for (const href of ['http://0.0.0.0:8787/', 'http://0/', 'http://[::]:8787/', 'http://[::ffff:0.0.0.0]/']) assert.equal(liveLink(href), null, href);
+});

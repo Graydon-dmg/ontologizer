@@ -103,10 +103,14 @@ export function createReveal({ snapshot, act, delayMs = REVEAL_DELAY_MS, setTime
     schedule(ids) {
       pending = ids;
       cancel();
+      // A cleared search starts fresh: a branch opened earlier and closed by hand since can open again.
+      if (!ids.length) asked.clear();
       if (stopped || !ids.length) return;
       timer = setTimer(() => { timer = null; now(pending); }, delayMs);
     },
     now,
+    /** Escape: stop what is pending and start fresh next time. */
+    reset() { cancel(); asked.clear(); },
     cancel,
     /** True once an expand was refused: this session does not try again. */
     stopped: () => stopped,
