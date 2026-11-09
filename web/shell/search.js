@@ -23,3 +23,24 @@ export function searchNodes(ontology, query, limit = 20) {
   hits.sort((a, b) => a.rank - b.rank || a.depth - b.depth || a.label.localeCompare(b.label));
   return hits.slice(0, limit).map((h) => h.id);
 }
+
+/**
+ * The collapsed nodes that hide any of these ids: every collapsed ancestor, grandparents and
+ * higher included, shallowest first. Expanding them makes every match visible.
+ * @param {Ontology} ontology @param {string[]} ids @param {string[]|null|undefined} collapsed
+ * @returns {string[]}
+ */
+export function ancestorsToExpand(ontology, ids, collapsed) {
+  const col = new Set(collapsed || []);
+  if (!col.size) return [];
+  /** @type {Set<string>} */
+  const out = new Set();
+  for (const id of ids) {
+    const seen = new Set([id]);
+    for (let p = ontology.nodes[id]?.parent; p != null && !seen.has(p); p = ontology.nodes[p]?.parent) {
+      if (col.has(p)) out.add(p);
+      seen.add(p);
+    }
+  }
+  return [...out].sort((a, b) => (ontology.nodes[a]?.depth ?? 0) - (ontology.nodes[b]?.depth ?? 0) || a.localeCompare(b));
+}

@@ -25,7 +25,8 @@
     ".": "./src/core/index.js",
     "./core": "./src/core/index.js",
     "./views": "./web/views/index.js",
-    "./store-postgres": "./src/store-postgres/index.js"
+    "./store-postgres": "./src/store-postgres/index.js",
+    "./export": "./src/core/export/index.js"
   },
   "files": [
     "src",
@@ -47,7 +48,9 @@
     "provenance": true
   },
   "scripts": {
-    "check": "node scripts/test.js test",
+    "build": "node scripts/build-embed.js",
+    "prepack": "node scripts/build-embed.js",
+    "check": "node scripts/build-embed.js && node scripts/test.js test",
     "check:a": "node scripts/test.js test/a",
     "check:b": "node scripts/test.js test/b",
     "check:c": "node scripts/test.js test/c",
@@ -57,8 +60,8 @@
     "check:f": "node scripts/test.js test/f",
     "check:g": "node scripts/test.js test/g",
     "check:h": "node scripts/test.js test/h",
-    "check:i": "node scripts/test.js test/i",
-    "dev": "node scripts/dev-server.js"
+    "check:i": "node scripts/build-embed.js && node scripts/test.js test/i",
+    "dev": "node scripts/build-embed.js && node scripts/dev-server.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
@@ -90,6 +93,7 @@
     }
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "pg": "8.23.1"
   }
 }

@@ -13,4 +13,6 @@ export const FEATURES = [
   { id: 'private-badge',  epic: 'I2', cli: 'list',    ui: { page: 'web/index.html',      id: 'private-badge' } },
   { id: 'source-refs',    epic: 'I2', cli: 'sources', ui: { page: 'web/index.html',      id: 'node-sources' } },
   { id: 'sources-status', epic: 'I2', cli: 'status',  ui: { page: 'web/home/index.html', id: 'server-sources' } },
+  { id: 'export', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export' } },
+  { id: 'export-context', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export-context' } },
 ];
