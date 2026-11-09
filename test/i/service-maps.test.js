@@ -206,3 +206,38 @@ test('bad input: 400 with { ok: false, error } as JSON', async () => {
     assert.equal((await req(srv.url, '/v1/t/default/maps/no-such-map/snapshot')).status, 404);
   } finally { await srv.close(); }
 });
+
+/**
+ * The /dist/ static route (the embed bundle, built by Part I4): served without a token from
+ * <web>/dist/, and nothing outside the web folder.
+ * @param {(p: string) => Promise<{ status: number, body: string }>} get
+ */
+async function distProblems(get) {
+  const problems = [];
+  const ok = await get('/dist/embed.js');
+  if (ok.status !== 200 || !ok.body.includes('embed-bundle')) problems.push(`/dist/embed.js: ${ok.status}`);
+  // Contained to the web folder, as every static route is (the one-map server's rule).
+  for (const p of ['/dist/../../package.json', '/dist/%2e%2e/%2e%2e/package.json', '/dist/nope.js']) {
+    const r = await get(p);
+    if (r.status !== 404) problems.push(`${p}: ${r.status}`);
+  }
+  return problems;
+}
+
+test('/dist/* is served from <web>/dist/ without a token, and cannot escape the web folder', async () => {
+  const { startService } = await import('../../src/server/service.js');
+  const { createToken, tokensPath } = await import('../../src/server/tokens.js');
+  const webDir = tempHome();
+  fs.mkdirSync(`${webDir}/dist`);
+  fs.writeFileSync(`${webDir}/dist/embed.js`, '/* embed-bundle */');
+  fs.writeFileSync(`${webDir}/index.html`, '<html></html>');
+  const home = tempHome();
+  createToken(tokensPath(home), { name: 'me' });
+  const srv = await startService({ home, port: 0, tokensFile: tokensPath(home), webDir, makeEngine: async (x) => stubEngine(x) });
+  try {
+    assert.deepEqual(await distProblems((p) => req(srv.url, p)), []);
+    // Planted fault: a server without the route (every /dist/ path is 404) is reported.
+    const noRoute = async () => ({ status: 404, body: 'not found' });
+    assert.ok((await distProblems(noRoute)).some((p) => p.startsWith('/dist/embed.js')));
+  } finally { await srv.close(); }
+});

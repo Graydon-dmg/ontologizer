@@ -428,7 +428,7 @@ export async function startService({
     if (method !== 'GET' && method !== 'HEAD') return plain(res, 405, 'method not allowed');
     if (rawPath === '/') return sendPage(res, webRoot, path.join('home', 'index.html'));
     if (rawPath === '/favicon.ico') return sendFile(res, path.join(webRoot, 'shared', 'brand', 'favicon-32.png'));
-    for (const p of ['shell', 'shared', 'views', 'home']) {
+    for (const p of ['shell', 'shared', 'views', 'home', 'dist']) {
       if (rawPath.startsWith(`/${p}/`)) return serveFile(res, webRoot, rawPath.slice(1));
     }
     if (rawPath.startsWith('/fixtures/')) return serveFile(res, fixturesRoot, rawPath.slice('/fixtures/'.length));
