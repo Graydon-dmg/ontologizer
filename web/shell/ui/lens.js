@@ -1,6 +1,7 @@
 // @ts-check
 import { lensMenuOptions, pickLens, chooseLens, createLensRequests } from '../lens.js';
 import { createDropdown } from './dropdown.js';
+import { keepFitted } from './fit.js';
 
 /** The "Rosetta" lens switcher: None, every lens, then "New lens…". @param {HTMLElement} el @param {any} shell */
 export function mountLens(el, shell) {
@@ -48,7 +49,9 @@ export function mountLens(el, shell) {
   shell.lensRequests = requests;
 
   const closePop = () => { pop.hidden = true; msg.textContent = ''; };
-  const openPop = () => { pop.hidden = false; msg.textContent = ''; input.value = ''; input.focus(); };
+  // Fixed beside the lens menu, always inside the window (re-placed on resize).
+  const place = keepFitted(pop, el);
+  const openPop = () => { pop.hidden = false; msg.textContent = ''; input.value = ''; place(); input.focus(); };
 
   function build() {
     const o = shell.snapshot();
