@@ -28,6 +28,11 @@ function writeAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
+/** What --tokens takes, without repeating the value given. @param {string} home */
+export function tokensFlagMessage(home) {
+  return `--tokens takes the path of a tokens file, not a token. Tokens live in ${path.join(home, 'tokens.json')} (made by \`ontologizer token create\`); serve finds them there on its own.`;
+}
+
 /** @param {any} argv */
 export async function handler(argv) {
   /** @type {import('../deps.js').Deps} */
@@ -45,8 +50,13 @@ export async function handler(argv) {
   /** @type {string|null} */
   let tokensFile = null;
   if (argv.tokens !== undefined) {
-    tokensFile = path.resolve(String(argv.tokens));
-    if (!fs.existsSync(tokensFile)) throw new CliError(`No tokens file at ${tokensFile}.`, 1);
+    // A token pasted here by mistake is never echoed back: the message names only the home.
+    const given = String(argv.tokens);
+    const file = path.resolve(given);
+    let isFile = false;
+    try { isFile = fs.statSync(file).isFile(); } catch { isFile = false; }
+    if (given.startsWith('ont_') || !isFile) throw new CliError(tokensFlagMessage(home), 1);
+    tokensFile = file;
   } else if (fs.existsSync(tokensPath(home))) {
     tokensFile = tokensPath(home);
   }

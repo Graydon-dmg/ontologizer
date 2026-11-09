@@ -121,7 +121,7 @@ async function proxyProblems(get) {
 
 test('open mode refuses --allow-host, and refuses any proxied request with 403', async () => {
   await assert.rejects(startService({ home: tempHome(), port: 0, allowHosts: ['maps.example'], makeEngine: async (x) => stubEngine(x) }),
-    (err) => /** @type {any} */ (err).code === 'NO_TOKENS' && /Refusing --allow-host without tokens/.test(String(/** @type {any} */ (err).message)));
+    (err) => /** @type {any} */ (err).code === 'NO_TOKENS' && /Refusing --allow-host: no tokens in /.test(String(/** @type {any} */ (err).message)));
   const { srv, home } = await boot();
   try {
     await seed(home, 'default', 'm1');
@@ -465,7 +465,7 @@ test('ONTOLOGIZER_ALLOW_HOST is the env form of --allow-host (and needs tokens t
   };
   const refused = await run(['serve', '--port', '0', '--home', home]);
   assert.equal(refused.code, 1);
-  assert.match(refused.stderr, /Refusing --allow-host without tokens/);
+  assert.match(refused.stderr, /Refusing --allow-host: no tokens in /);
   createToken(tokensPath(home), { name: 'me' });
   const running = run(['serve', '--port', '0', '--home', home, '--exit-after', '800']);
   const file = path.join(home, 'serve.json');

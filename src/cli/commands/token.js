@@ -1,5 +1,8 @@
 // @ts-check
+import os from 'node:os';
+import path from 'node:path';
 import { CliError } from '../deps.js';
+import { shellQuote } from '../../server/service.js';
 import { resolveHome } from './status.js';
 import { SCOPES, tokensPath, readTokens, createToken, revokeToken, publicRows } from '../../server/tokens.js';
 
@@ -11,6 +14,17 @@ function asCliError(fn) {
     if (err instanceof CliError) throw err;
     throw new CliError(err.message, 1);
   }
+}
+
+/**
+ * The line after `token create`: how to start a server that requires it. --home is left out when it
+ * is the default home (~/.ontologizer).
+ * @param {string} home
+ */
+export function nextStep(home) {
+  const abs = path.resolve(home);
+  const isDefault = abs === path.join(os.homedir(), '.ontologizer');
+  return `Start the server with: ontologizer serve${isDefault ? '' : ` --home ${shellQuote(abs)}`} --host 0.0.0.0`;
 }
 
 export default {
@@ -38,6 +52,7 @@ export default {
       const { token } = asCliError(() => createToken(file, { name: argv.name, tenant: argv.tenant, scopes }));
       deps.stdout.write(`${token}\n`);
       deps.stdout.write('This token is shown once; only its hash is stored.\n');
+      deps.stdout.write(`${nextStep(resolveHome(argv, deps))}\n`);
     } else if (action === 'list') {
       const rows = publicRows(asCliError(() => readTokens(file)));
       if (argv.json) {

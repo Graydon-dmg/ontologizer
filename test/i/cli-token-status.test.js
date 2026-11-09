@@ -28,9 +28,10 @@ test('token create prints the secret once; nothing else does', async () => {
   const c = await run(['token', 'create', '--name', 'ci', '--tenant', 'acme', '--scopes', 'read', '--home', home], home);
   assert.equal(c.code, 0, c.stderr);
   const lines = c.stdout.trim().split('\n');
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 3);
   assert.match(lines[0], TOKEN_RE);
   assert.match(lines[1], /shown once/);
+  assert.match(lines[2], /^Start the server with: ontologizer serve --home /);
   const secret = lines[0];
   for (const args of [['token', 'list'], ['token', 'list', '--json'], ['status'], ['status', '--json']]) {
     const r = await run([...args, '--home', home], home);

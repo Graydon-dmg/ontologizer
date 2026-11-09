@@ -94,11 +94,14 @@ export async function startService({
   let tokenRows = tokensFile ? readTokens(tokensFile) : [];
   // Whether auth is required is fixed at start: revoking every token never opens the server.
   const authRequired = tokenRows.length > 0;
+  // Say where it looked, and the exact command that fixes it.
+  const where = tokensFile ?? watchTokensFile ?? path.join(home, 'tokens.json');
+  const fix = `Create one with \`ontologizer token create --name <name> --home ${shellQuote(home)}\`, then run serve again with the same --home.`;
   if (!authRequired && !isLoopback(host)) {
-    throw refusal(`Refusing to listen on ${host} without tokens: create one with \`ontologizer token create\`, or pass --tokens.`);
+    throw refusal(`Refusing to listen on ${host}: no tokens in ${where}. ${fix}`);
   }
   if (!authRequired && allow.length) {
-    throw refusal('Refusing --allow-host without tokens: a server behind a proxy must require tokens. Create one with `ontologizer token create`, or pass --tokens.');
+    throw refusal(`Refusing --allow-host: no tokens in ${where}, and a server behind a proxy must require tokens. ${fix}`);
   }
   let tokensStamp = stamp(tokensFile);
   function currentTokens() {
@@ -670,6 +673,11 @@ export async function startService({
       await done;
     },
   };
+}
+
+/** A path as it would be typed in a shell: quoted only when it needs to be. @param {string} p */
+export function shellQuote(p) {
+  return /^[A-Za-z0-9_./~:@%+=,-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`;
 }
 
 /** This machine's interface addresses (lowercase), for a server bound to every interface. */

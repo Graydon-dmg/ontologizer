@@ -29,8 +29,8 @@ async function run(home, args) {
 function refusalProblems(r, home) {
   const problems = [];
   if (r.code !== 1) problems.push(`exit code ${r.code}`);
-  if (!r.stderr.includes('Refusing to listen on 0.0.0.0 without tokens')) problems.push('no refusal message');
-  if (!r.stderr.includes('ontologizer token create')) problems.push('the message does not name `ontologizer token create`');
+  if (!r.stderr.includes(`Refusing to listen on 0.0.0.0: no tokens in ${path.join(home, 'tokens.json')}`)) problems.push('no refusal message naming the home');
+  if (!r.stderr.includes(`ontologizer token create --name <name> --home ${home}`)) problems.push('the message does not name `ontologizer token create` with this --home');
   if (fs.existsSync(path.join(home, 'serve.json'))) problems.push('serve.json was written');
   if (/Serving /.test(r.stdout)) problems.push('it started serving');
   return problems;
@@ -88,5 +88,5 @@ test('serve refuses a --tokens file that does not exist', async () => {
   const home = tempHome();
   const r = await run(home, ['serve', '--port', '0', '--home', home, '--tokens', path.join(home, 'nope.json')]);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /No tokens file/);
+  assert.match(r.stderr, /--tokens takes the path of a tokens file/);
 });
