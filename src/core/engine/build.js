@@ -3,6 +3,19 @@
 import { isAuthError } from './call.js';
 import { checkPrompt, wave0Prompt, wave1Prompt, wave2Prompt } from './prompts.js';
 import { slug, childId, norm, findByLabelPath, labelPath } from './ids.js';
+import { sourcesNote } from './run.js';
+
+/**
+ * A wave's call with the run's source tools (when it has any): the tools are offered and the system
+ * prompt says how to cite them. Without tools the call is exactly as before.
+ * @param {any} ectx @param {{ system: string, prompt: string }} p
+ */
+function grounded(ectx, p) {
+  return ectx.run?.hasTools ? { ...p, system: p.system + sourcesNote(ectx.run.tools), useTools: true } : p;
+}
+
+/** The verified refs of a line (only refs a tool returned in this run); [] without tools. @param {any} ectx @param {any} obj */
+const citeOf = (ectx, obj) => (ectx.cite ? ectx.cite(obj?.sources) : []);
 
 const LEVELS = new Set(['beginner', 'intermediate', 'expert']);
 const LINK_TYPES = new Set(['influences', 'requires', 'part-of', 'bridge', 'analog']);
@@ -120,7 +133,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   /** @type {{ id: string, label: string }[]} */
   const categories = [];
   const seenCat = new Set();
-  await ectx.call({ model: ectx.models.fast, effort: 'low', ...wave0Prompt(brief) }, (/** @type {any} */ obj) => {
+  await ectx.call({ model: ectx.models.fast, effort: 'low', ...grounded(ectx, wave0Prompt(brief)) }, (/** @type {any} */ obj) => {
     const label = validLabel(obj?.label);
     if (!label || seenCat.has(norm(label)) || categories.length >= MAX_CATEGORIES) return;
     seenCat.add(norm(label));
@@ -132,7 +145,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
     ectx.emit('node.added', {
       node: node({
         id, label, parent: root, category: id, depth: 1, summary: str(obj.summary), hook: str(obj.hook),
-        origin: 'context', createdBy: 'wave0',
+        origin: 'context', createdBy: 'wave0', sources: citeOf(ectx, obj),
       }),
     });
   });
@@ -146,7 +159,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
       const local = new Map();          // norm(label) -> node this call added
       const seen = new Set();           // parentId|norm(label)
       let count = 0;
-      await ectx.call({ model: ectx.models.fast, effort: 'low', ...wave1Prompt(brief, cat.label, allLabels, depth) }, (/** @type {any} */ obj) => {
+      await ectx.call({ model: ectx.models.fast, effort: 'low', ...grounded(ectx, wave1Prompt(brief, cat.label, allLabels, depth)) }, (/** @type {any} */ obj) => {
         const label = validLabel(obj?.label);
         if (!label || count >= MAX_PER_CATEGORY) return;
         let parentId = cat.id;
@@ -163,12 +176,12 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
         ectx.emit('node.added', {
           node: node({
             id, label, parent: parentId, category: cat.id, depth: parentDepth + 1, summary: str(obj.summary), hook: str(obj.hook),
-            origin: 'context', createdBy: 'wave1',
+            origin: 'context', createdBy: 'wave1', sources: citeOf(ectx, obj),
           }),
         });
       });
     };
-    return ectx.queue.add({ kind: 'build', nodeId: cat.id }, work, { priority: 0 }).done;
+    return ectx.queue.add({ kind: 'build', nodeId: cat.id }, work, { priority: 0, actor: ectx.actor ?? null }).done;
   });
   const outcomes = await Promise.all(jobs);
   for (const o of outcomes) if (!o.ok && isAuthError(o.error)) throw o.error;

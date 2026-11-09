@@ -51,10 +51,12 @@ function nodeInputs(ontology) {
  *           jsonLines: (src: AsyncIterable<string>) => AsyncIterable<any> }} ctx
  * @param {string} ontologyId
  * @param {string} persona
- * @param {{ name?: string }} [opts]
+ * @param {{ name?: string, actor?: any }} [opts]  actor: stamped on the lens events (service mode)
  * @returns {Promise<string>} lensId
  */
-export async function rosetta(ctx, ontologyId, persona, { name } = {}) {
+export async function rosetta(ctx, ontologyId, persona, { name, actor = null } = {}) {
+  /** @param {Record<string, any>} f */
+  const as = (f) => (actor ? { ...f, actor } : f);
   if (typeof persona !== 'string' || !persona.trim()) {
     throw new Error('rosetta: persona is empty (who should the lens explain this to?)');
   }
@@ -70,7 +72,7 @@ export async function rosetta(ctx, ontologyId, persona, { name } = {}) {
   let lensId = base;
   for (let n = 2; ontology.lenses[lensId]; n++) lensId = `${base}-${n}`;
 
-  ctx.store.append(ontologyId, makeEvent('lens.added', { lens: { id: lensId, persona, analogs: {} } }, startedAt));
+  ctx.store.append(ontologyId, makeEvent('lens.added', as({ lens: { id: lensId, persona, analogs: {} } }), startedAt));
 
   const subject = ontology.brief?.subject || ontology.name;
   /** @type {typeof all[]} */
@@ -108,7 +110,7 @@ export async function rosetta(ctx, ontologyId, persona, { name } = {}) {
       /** @type {Record<string, any>} */
       const fields = { lensId, nodeId: obj.id, label };
       if (typeof obj.breaks === 'string' && obj.breaks.trim()) fields.breaks = obj.breaks.trim();
-      ctx.store.append(ontologyId, makeEvent('lens.analog', fields, startedAt));
+      ctx.store.append(ontologyId, makeEvent('lens.analog', as(fields), startedAt));
     }
     // 'refusal' / 'max_tokens': keep whatever streamed, do not throw.
     await stream.finalMessage();

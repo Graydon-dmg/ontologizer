@@ -22,9 +22,12 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
  * @param {{ store: any, models: { fast: string, strong: string }, getClient: () => any, jsonLines: (c: AsyncIterable<string>) => AsyncIterable<any> }} ctx
  * @param {string} a  ontology id
  * @param {string} b  ontology id
- * @param {{ into?: string, onDraft?: (draftId: string) => void }} [opts]
+ * @param {{ into?: string, onDraft?: (draftId: string) => void, actor?: any }} [opts]
  *   onDraft: called once, synchronously, right after the draft exists and before any event is
  *   appended (so a caller can open the new map and watch it fill). A throw is ignored.
+ *   actor: stamped on every event of the draft (service mode).
+ *   A private input makes the draft private: visibility.raised (reason 'fuse') right after
+ *   ontology.created, naming the private sources of both inputs.
  * @returns {Promise<string>} the new draft's id
  */
 export async function fuse(ctx, a, b, opts) {
@@ -109,10 +112,16 @@ export async function fuse(ctx, a, b, opts) {
     } catch { /* a throwing callback never breaks the fuse */ }
   }
   /** @param {string} t @param {Record<string, any>} f */
-  const emit = (t, f) => ctx.store.append(draftId, makeEvent(t, f, startedAt));
+  const actor = opts && typeof opts === 'object' && opts.actor ? opts.actor : null;
+  const emit = (t, f) => ctx.store.append(draftId, makeEvent(t, actor ? { ...f, actor } : f, startedAt));
 
   // ---- structure ----
   emit('ontology.created', { name: root, root, brief, categories: [] });
+  // Fuse takes the stricter side: a private input makes the fused map private, for life.
+  if (oa.visibility === 'private' || ob.visibility === 'private') {
+    const names = [...new Set([...(oa.privateSources ?? []), ...(ob.privateSources ?? [])])].sort();
+    emit('visibility.raised', { to: 'private', reason: 'fuse', sources: names });
+  }
   let nextIndex = 0;
   for (const c of oa.categories) { emit('category.added', { category: { ...c, family: 0 } }); nextIndex = Math.max(nextIndex, c.index + 1); }
   for (const c of ob.categories) { emit('category.added', { category: { ...c, family: 1 } }); nextIndex = Math.max(nextIndex, c.index + 1); }

@@ -360,7 +360,7 @@ can(principal, action, { tenant, mapId, map })   // action: read | build | ask |
 
 ### Model port
 
-`({ principal, purpose }) => client`, `purpose` one of `check | build | research | explain | sources | ask | fuse | rosetta`. Called for each model call. The default is today's key handling (`src/cli/apikey.js` through `engineFor`). In the engine:
+`({ principal, purpose }) => client`, `purpose` one of `check | build | research | explain | sources | ask | fuse | rosetta`. Called for each model call (the turns of one ask share one client). The default is today's key handling (`src/cli/apikey.js` through `engineFor`). In the engine:
 
 ```js
 createEngine({ store, id, client?, models?, concurrency?, clientFor? /* ({ principal, purpose }) => client */ })

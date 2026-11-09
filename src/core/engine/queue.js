@@ -24,10 +24,10 @@ export function createJobQueue({ emit, concurrency = 3 }) {
    * running: the second call gets the first job's id back.
    * @param {Job} job
    * @param {() => Promise<void>} work   does the job; throws to fail it
-   * @param {{ priority?: number }} [opts]
+   * @param {{ priority?: number, actor?: any }} [opts]  actor: stamped on this job's events (service mode)
    * @returns {{ jobId: string, done: Promise<JobOutcome>, duplicate: boolean }}
    */
-  function add(job, work, { priority = 0 } = {}) {
+  function add(job, work, { priority = 0, actor = null } = {}) {
     const key = `${job.dedupeKind ?? job.kind}:${job.nodeId ?? ''}`;
     const existing = active.get(key);
     if (existing) return { ...existing, duplicate: true };
@@ -37,16 +37,18 @@ export function createJobQueue({ emit, concurrency = 3 }) {
     const ref = { id: jobId, kind: job.kind };
     if (job.nodeId) ref.nodeId = job.nodeId;
 
-    emit('job.queued', { job: ref });
+    /** @param {Record<string, any>} fields */
+    const as = (fields) => (actor ? { ...fields, actor } : fields);
+    emit('job.queued', as({ job: ref }));
     /** @type {Promise<JobOutcome>} */
     const done = queue.add(async () => {
-      emit('job.started', { job: ref });
+      emit('job.started', as({ job: ref }));
       try {
         await work();
-        emit('job.done', { job: ref });
+        emit('job.done', as({ job: ref }));
         return /** @type {JobOutcome} */ ({ ok: true });
       } catch (error) {
-        emit('job.failed', { job: { ...ref, error: jobErrorMessage(error) } });
+        emit('job.failed', as({ job: { ...ref, error: jobErrorMessage(error) } }));
         return /** @type {JobOutcome} */ ({ ok: false, error });
       } finally {
         active.delete(key);

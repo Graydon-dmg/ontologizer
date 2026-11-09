@@ -12,9 +12,11 @@ import { startServer } from '../server/index.js';
  * needKey false (load): never prompts. Uses a key if env or the keychain has one; otherwise the
  *   engine gets a client whose calls fail with "No Anthropic API key: run ontologizer key set".
  * The key only ever goes into the SDK client object.
- * @param {{ deps: import('./deps.js').Deps, store: any, id: string, needKey: boolean }} opts
+ * clientFor: the model port from a config (service mode). With it, every model call gets its client
+ *   from the port; the default client is still made, unused, so nothing else changes.
+ * @param {{ deps: import('./deps.js').Deps, store: any, id: string, needKey: boolean, clientFor?: any }} opts
  */
-export async function engineFor({ deps, store, id, needKey }) {
+export async function engineFor({ deps, store, id, needKey, clientFor = null }) {
   let client;
   try {
     const { key } = await getApiKey({
@@ -35,7 +37,7 @@ export async function engineFor({ deps, store, id, needKey }) {
       throw new CliError(/** @type {Error} */ (e).message, 1); // a refused ANTHROPIC_BASE_URL
     }
   }
-  return loadEngine({ store, id, client, env: deps.env });
+  return loadEngine({ store, id, client, env: deps.env, ...(clientFor ? { clientFor } : {}) });
 }
 
 /** Turn an SDK 401 into the contract message; rethrow anything else. @param {unknown} err */
