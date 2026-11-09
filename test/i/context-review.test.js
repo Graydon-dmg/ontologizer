@@ -135,5 +135,29 @@ test('no hidden HTML, no script links and no runaway field in the pack', () => {
   const pack = contextPack(o, { budget: 100000 });
   assert.doesNotMatch(pack, /(^|[^\\])<!--/);
   assert.doesNotMatch(pack, /\]\(javascript:/i);
+  assert.doesNotMatch(pack, /\]\(/, 'map text formed an inline link');
   assert.ok(pack.split('\n').every((l) => l.length <= 1400), 'a field ran past its cap');
+});
+
+test('escaping is idempotent: summaries, bridges, insights and the brief never revive a hidden comment', () => {
+  const o = load('plastic-modeling');
+  const hide = 'a < b, then <!-- hidden --> and \\\\<!-- also hidden -->';
+  for (const n of Object.values(o.nodes)) n.summary = hide;
+  for (const e of o.edges || []) e.why = hide;
+  o.insights = [{ text: hide, at: 0 }, ...(o.insights || [])];
+  o.brief = { ...(o.brief || {}), context: hide + ' ' + 'c'.repeat(3000), scope: hide };
+  const pack = contextPack(o, { budget: 200000 });
+  assert.doesNotMatch(pack, /(^|[^\\])<!--/, 'a raw comment opener survived');
+  assert.doesNotMatch(pack, /\\\\</, 'a double backslash before < revives a live <');
+  assert.match(pack, /a \\< b/, 'plain text reads with a single escape');
+  assert.ok(pack.includes('c'.repeat(3000)), 'a long brief is not cut at the field cap');
+});
+
+test('entity-encoded schemes cannot form a link: map text never makes an inline link', () => {
+  const o = load('plastic-modeling');
+  const id = Object.keys(o.nodes).find((k) => o.nodes[k].depth === 1);
+  o.nodes[id].summary = 'see [f](java&#115;cript:x) and [g]  (data:x)';
+  const pack = contextPack(o, { budget: 100000 });
+  assert.doesNotMatch(pack, /\[f\]\(/);
+  assert.match(pack, /\[f\] \(java&#115;cript:x\)/);
 });
