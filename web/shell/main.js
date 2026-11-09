@@ -26,6 +26,7 @@ import { createExplainRequests } from './explain.js';
 import { TENANT, api } from './base.js';
 import { connBanner, stillSignedIn } from './conn.js';
 import { mountServerPanel } from './ui/server.js';
+import { mountBrandMenu } from './ui/brand.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -173,6 +174,9 @@ for (const [id, fn] of mounts) {
 if (TENANT) {
   try { mountServerPanel($('server-panel'), { tenant: TENANT, popover: true }); }
   catch (err) { console.error('[shell] mount "server-panel" failed', err); }
+  // The brand mark becomes a button: All maps, New map (the one-map page keeps it decorative).
+  try { mountBrandMenu(/** @type {HTMLElement} */ (document.querySelector('#topbar .brand-mark'))); }
+  catch (err) { console.error('[shell] mount "brand-menu" failed', err); }
 }
 // The ⓘ tooltips go in once, after every control exists.
 try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }

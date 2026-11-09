@@ -419,7 +419,7 @@ ontologizer serve                      # http://127.0.0.1:8787/, loopback only, 
 ontologizer serve --open               # the same, and opens the maps home in your browser
 ```
 
-**The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar.
+**The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar, and the logo at the top bar's left opens a menu with **All maps** and **New map**.
 
 **Tokens.** To listen on anything other than loopback (`--host 0.0.0.0`, a LAN address), create a token first; `serve` refuses to start without one.
 

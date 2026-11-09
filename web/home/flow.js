@@ -105,6 +105,20 @@ export function safeNext(search) {
   return v !== null && NEXT_PATH.test(v) ? v : null;
 }
 
+/**
+ * `?new=1` (the map page's "New map"): whether to open the New map dialog at once, and the search
+ * string without it, so a reload or Back does not open it again. Other parameters are kept.
+ * @param {string} search location.search
+ * @returns {{ open: boolean, search: string }}
+ */
+export function newMapRequested(search) {
+  const q = new URLSearchParams(String(search ?? ''));
+  const open = q.get('new') === '1';
+  q.delete('new');
+  const rest = q.toString();
+  return { open, search: rest ? `?${rest}` : '' };
+}
+
 /** Message for a failed response; `kind: 'auth'` means show the token form.
  * @param {Res} r @returns {{ kind: 'auth'|'message', text: string }} */
 export function describeFailure(r) {
