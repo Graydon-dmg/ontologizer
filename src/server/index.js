@@ -46,7 +46,7 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
     // The tab icon, even before the page's <link> loads.
     if (rawPath === '/favicon.ico') return sendFile(res, path.join(webRoot, 'shared', 'brand', 'favicon-32.png'));
     if (rawPath.startsWith('/api/') && await map.handleApi(req, res, rawPath, query)) return;
-    for (const p of ['shell', 'shared', 'views', 'dev']) {
+    for (const p of ['shell', 'shared', 'views', 'dev', 'dist']) {
       if (rawPath.startsWith(`/${p}/`)) return serveFile(res, webRoot, rawPath.slice(1));
     }
     if (rawPath.startsWith('/fixtures/')) return serveFile(res, fixturesRoot, rawPath.slice('/fixtures/'.length));

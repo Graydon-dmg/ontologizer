@@ -155,6 +155,7 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona. |
 | `ontologizer explain <name> <node>` | Write an article for one node. |
 | `ontologizer research <name> <node> [--general]` | Grow the map under one node. |
+| `ontologizer export <map> --format html\|embed\|json\|context` | Export a map: an offline page, an embed, JSON, or a context pack for an agent. |
 | `ontologizer update` | Update ontologizer to the latest version. |
 | `ontologizer key [set\|clear]` | Show, set or clear the Anthropic API key. |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place. |
@@ -220,6 +221,22 @@ ontologizer research plastic-modeling Tools --general
 ```
 
 `<node>` is a node id or label (an exact label, a unique prefix, or a unique part of it; if unsure it lists close matches). If the map is open in another terminal, the request is sent to that running page (`Sent to the open session (job <id>).`) and you watch it happen there. Otherwise it runs in your terminal and prints the article (summary, key facts, why it matters, see also, sources) or the labels it added (`Added N nodes under <node>:`). `--general` on `research` uses the node's label alone instead of your brief. There is a 10 minute limit.
+
+### export
+
+```
+ontologizer export plastic-modeling --format html
+ontologizer export demo --format context --budget 1500 > demo.md
+```
+
+`<map>` is found as `load` finds it: a saved map or draft (a prefix works), else a bundled map by name (`demo`, `manga`, `plastic-modeling`; read straight from the package, not imported). The formats:
+
+- `html`: one self-contained page (`<map>.html` here, or `--out <file>`). It works offline: pan, zoom, click a node for its label, summary, explanation and sources, collapse a branch, search. Nothing in it loads from the network; links (a node's sources, and **Open live** when you pass `--live-url <url>`) open only when you click them. About 170 KB for the demo; `--3d` adds the 3D view (about 750 KB) and prints the size.
+- `embed`: the same map as a fragment (`<map>.embed.html`) to paste into any page: one `<ontologizer-map>` element, 480 px high. Several on one page work.
+- `json`: the map exactly as the page loads it, to stdout or `--out`.
+- `context`: markdown for an AI agent, to stdout or `--out`, with the headings Brief, Outline, Bridges, Insights, Thin areas and Sources. `--budget` (default 4000) caps its size in estimated tokens (characters / 4): summaries go first, from the deepest level up (the root's children keep theirs longest), then bridges and sources are shortened, and only then the deepest labels; the root's children always stay, and the last line says what was cut. On a map with nothing explained yet, Thin areas is one line.
+
+On the page, the **Export** button in the top bar has the same four: **Download page**, **Copy embed**, **Download JSON** and **Copy for an agent** (the context pack at 4000 tokens). Exports leave out the map's chat. In a source checkout, run `npm run build` once so the page and embed formats find their bundle.
 
 ### update, key, doctor, completion
 

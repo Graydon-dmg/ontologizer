@@ -17,8 +17,12 @@ const FLAGS = {
   status: ['--home', '--json', '--config'],
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
+  export: ['--format', '--3d', '--budget', '--out', '--live-url'],
 };
-const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse']);
+const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export']);
+// `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:
+// the top-level list is pinned by test/b/complete.test.js.
+const EXPORT_FORMATS = ['html', 'embed', 'json', 'context'];
 
 /** @returns {string[]} saved names and draft ids, sorted */
 function savedNames() {
@@ -51,6 +55,7 @@ export function complete(words) {
     if (cmd === 'token' && words.length === 2) return ['create', 'list', 'revoke'].filter((c) => c.startsWith(partial));
     if (cmd === 'sources' && words.length === 2) return ['list', 'test'].filter((c) => c.startsWith(partial));
     if (cmd === 'completion' && words.length === 2) return ['zsh', 'bash', 'fish'].filter((c) => c.startsWith(partial));
+    if (cmd === 'export' && words[words.length - 2] === '--format') return EXPORT_FORMATS.filter((c) => c.startsWith(partial));
     if (NAME_COMMANDS.has(cmd)) {
       if (cmd === 'fuse' ? words.length > 3 : words.length > 2) return [];
       return savedNames().filter((n) => n.startsWith(partial));
