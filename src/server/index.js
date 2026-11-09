@@ -44,6 +44,7 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
   const webRoot = path.resolve(webDir ?? fileURLToPath(new URL('../../web/', import.meta.url)));
   const fixturesRoot = path.join(PKG_ROOT, 'fixtures');
   const coreRoot = path.join(PKG_ROOT, 'src', 'core');
+  const distRoot = path.join(PKG_ROOT, 'web', 'dist');
   /** @type {Set<http.ServerResponse>} */
   const sseClients = new Set();
   /** @type {Set<any>} */
@@ -526,6 +527,7 @@ export function startServer({ store, engine, id, port = 0, replay = null, webDir
       if (rawPath.startsWith(`/${p}/`)) return serveFile(res, webRoot, rawPath.slice(1));
     }
     if (rawPath.startsWith('/fixtures/')) return serveFile(res, fixturesRoot, rawPath.slice('/fixtures/'.length));
+    if (rawPath.startsWith('/dist/')) return serveFile(res, distRoot, rawPath.slice('/dist/'.length)); // the built embed bundle (Export menu)
     if (rawPath.startsWith('/src/core/')) return serveFile(res, coreRoot, rawPath.slice('/src/core/'.length));
     if (rawPath.startsWith('/vendor/')) {
       let file = null;

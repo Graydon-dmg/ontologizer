@@ -18,6 +18,7 @@ import { mountLens } from './ui/lens.js';
 import { mountMinimap } from './ui/minimap.js';
 import { mountTheme } from './ui/theme.js';
 import { mountFuse } from './ui/fuse.js';
+import { mountExport } from './ui/export.js';
 import { mountTips } from './ui/tips.js';
 import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
@@ -156,7 +157,7 @@ const mounts = [
   ['theme-switcher', mountTheme],
   ['view-switcher', mountViewSwitcher], ['legend', mountLegend], ['menu', mountMenu],
   ['explain', mountExplain], ['jobs', mountJobs], ['ticker', mountTicker], ['search', mountSearch],
-  ['filter', mountFilter], ['lens-switcher', mountLens], ['fuse', mountFuse], ['minimap', mountMinimap],
+  ['filter', mountFilter], ['lens-switcher', mountLens], ['fuse', mountFuse], ['export', mountExport], ['minimap', mountMinimap],
 ];
 for (const [id, fn] of mounts) {
   try { /** @type {Function} */ (fn)($(/** @type {string} */ (id)), shell); }
