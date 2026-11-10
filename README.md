@@ -101,6 +101,9 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer load <name>` | Open a saved map (add `--replay` to watch it build again) |
 | `ontologizer save [name]` | Save the current draft |
 | `ontologizer list` | List saved maps |
+| `ontologizer delete <map>` | Move a map to the trash (asks first; `--yes` to skip). While a server runs on the home (`serve`, or `ontologizer mcp`), delete from its page instead |
+| `ontologizer trash` | List deleted maps: each can be restored for 30 days |
+| `ontologizer restore <trash-id> [--as <name>]` | Bring a deleted map back (from the server's page while one runs on the home) |
 | `ontologizer fuse <a> <b>` | Fuse two maps into a new draft |
 | `ontologizer rosetta <map>` | Add a lens that re-explains the map for a persona |
 | `ontologizer explain <name> <node>` | Write an article for one node |
@@ -121,7 +124,7 @@ Every command takes `--help`. Full detail is in the [guide](https://github.com/G
 
 ## Service mode
 
-`ontologizer serve` runs one server for every map in your home, without opening a browser. Open `http://127.0.0.1:8787/` for the maps home: your maps, a **New map** button, and a read-only **Server** panel. Agents and scripts use the same server over HTTP (`/v1/...`).
+`ontologizer serve` runs one server for every map in your home, without opening a browser. Open `http://127.0.0.1:8787/` for the maps home: your maps (each with **Rename** and **Delete**), a **New map** button, the **Trash** (restore a deleted map for 30 days), and a read-only **Server** panel. On a map page, **‹ All maps** goes back to the home, and clicking the map's name offers **Rename…** and **Delete…**. Agents and scripts use the same server over HTTP (`/v1/...`).
 
 It listens on `127.0.0.1` only, unless you create a token and pass `--host`:
 

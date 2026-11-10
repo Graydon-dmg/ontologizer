@@ -114,6 +114,75 @@ function pidAlive(pid) {
 /** Names a map can never take: `tenants` is the folder that holds the other tenants' maps. */
 export const RESERVED_NAMES = ['tenants'];
 
+/** sessions.json keys for running servers (a map id never starts with ":"). */
+const SERVER_KEY = ':server:';
+/** Thrown to skip the open-time purge (never escapes openStore). */
+const SKIP = Symbol('skip');
+
+/** How long a deleted map stays in the trash before it is purged for good. */
+export const TRASH_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A trash id: the map's id, "--", and the UTC time it was deleted ("sourdough--20261109-153012z", "-2" on a clash). */
+export const TRASH_ID_RE = /^[a-z0-9][a-z0-9-]*--\d{8}-\d{6}z(?:-\d+)?$/;
+
+/** @param {number} ms the deletion time, as a UTC stamp for a trash id */
+export function trashStamp(ms) {
+  const d = new Date(ms);
+  const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}z`;
+}
+
+/** When a trash item was deleted, from its id (for an item whose trash.json cannot be read). @param {string} trashId */
+export function trashIdTime(trashId) {
+  const m = /--(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})z(?:-\d+)?$/.exec(trashId);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : 0;
+}
+
+/** An error with a code the router and the CLI tell apart. @param {string} code @param {string} message */
+function coded(code, message) {
+  const err = new Error(message);
+  /** @type {any} */ (err).code = code;
+  return err;
+}
+export { coded as storeError };
+
+/** @typedef {{ trashId: string, id: string, name: string, draft: boolean, deletedAt: number, deletedBy: any,
+ *             root: string, nodes: number, visibility?: 'private', privateSources?: string[] }} TrashItem
+ *   visibility and privateSources only on a private map's item, as on an index row. */
+
+/**
+ * One trash item, as listTrash() gives it (both stores), from what trash.json (or the trash table) holds.
+ * @param {string} trashId @param {any} info @returns {TrashItem}
+ */
+export function trashRow(trashId, info) {
+  const item = {
+    trashId, id: String(info.id ?? ''), name: String(info.name ?? info.id ?? ''), draft: Boolean(info.draft),
+    deletedAt: typeof info.deletedAt === 'number' ? info.deletedAt : trashIdTime(trashId), deletedBy: info.deletedBy ?? null,
+    root: String(info.root ?? ''), nodes: Number.isInteger(info.nodes) ? info.nodes : 0,
+  };
+  return info.visibility === 'private'
+    ? { ...item, visibility: 'private', privateSources: [...(Array.isArray(info.privateSources) ? info.privateSources : [])].map(String).sort() }
+    : item;
+}
+
+/**
+ * What a trash item records about the map it holds (trash.json, the Postgres trash row): its id, name,
+ * draft flag, when and by whom it was deleted, and its visibility, so the trash list keeps a private
+ * map private without folding it.
+ * @param {IndexRow} row @param {Ontology} onto @param {{ actor: any, at: number }} o
+ */
+export function trashInfo(row, onto, { actor, at }) {
+  return {
+    id: row.id, name: row.name, draft: Boolean(row.draft), deletedAt: at, deletedBy: actor ?? null,
+    root: onto.root ?? row.root ?? '', nodes: Object.keys(onto.nodes ?? {}).length,
+    visibility: onto.visibility === 'private' ? 'private' : 'public',
+    privateSources: onto.visibility === 'private' ? [...(onto.privateSources ?? [])].sort() : [],
+  };
+}
+
+/** The message for a restore whose name is taken. @param {string} name */
+export const takenForRestore = (name) => `"${name}" already exists: restore it under another name.`;
+
 /** @param {string} name */
 function assertName(name) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) {
@@ -186,6 +255,14 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
   fs.mkdirSync(root, { recursive: true });
   const indexFile = path.join(root, 'index.json');
   const sessionsFile = path.join(root, 'sessions.json');
+  // Deleted maps: <root>/.trash/<trashId>/ is the map's folder as it was, plus trash.json. A dot
+  // folder never matches a map id, so nothing that reads maps ever sees it.
+  const trashRoot = path.join(root, '.trash');
+  /** @param {string} trashId */
+  const trashDir = (trashId) => {
+    if (typeof trashId !== 'string' || !TRASH_ID_RE.test(trashId)) throw coded('NOT_FOUND', 'That item is not in the trash.');
+    return path.join(trashRoot, trashId);
+  };
   /** @param {string} id */
   const dir = (id) => {
     // ids become folder names: only drafts and kebab-case names, never a path.
@@ -350,7 +427,80 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       delete all[id];
       writeJsonAtomic(sessionsFile, all);
     },
+    /**
+     * Register a running server on this home (service mode: `serve`, or `ontologizer mcp`'s in-process
+     * one), under a key no map id can take. @param {{ pid: number, port: number, url: string, startedAt: number }} info
+     * @returns {string} the key, for remove()
+     */
+    addServer(info) {
+      const key = `${SERVER_KEY}${info.pid}:${info.port}`;
+      this.set(key, info);
+      return key;
+    },
+    /** The servers running on this home now; an entry whose process is gone is dropped. @returns {Array<{ pid: number, port: number, url: string, startedAt: number }>} */
+    servers() {
+      const all = readJson(sessionsFile, {});
+      /** @type {any[]} */
+      const out = [];
+      let stale = false;
+      for (const [k, v] of Object.entries(all)) {
+        if (!k.startsWith(SERVER_KEY)) continue;
+        if (v && pidAlive(v.pid)) out.push(v); else { delete all[k]; stale = true; }
+      }
+      if (stale) writeJsonAtomic(sessionsFile, all);
+      return out;
+    },
   };
+
+  /** @returns {TrashItem[]} newest first; an item whose trash.json is unreadable is listed from its id */
+  function listTrash() {
+    /** @type {string[]} */
+    let names = [];
+    try { names = fs.readdirSync(trashRoot); } catch { return []; }
+    /** @type {TrashItem[]} */
+    const out = [];
+    for (const trashId of names) {
+      if (!TRASH_ID_RE.test(trashId)) continue;
+      const info = readJson(path.join(trashRoot, trashId, 'trash.json'), null) ?? {};
+      const id = typeof info.id === 'string' ? info.id : trashId.replace(/--\d{8}-\d{6}z(?:-\d+)?$/, '');
+      out.push(trashRow(trashId, { ...info, id }));
+    }
+    return out.sort((a, b) => b.deletedAt - a.deletedAt || (a.trashId < b.trashId ? 1 : -1));
+  }
+
+  /**
+   * Remove trash items deleted more than `olderThanDays` ago, for good. @returns {string[]} the purged trash ids
+   * @param {{ olderThanDays?: number, now?: number }} [o]
+   */
+  function purgeTrash({ olderThanDays = TRASH_DAYS, now: at = Date.now() } = {}) {
+    const cutoff = at - olderThanDays * DAY_MS;
+    /** @type {string[]} */
+    const gone = [];
+    for (const item of listTrash()) {
+      if (!(item.deletedAt < cutoff)) continue;
+      try { fs.rmSync(path.join(trashRoot, item.trashId), { recursive: true, force: true }); gone.push(item.trashId); } catch (err) {
+        log(`ontologizer: could not purge ${item.trashId} from the trash: ${/** @type {any} */ (err)?.code ?? err}`);
+      }
+    }
+    return gone;
+  }
+
+  // On open: purge what is past its 30 days, and drop an index row a crash left behind after its map
+  // folder had already moved to the trash (the folder is gone, and the trash holds that id). Not while
+  // another process's server runs on this home: it owns the trash then (it purges once a day), and a
+  // purge here could race its restore.
+  try {
+    if (sessions.servers().some((s) => s.pid !== process.pid)) throw SKIP;
+    purgeTrash();
+    const trashed = new Set(listTrash().map((t) => t.id));
+    const stale = readIndex().ontologies.filter((r) => trashed.has(r.id) && !fs.existsSync(path.join(root, r.id)));
+    if (stale.length) {
+      updateIndex((idx) => {
+        idx.ontologies = idx.ontologies.filter((r) => !stale.some((s) => s.id === r.id));
+        if (idx.current && stale.some((s) => s.id === idx.current)) idx.current = null;
+      });
+    }
+  } catch (err) { if (err !== SKIP) log(`ontologizer: could not tidy the trash: ${/** @type {any} */ (err)?.message ?? err}`); }
 
   return {
     root,
@@ -526,5 +676,77 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       });
       return name;
     },
+
+    /**
+     * Move a map to the trash: its folder (events, snapshot, brief, attachments) goes to
+     * <root>/.trash/<id>--<UTC stamp>/ with a trash.json, and its index row is removed. Refused while a
+     * running one-map session serves it (sessions.json). @returns {string} the trash id
+     * @param {string} id @param {{ actor?: any, now?: number }} [opts] now: the deletion time (tests)
+     */
+    trash(id, { actor = null, now: at = Date.now() } = {}) {
+      dir(id);
+      const row = readIndex().ontologies.find((r) => r.id === id);
+      if (!row) throw coded('NOT_FOUND', `No map "${id}".`);
+      const live = sessions.get(id);
+      if (live && live.pid !== process.pid) throw coded('SERVED', `"${id}" is open in a running session (port ${live.port}): stop it first.`);
+      // Its snapshot and row as they are now, so the trash holds the map exactly as it was.
+      const e = load(id);
+      if (e.timer) { clearTimeout(e.timer); e.timer = null; }
+      if (fs.existsSync(dir(id))) writeJsonAtomic(path.join(dir(id), 'snapshot.json'), e.onto);
+      fs.mkdirSync(trashRoot, { recursive: true });
+      const base = `${id}--${trashStamp(at)}`;
+      let trashId = base;
+      for (let n = 2; fs.existsSync(path.join(trashRoot, trashId)); n++) trashId = `${base}-${n}`;
+      const info = trashInfo(row, e.onto, { actor, at });
+      if (fs.existsSync(dir(id))) {
+        writeJsonAtomic(path.join(dir(id), 'trash.json'), info);
+        fs.renameSync(dir(id), path.join(trashRoot, trashId));
+      } else {
+        fs.mkdirSync(path.join(trashRoot, trashId), { recursive: true });
+        writeJsonAtomic(path.join(trashRoot, trashId, 'trash.json'), info);
+      }
+      cache.delete(id);
+      updateIndex((idx) => {
+        idx.ontologies = idx.ontologies.filter((r) => r.id !== id);
+        if (idx.current === id) idx.current = null;
+      });
+      return trashId;
+    },
+
+    /** The trash, newest first. @returns {TrashItem[]} */
+    listTrash,
+
+    /**
+     * Bring a map back from the trash, under its own id or `as` (which also names a draft: it comes
+     * back saved, with an ontology.renamed event as `save` writes). A taken id is refused (code TAKEN).
+     * @param {string} trashId @param {{ as?: string|null, actor?: any }} [opts] @returns {string} the map's id
+     */
+    restore(trashId, { as = null, actor = null } = {}) {
+      const from = trashDir(trashId);
+      const info = readJson(path.join(from, 'trash.json'), null);
+      if (!info || typeof info.id !== 'string' || !fs.existsSync(from)) throw coded('NOT_FOUND', 'That item is not in the trash.');
+      if (as !== null && as !== undefined) assertName(as);
+      const target = as ?? info.id;
+      dir(target);
+      if (fs.existsSync(dir(target)) || readIndex().ontologies.some((r) => r.id === target)) throw coded('TAKEN', takenForRestore(target));
+      fs.renameSync(from, dir(target));
+      fs.rmSync(path.join(dir(target), 'trash.json'), { force: true });
+      cache.delete(target);
+      const renamed = target !== info.id;
+      const draft = Boolean(info.draft) && !renamed;
+      // The row first, from what the events say (its visibility and private sources come back with them).
+      const onto = load(target).onto;
+      updateIndex((idx) => {
+        idx.ontologies = idx.ontologies.filter((r) => r.id !== target);
+        idx.ontologies.push(rowVisibility({ id: target, name: onto.name || info.name || target, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft }, onto));
+      });
+      if (renamed) {
+        this.append(target, { t: 'ontology.renamed', at: now(target), name: target, ...(actor ? { actor } : {}) });
+        flush(target);
+      }
+      return target;
+    },
+
+    purgeTrash,
   };
 }

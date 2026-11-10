@@ -15,10 +15,13 @@
 // Tables (created if missing), every query scoped by tenant:
 //   ontologizer_events (tenant, map_id, seq, event jsonb)            primary key (tenant, map_id, seq)
 //   ontologizer_maps   (tenant, id, name, root, nodes, updated_at, draft, brief jsonb, is_current)
+//   ontologizer_trash  (tenant, trash_id, map_id, info jsonb, brief jsonb, events jsonb, deleted_at)
+//                      a deleted map: its row's brief and every event, until it is restored or purged
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { foldAll, fold } from '../core/events.js';
-import { RESERVED_NAMES, TENANT_RE } from '../core/store.js';
+import { RESERVED_NAMES, TENANT_RE, TRASH_DAYS, TRASH_ID_RE, trashStamp, trashRow, trashInfo, takenForRestore, storeError } from '../core/store.js';
 
 /** @typedef {import('../core/schema.js').Ontology} Ontology */
 /** @typedef {import('../core/events.js').OntoEvent} OntoEvent */
@@ -61,7 +64,12 @@ const SCHEMA = [
      nodes integer NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0, draft boolean NOT NULL DEFAULT false,
      brief jsonb, is_current boolean NOT NULL DEFAULT false,
      PRIMARY KEY (tenant, id))`,
+  `CREATE TABLE IF NOT EXISTS ontologizer_trash (
+     tenant text NOT NULL, trash_id text NOT NULL, map_id text NOT NULL, info jsonb NOT NULL, brief jsonb,
+     events jsonb NOT NULL, deleted_at bigint NOT NULL,
+     PRIMARY KEY (tenant, trash_id))`,
 ];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * @param {{ url?: string, tenant?: string, root?: string, pool?: any, log?: (line: string) => void }} [opts]
@@ -88,6 +96,19 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
   const cache = new Map();
   /** @type {Record<string, any>} */
   const sessionMap = {};
+  /** The trash, by trash id: what trash.json holds, and the map's events (for a restore). @type {Map<string, { info: any, events: OntoEvent[] }>} */
+  const trashed = new Map();
+  /** A map's local folder (chat image attachments). @param {string} id */
+  const localDir = (id) => path.join(localRoot, id);
+  /** A trash item's local folder. @param {string} trashId */
+  const localTrash = (trashId) => path.join(localRoot, '.trash', trashId);
+  /** Move a local folder if it exists (attachments go with their map into and out of the trash). @param {string} from @param {string} to */
+  const moveLocal = (from, to) => {
+    if (!fs.existsSync(from)) return;
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.rmSync(to, { recursive: true, force: true });
+    fs.renameSync(from, to);
+  };
 
   /** @param {string} id */
   const check = (id) => {
@@ -210,7 +231,18 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
         if (lockClient === client) { lockClient = null; try { client.release(err instanceof Error ? err : new Error('lost')); } catch { /* already released */ } }
       });
     }
-    for (const sql of SCHEMA) await pool.query(sql);
+    // Two processes creating the tables at once (a cold database): IF NOT EXISTS can still fail with a
+    // duplicate type or table; the other process made it, so it is there.
+    for (const sql of SCHEMA) {
+      try { await pool.query(sql); } catch (/** @type {any} */ err) { if (err?.code !== '23505' && err?.code !== '42P07') throw err; }
+    }
+    // Purge what has been in the trash past its 30 days, then load the rest.
+    const expired = await pool.query(
+      'DELETE FROM ontologizer_trash WHERE tenant = $1 AND deleted_at < $2 RETURNING trash_id', [tenant, Date.now() - TRASH_DAYS * DAY_MS]);
+    for (const r of expired.rows) { try { fs.rmSync(localTrash(r.trash_id), { recursive: true, force: true }); } catch { /* best effort */ } }
+    const trash = await pool.query('SELECT trash_id, info, events FROM ontologizer_trash WHERE tenant = $1', [tenant]);
+    trashed.clear();
+    for (const r of trash.rows) trashed.set(r.trash_id, { info: r.info, events: Array.isArray(r.events) ? r.events : [] });
     const maps = await pool.query(
       'SELECT id, name, root, nodes, updated_at, draft, is_current FROM ontologizer_maps WHERE tenant = $1 ORDER BY updated_at, id', [tenant]);
     const evs = await pool.query(
@@ -475,6 +507,105 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
           [tenant, name, evJson]);
       }));
       return name;
+    },
+
+    /**
+     * Move a map to the trash (one transaction): its brief and every event go to ontologizer_trash,
+     * its rows leave ontologizer_maps and ontologizer_events; its local attachments move too.
+     * @param {string} id @param {{ actor?: any, now?: number }} [opts] @returns {string} the trash id
+     */
+    trash(id, { actor = null, now: at = Date.now() } = {}) {
+      assertWritable();
+      check(id);
+      const row = rowOf(id);
+      if (!row) throw storeError('NOT_FOUND', `No map "${id}".`);
+      const e = load(id);
+      const base = `${id}--${trashStamp(at)}`;
+      let trashId = base;
+      for (let n = 2; trashed.has(trashId); n++) trashId = `${base}-${n}`;
+      const info = trashInfo(row, e.onto, { actor, at });
+      rows = rows.filter((r) => r !== row);
+      cache.delete(id);
+      if (currentId === id) currentId = null;
+      trashed.set(trashId, { info, events: e.events.slice() });
+      moveLocal(localDir(id), localTrash(trashId));
+      const infoJson = JSON.stringify(info);
+      enqueue(() => inTx(async (db) => {
+        await db.query(
+          `INSERT INTO ontologizer_trash (tenant, trash_id, map_id, info, brief, events, deleted_at)
+           SELECT $1, $2, $3, $4::jsonb, m.brief,
+                  COALESCE((SELECT jsonb_agg(ev.event ORDER BY ev.seq) FROM ontologizer_events ev WHERE ev.tenant = $1 AND ev.map_id = $3), '[]'::jsonb), $5
+           FROM ontologizer_maps m WHERE m.tenant = $1 AND m.id = $3`,
+          [tenant, trashId, id, infoJson, at]);
+        await db.query('DELETE FROM ontologizer_events WHERE tenant = $1 AND map_id = $2', [tenant, id]);
+        await db.query('DELETE FROM ontologizer_maps WHERE tenant = $1 AND id = $2', [tenant, id]);
+      }));
+      return trashId;
+    },
+
+    /** The trash, newest first. */
+    listTrash() {
+      assertWritable();
+      return [...trashed].map(([trashId, t]) => trashRow(trashId, t.info))
+        .sort((a, b) => b.deletedAt - a.deletedAt || (a.trashId < b.trashId ? 1 : -1));
+    },
+
+    /**
+     * Bring a map back (one transaction), under its own id or `as`; `as` also names a draft (it comes
+     * back saved, with an ontology.renamed event). A taken id is refused (code TAKEN).
+     * @param {string} trashId @param {{ as?: string|null, actor?: any }} [opts] @returns {string} the map's id
+     */
+    restore(trashId, { as = null, actor = null } = {}) {
+      assertWritable();
+      const item = typeof trashId === 'string' && TRASH_ID_RE.test(trashId) ? trashed.get(trashId) : undefined;
+      if (!item) throw storeError('NOT_FOUND', 'That item is not in the trash.');
+      if (as !== null && as !== undefined) assertName(as);
+      const info = item.info;
+      const target = check(as ?? info.id);
+      if (rows.some((r) => r.id === target)) throw storeError('TAKEN', takenForRestore(target));
+      const renamed = target !== info.id;
+      const entry = makeEntry(item.events.slice());
+      /** @type {IndexRow} */
+      const row = { id: target, name: entry.onto.name || info.name || target, root: entry.onto.root || '', nodes: countNodes(entry.onto),
+        updatedAt: Date.now(), draft: Boolean(info.draft) && !renamed };
+      applyVisibility(row, entry.onto);
+      cache.set(target, entry);
+      rows.push(row);
+      trashed.delete(trashId);
+      moveLocal(localTrash(trashId), localDir(target));
+      const snap = { ...row };
+      enqueue(() => inTx(async (db) => {
+        await db.query('DELETE FROM ontologizer_events WHERE tenant = $1 AND map_id = $2', [tenant, target]);
+        await db.query(
+          `INSERT INTO ontologizer_maps (tenant, id, name, root, nodes, updated_at, draft, brief, is_current)
+           SELECT $1, $2, $3, $4, $5, $6, $7, t.brief, false FROM ontologizer_trash t WHERE t.tenant = $1 AND t.trash_id = $8`,
+          [tenant, target, snap.name, snap.root, snap.nodes, snap.updatedAt, snap.draft, trashId]);
+        await db.query(
+          `INSERT INTO ontologizer_events (tenant, map_id, seq, event)
+           SELECT $1, $2, (x.n - 1)::integer, x.e FROM ontologizer_trash t, jsonb_array_elements(t.events) WITH ORDINALITY AS x(e, n)
+           WHERE t.tenant = $1 AND t.trash_id = $3`,
+          [tenant, target, trashId]);
+        await db.query('DELETE FROM ontologizer_trash WHERE tenant = $1 AND trash_id = $2', [tenant, trashId]);
+      }));
+      if (renamed) this.append(target, { t: 'ontology.renamed', at: now(target), name: target, ...(actor ? { actor } : {}) });
+      return target;
+    },
+
+    /**
+     * Remove trash items deleted more than `olderThanDays` ago, for good. @returns {string[]} the purged trash ids
+     * @param {{ olderThanDays?: number, now?: number }} [o]
+     */
+    purgeTrash({ olderThanDays = TRASH_DAYS, now: at = Date.now() } = {}) {
+      assertWritable();
+      const cutoff = at - olderThanDays * DAY_MS;
+      const gone = [...trashed].filter(([, t]) => typeof t.info?.deletedAt === 'number' && t.info.deletedAt < cutoff).map(([k]) => k);
+      if (!gone.length) return [];
+      for (const k of gone) {
+        trashed.delete(k);
+        try { fs.rmSync(localTrash(k), { recursive: true, force: true }); } catch { /* best effort */ }
+      }
+      enqueue((db) => db.query('DELETE FROM ontologizer_trash WHERE tenant = $1 AND trash_id = ANY($2::text[])', [tenant, gone]));
+      return gone;
     },
   };
 }

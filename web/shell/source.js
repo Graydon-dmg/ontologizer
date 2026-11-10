@@ -52,20 +52,21 @@ export function createSource(params = {}) {
     }
   }
 
-  /** @type {'connecting'|'live'|'lost'|'signed-out'} */
+  /** @type {'connecting'|'live'|'lost'|'signed-out'|'deleted'} */
   let status = 'connecting';
   /** @type {Set<(s: string) => void>} */
   const statusListeners = new Set();
-  /** @param {'connecting'|'live'|'lost'|'signed-out'} s */
+  /** @param {'connecting'|'live'|'lost'|'signed-out'|'deleted'} s */
   const setStatus = (s) => {
-    if (s === status || status === 'signed-out') return; // signed out is final until the page reloads
+    // Signed out and deleted are final until the page reloads.
+    if (s === status || status === 'signed-out' || status === 'deleted') return;
     status = s;
     for (const fn of statusListeners) { try { fn(s); } catch (err) { console.error(err); } }
   };
 
   const common = {
     snapshot: () => ontology,
-    /** 'connecting' | 'live' | 'lost' | 'signed-out' (server mode: the event stream's state) */
+    /** 'connecting' | 'live' | 'lost' | 'signed-out' | 'deleted' (server mode: the event stream's state) */
     status: () => status,
     /** @param {(s: string) => void} fn */
     onStatus(fn) { statusListeners.add(fn); return () => { statusListeners.delete(fn); }; },
@@ -124,6 +125,11 @@ export function createSource(params = {}) {
   const open = () => {
     es = new ES(route(`/api/events?from=${received}`));
     es.onopen = () => setStatus('live');
+    // Service mode: the map went to the trash. The stream's last event is a named `deleted` (onmessage
+    // never sees it): stop, and never reconnect to a map that is gone.
+    if (typeof es.addEventListener === 'function') {
+      es.addEventListener('deleted', () => { closed = true; if (es) es.close(); setStatus('deleted'); });
+    }
     es.onmessage = (/** @type {{ data: string }} */ m) => {
       setStatus('live');
       let e;
@@ -134,6 +140,7 @@ export function createSource(params = {}) {
     // The browser would reconnect to the same URL and replay from 0 (double counting).
     // Close and resume from the number of events already folded instead.
     es.onerror = () => {
+      if (closed) return;
       setStatus('lost');
       if (es) es.close();
       if (closed) return;
@@ -184,8 +191,8 @@ export function createSource(params = {}) {
     },
     /** Service mode: the page lost access (a 401 anywhere). Stops the stream and its retries. */
     signOut() { if (params.checkAccess) signOut(); },
-    /** Drop the event stream and resume from the last folded event. */
-    reconnect() { if (es) es.close(); open(); },
+    /** Drop the event stream and resume from the last folded event (never once signed out or deleted). */
+    reconnect() { if (closed) return; if (es) es.close(); open(); },
     close() { closed = true; if (es) es.close(); },
   };
 }

@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveVendorPath } from '../core/vendor.js';
-import { openStore, TENANT_RE, tenantsIsMap, TENANTS_MAP_WARNING } from '../core/store.js';
+import { openStore, TENANT_RE, tenantsIsMap, TENANTS_MAP_WARNING, TRASH_DAYS } from '../core/store.js';
 import { readTokens, checkToken, hasScope } from './tokens.js';
 import { PKG_ROOT, WEB_ROOT, PAGE_HEADERS, json, plain, sendFile, serveFile, sendPage, readBody } from './http.js';
 import { createMapHandler } from './map.js';
@@ -46,6 +46,10 @@ const MAX_STORES = 16;           // default cap on tenants with an open store at
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
 const RECHECK_MS = 5000;         // how long an open stream or chat trusts a custom identity's or policy's last answer
 const SAVING = 'The map is being saved under a new name: open it by its new name.';
+export const BUSY = 'The map is busy: try again when it is idle.';
+const NOT_IN_TRASH = 'That item is not in the trash.';
+const TRASH_ID_PATH_RE = /^[a-z0-9][a-z0-9-]{0,200}$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const BUILD_TIMEOUT_MS = 15 * 60 * 1000; // --build-timeout's default (15 minutes)
 const EXPORT_FORMATS = ['json', 'context', 'html', 'embed'];
 
@@ -439,14 +443,18 @@ export async function startService({
     }
     return null;
   }
-  /** Drop a map's handler (ending its streams and any chat) and its engine. @param {string} key */
-  async function drop(key) {
+  /**
+   * Drop a map's handler (ending its streams and any chat) and its engine. `deleted`: the map went to
+   * the trash, so each stream gets a last `deleted` event (the page shows its banner, stops retrying).
+   * @param {string} key @param {{ deleted?: boolean }} [o]
+   */
+  async function drop(key, { deleted = false } = {}) {
     const h = handlers.get(key);
     handlers.delete(key);
     engines.delete(key);
     live.delete(key);
     lastUsed.delete(key);
-    if (h) await (await h.catch(() => null))?.close();
+    if (h) await (await h.catch(() => null))?.close({ deleted });
   }
 
   // ---- builds: at most maxBuilds at once; waiting builds queue per tenant, started round-robin ----
@@ -603,6 +611,18 @@ export async function startService({
   }
   const sweeper = setInterval(sweep, Math.max(10, Math.min(idleMs, 60000)));
   sweeper.unref?.();
+  // ---- the trash: items past their 30 days are purged when a store opens, and once a day here ----
+  function purgeTrash() {
+    for (const [tenant, s] of stores) {
+      if (!s || s.failed || typeof s.purgeTrash !== 'function') continue;
+      try {
+        const gone = s.purgeTrash({ olderThanDays: TRASH_DAYS });
+        if (gone.length) log(`purged ${gone.length} item${gone.length === 1 ? '' : 's'} from the ${tenant} trash`);
+      } catch (err) { log(`could not purge the ${tenant} trash: ${/** @type {any} */ (err)?.message ?? err}`); }
+    }
+  }
+  const purger = setInterval(purgeTrash, DAY_MS);
+  purger.unref?.();
 
   // ---- per-token limits on long requests (event streams and waits) ----
   /** @type {Map<string, number>} */
@@ -1021,6 +1041,7 @@ export async function startService({
       if (!await can(p, 'read', { tenant })) return fail(res, 403, needs('read'));
       return json(res, 200, entries.filter((e) => p.sources.includes(e.name)).map((e) => ({ name: e.name, visibility: e.visibility })));
     }
+    if (rest[0] === 'trash') return trashRoute(req, res, p, tenant, rest, method);
     if (rest[0] !== 'maps') return fail(res, 404, 'not found');
 
     // /v1/t/:tenant/maps
@@ -1116,7 +1137,9 @@ export async function startService({
     const id = rest[1];
     const sub = rest.slice(2).join('/');
     const isApi = rest[2] === 'api';
-    const action = actionFor(sub);
+    // DELETE .../maps/:id moves the map to the trash (I5): a draft needs build, a named map admin.
+    const removing = method === 'DELETE' && sub === '';
+    const action = removing ? 'delete' : actionFor(sub);
     if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));
     const store = await readyStore(tenant, false);
     if (store === 'down' || store === 'full') return storeFail(res, store);
@@ -1127,9 +1150,35 @@ export async function startService({
     // The read rule: a map the caller may not read does not exist for it (404, never 403).
     const map = mapFor(tenant, id, store);
     if (!await can(p, 'read', { tenant, mapId: id, map })) return notFound();
-    if (action !== 'read' && !await can(p, action, { tenant, mapId: id, map })) return fail(res, 403, needs(action));
+    const draft = removing ? Boolean(store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === id)?.draft) : undefined;
+    if (action !== 'read' && !await can(p, action, { tenant, mapId: id, map, ...(removing ? { draft } : {}) })) {
+      return fail(res, 403, removing ? needs(draft ? 'build' : 'admin') : needs(action));
+    }
     const key = `${tenant}/${id}`;
     const base = mapBase(tenant, id);
+    if (removing) {
+      if (typeof store.trash !== 'function') return fail(res, 501, 'This store has no trash: maps cannot be deleted here.');
+      // Nothing may run on it: its build, a job, a chat answer being written, a save or a fuse.
+      if (saving.has(key) || busy(tenant, id).length) return fail(res, 409, BUSY);
+      saving.add(key); // nothing opens a new handler or stream on it meanwhile (they answer 409)
+      try {
+        const trashId = store.trash(id, { actor: p.actor });
+        builds.delete(key);
+        // End every open stream with a `deleted` event, and any chat, then drop its engine.
+        await drop(key, { deleted: true });
+        try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
+        log(`map ${key} moved to the trash as ${trashId} by ${p.actor.id}`);
+        return json(res, 200, { ok: true, trashId });
+      } catch (err) {
+        const code = /** @type {any} */ (err)?.code;
+        if (code === 'STORE_FAILED' || store.failed) return fail(res, 503, 'the store is not available');
+        if (code === 'SERVED') return fail(res, 409, String(/** @type {Error} */ (err).message));
+        if (code === 'NOT_FOUND') return notFound();
+        return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err));
+      } finally {
+        saving.delete(key);
+      }
+    }
     if (sub === 'view') {
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
       return sendPage(res, webRoot, 'index.html', base);
@@ -1270,6 +1319,66 @@ export async function startService({
   }
 
   /**
+   * The trash (I5): GET /v1/t/:tenant/trash lists what the caller could read and could restore;
+   * POST /v1/t/:tenant/trash/:trashId/restore { as? } brings one back. Same checks, same order, as a
+   * map route: scope 403, a missing item 404, then the read rule 404 (an item the caller may not read
+   * is not there for it, with the same answer), then the item's own rule 403 (a named map: admin).
+   * @param {http.IncomingMessage} req @param {http.ServerResponse} res @param {Principal} p
+   * @param {string} tenant @param {string[]} rest ['trash', trashId?, 'restore'?] @param {string} method
+   */
+  async function trashRoute(req, res, p, tenant, rest, method) {
+    const listing = rest.length === 1;
+    const restoring = rest.length === 3 && rest[2] === 'restore';
+    if (!listing && !restoring) return fail(res, 404, 'not found');
+    if (listing && method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
+    if (restoring && method !== 'POST') return fail(res, 405, 'method not allowed');
+    if (!await can(p, 'restore', { tenant })) return fail(res, 403, 'This token needs the build scope.');
+    const store = await readyStore(tenant, false);
+    if (store === 'down' || store === 'full') return storeFail(res, store);
+    /** @type {any[]} */
+    const items = store && typeof store.listTrash === 'function' ? store.listTrash() : [];
+    /** What the read rule sees of an item: the visibility it had (kept in the trash). @param {any} t */
+    const seen = (t) => visibilityOf(tenant, t.id, t);
+    if (listing) {
+      /** @type {any[]} */
+      const rows = [];
+      for (const t of items) {
+        if (!await can(p, 'read', { tenant, mapId: t.id, map: seen(t) })) continue;
+        if (!await can(p, 'restore', { tenant, mapId: t.id, map: seen(t), draft: t.draft })) continue;
+        rows.push({ trashId: t.trashId, id: t.id, name: t.name, root: t.root, nodes: t.nodes, draft: t.draft,
+          deletedAt: t.deletedAt, deletedBy: t.deletedBy?.id ?? null, purgeAt: t.deletedAt + TRASH_DAYS * DAY_MS,
+          ...(t.visibility === 'private' ? { visibility: 'private' } : srcs ? { visibility: 'public' } : {}) });
+      }
+      return json(res, 200, rows);
+    }
+    const trashId = rest[1];
+    const item = TRASH_ID_PATH_RE.test(trashId) ? items.find((t) => t.trashId === trashId) : undefined;
+    if (!item) return fail(res, 404, NOT_IN_TRASH);
+    if (!await can(p, 'read', { tenant, mapId: item.id, map: seen(item) })) return fail(res, 404, NOT_IN_TRASH);
+    if (!await can(p, 'restore', { tenant, mapId: item.id, map: seen(item), draft: item.draft })) {
+      return fail(res, 403, `This token needs the ${item.draft ? 'build' : 'admin'} scope.`);
+    }
+    const body = await readBody(req, res);
+    if (!body) return;
+    if (body.as !== undefined && body.as !== null && (typeof body.as !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(body.as))) {
+      return fail(res, 400, 'as must be lowercase letters, digits and hyphens');
+    }
+    try {
+      const id = store.restore(trashId, { as: body.as ?? null, actor: p.actor });
+      try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
+      log(`${trashId} restored as ${tenant}/${id} by ${p.actor.id}`);
+      return json(res, 200, { ok: true, id, viewUrl: `${mapBase(tenant, id)}/view` });
+    } catch (err) {
+      const code = /** @type {any} */ (err)?.code;
+      if (code === 'STORE_FAILED' || store.failed) return fail(res, 503, 'the store is not available');
+      if (code === 'NOT_FOUND') return fail(res, 404, NOT_IN_TRASH);
+      // Never say who holds the name (it may be a map this caller cannot see).
+      if (code === 'TAKEN') return fail(res, 409, 'That name is not available: restore it under another name (as).');
+      return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err));
+    }
+  }
+
+  /**
    * A text response (outline, context pack, exports). @param {http.ServerResponse} res @param {string} type
    * @param {string} body @param {Record<string, string>} [headers]
    */
@@ -1370,10 +1479,23 @@ export async function startService({
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => resolve(undefined));
-  }).catch((err) => { clearInterval(sweeper); throw err; });
+  }).catch((err) => { clearInterval(sweeper); clearInterval(purger); throw err; });
   const addr = /** @type {import('node:net').AddressInfo} */ (server.address());
   boundPort = addr.port;
   const shown = wildcard ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
+  // A files home says a server runs on it (sessions.json), so the command line leaves its maps to it:
+  // `ontologizer delete` and `restore` refuse, and a store opened elsewhere does not purge its trash.
+  /** @type {null | (() => void)} */
+  let unregister = null;
+  if (!config?.store) {
+    try {
+      const reg = openStore(home).sessions;
+      const key = reg.addServer({ pid: process.pid, port: boundPort, url: `http://${shown}:${boundPort}/`, startedAt: Date.now() });
+      const onExit = () => { try { reg.remove(key); } catch { /* best effort */ } };
+      unregister = () => { unregister = null; process.off('exit', onExit); onExit(); };
+      process.once('exit', onExit);
+    } catch (err) { log(`could not register this server in ${home}: ${/** @type {any} */ (err)?.message ?? err}`); }
+  }
   return {
     url: `http://${shown}:${boundPort}/`,
     port: boundPort,
@@ -1381,6 +1503,8 @@ export async function startService({
     tokensLoaded: authRequired,
     /** For tests: how many engines and handlers are held, and a sweep now. */
     stats: () => ({ engines: engines.size, handlers: handlers.size, sessions: sessions.size }),
+    /** The daily trash purge, now (tests). */
+    purgeTrash,
     /** The usage counters (for `serve` to flush on exit, and tests). */
     usage,
     sweep,
@@ -1389,7 +1513,9 @@ export async function startService({
       if (closing) return;
       closing = true;
       clearInterval(sweeper);
+      clearInterval(purger);
       markStopped();
+      unregister?.();
       const done = new Promise((r) => server.close(() => r(undefined)));
       for (const h of handlers.values()) {
         try { await (await h).close(); } catch { /* never built */ }

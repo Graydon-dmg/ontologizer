@@ -41,6 +41,19 @@ body:has(#minimap:not([hidden])) #topbar { right: 220px; }
   #map-name { max-width: 5.5rem; }
   #theme-switcher .info { display: none; }
 }
+/* Service mode only (body.service): "‹ All maps" before the map name. It costs the bar no row: the
+   search box may give 1.5rem more (the cost of the chevron and its gap), and the words show only while
+   the bar still fits on one row with them (ui/manage.js fitAllMaps); otherwise just the chevron, with
+   the same accessible name. The one-map page has neither. */
+.all-maps { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 2px 4px; margin: 0 -4px; border-radius: 4px;
+  color: var(--muted); text-decoration: none; font-size: 12px; white-space: nowrap; }
+.all-maps:hover, .all-maps:focus-visible { color: var(--fg); outline: none; background: var(--bg); }
+.all-maps-chev { font-size: 16px; line-height: 1; }
+.all-maps.compact .all-maps-text { display: none; }
+/* Flex wrapping goes by the basis, so the basis gives way too, not only the minimum. */
+.service #search { flex-basis: 8.5rem; min-width: 8.5rem; }
+@media (min-width: 1280px) and (max-width: 1366px) { .service #search { flex-basis: 7.5rem; min-width: 7.5rem; } }
+.service #map-name[role="button"]:hover, .service #map-name[role="button"]:focus-visible { text-decoration: underline dotted; outline: none; }
 #minimap { position: fixed; top: 10px; right: 10px; width: 200px; height: 150px; z-index: 10; background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 8px; overflow: hidden; }
 #minimap[hidden], #legend[hidden], .legend-body[hidden] { display: none; }

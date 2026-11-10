@@ -20,10 +20,14 @@ const FLAGS = {
   export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat'],
   mcp: ['--url', '--token-file', '--allow-http', '--home', '--build-timeout'],
   usage: ['--home', '--days', '--json'],
+  delete: ['--yes'],
+  trash: ['--json'],
+  restore: ['--as'],
 };
-const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export']);
+const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export', 'delete']);
 // `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:
-// the top-level list is pinned by test/b/complete.test.js.
+// the top-level list is pinned by test/b/complete.test.js. So are `delete` (map names, --yes),
+// `trash` (--json) and `restore` (--as), for the same reason.
 const EXPORT_FORMATS = ['html', 'embed', 'json', 'context'];
 
 /** @returns {string[]} saved names and draft ids, sorted */

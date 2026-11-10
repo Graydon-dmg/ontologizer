@@ -15,6 +15,9 @@ export const METHODS = {
   'maps.actions': 'view_action',
   'maps.ask': 'ask_map',
   'maps.save': 'save_map',
+  'maps.delete': 'delete_map',
+  'trash.list': 'list_trash',
+  'trash.restore': 'restore_map',
   'maps.export': 'export_map',
   'maps.context': 'get_context',
   'maps.outline': 'get_outline',
@@ -193,6 +196,8 @@ export function createClient({ url, token, tenant, fetch: f = globalThis.fetch }
     ask: (id, text, { chatId, lens, signal } = {}) => iterate('maps.ask', { id, text, ...(chatId ? { chatId } : {}), ...(lens ? { lens } : {}) }, { signal }),
     /** Save under a name. @param {string} id @param {string} name @returns {Promise<{ ok: boolean, id: string, viewUrl?: string }>} */
     save: (id, name) => via('maps.save', { id, name }),
+    /** Move to the trash (restorable for 30 days). @param {string} id @returns {Promise<{ ok: boolean, trashId: string }>} */
+    delete: (id) => via('maps.delete', { id }),
     /** Export. @param {string} id @param {{ format?: 'json' | 'context' | 'html' | 'embed', budget?: number, threeD?: boolean }} [o] @returns {Promise<string>} */
     export: async (id, { format = 'json', ...rest } = {}) => {
       const r = await via('maps.export', { id, format, ...rest });
@@ -208,9 +213,17 @@ export function createClient({ url, token, tenant, fetch: f = globalThis.fetch }
     node: (id, nodeId) => via('maps.node', { id, nodeId }),
   };
 
+  const trash = {
+    /** The deleted maps you could restore. @returns {Promise<Array<{ trashId: string, id: string, name: string, draft: boolean, deletedAt: number, purgeAt: number }>>} */
+    list: () => via('trash.list', {}),
+    /** Bring one back, under its own id or `as`. @param {string} trashId @param {{ as?: string }} [o] @returns {Promise<{ ok: boolean, id: string, viewUrl?: string }>} */
+    restore: (trashId, o = {}) => via('trash.restore', { trashId, ...o }),
+  };
+
   return {
     call,
     maps,
+    trash,
     /** Today's usage and limits. @returns {Promise<any>} */
     usage: () => via('usage', {}),
     /** The tenant's server status. @returns {Promise<any>} */

@@ -8,6 +8,7 @@ export const COMMANDS = [
   'start', 'new', 'load', 'save', 'list', 'fuse', 'rosetta', 'explain', 'research',
   'update', 'key', 'doctor', 'completion', 'complete',
   'serve', 'status', 'token', 'sources', 'export', 'mcp', 'usage',
+  'delete', 'trash', 'restore',
 ];
 
 async function loadCommands() {
