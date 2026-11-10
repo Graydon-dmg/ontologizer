@@ -25,7 +25,8 @@ async function timeoutProblems(buildTimeoutMs) {
       const e = stubEngine(x);
       return { ...e, async build(/** @type {any} */ brief) {
         if (++builds === 1) { client.messages.stream({}); await new Promise(() => {}); } // never returns
-        return e.build(brief);
+        // The second build only has to start and finish: no fixture replay, so it never nears the 150 ms timeout under load.
+        void brief; void e;
       } };
     },
   });
