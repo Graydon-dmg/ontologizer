@@ -18,6 +18,26 @@ import { ACTION_SCOPE, canRead } from '../../src/server/policy.js';
 import { openStore } from '../../src/core/store.js';
 import { createFakeClient, lines } from '../c/fake.js';
 import { req, tempHome, fixtureEvents } from './helpers-service.js';
+import { faultyStartService } from './helpers-fault.js';
+
+// Planted faults in the router itself (a broken copy of src/server/service.js, see helpers-fault.js).
+const FAULTS = {
+  /** The busy check left out of DELETE: a map is deleted while its build runs. */
+  deleteWhileBusy: [['if (saving.has(key) || busy(tenant, id).length) return fail(res, 409, BUSY);', 'if (saving.has(key)) return fail(res, 409, BUSY);']],
+  /** Streams dropped without the deleted event: they end plainly. */
+  plainEnd: [['await drop(key, { deleted: true });', 'await drop(key);']],
+  /** Streams never dropped on delete: they stay open on a map that is gone. */
+  leftOpen: [['await drop(key, { deleted: true });', '']],
+  /** The Origin rule for POST only: a cookie DELETE from another site gets through. */
+  originPostOnly: [["if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'",
+    "if (method === 'POST' && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'"]],
+  /** The scope check after the missing-map check: a read token learns which maps are missing. */
+  scopeAfterMissing: [
+    ['    if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));\n', ''],
+    ['.some((/** @type {any} */ m) => m.id === id)) return notFound();\n',
+      '.some((/** @type {any} */ m) => m.id === id)) return notFound();\n    if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));\n'],
+  ],
+};
 
 const SOURCES = [
   { name: 'wiki', url: 'https://wiki.example/mcp', visibility: 'private', allowTools: ['search'] },
@@ -54,9 +74,9 @@ function buildModel({ hold = 0 } = {}) {
 /**
  * A service on a temp home: tokens reader (read), builder (build, no sources), team (build + wiki),
  * boss (admin); maps "named" (public), "secret" (private: wiki), a public draft and a private draft.
- * @param {{ policy?: any, hold?: number }} [o]
+ * @param {{ policy?: any, hold?: number, serve?: typeof startService }} [o] serve: a broken router (a planted fault)
  */
-async function start({ policy, hold = 0 } = {}) {
+async function start({ policy, hold = 0, serve = startService } = {}) {
   const home = tempHome();
   const s = openStore(home);
   s.importEvents('named', fixtureEvents('plastic-modeling'));
@@ -77,7 +97,7 @@ async function start({ policy, hold = 0 } = {}) {
     team: createToken(f, { name: 'team', scopes: ['read', 'ask', 'build'], sources: ['wiki'] }).token,
     boss: createToken(f, { name: 'boss', scopes: ['admin'] }).token,
   };
-  const srv = await startService({
+  const srv = await serve({
     home, host: '127.0.0.1', port: 0, tokensFile: f, pingMs: 100, version: 'test',
     makeEngine: async ({ store, id }) => createEngine({ store, id, client: buildModel({ hold }) }),
     config: { sources: SOURCES, ...(policy ? { policy } : {}) },
@@ -193,41 +213,46 @@ function busyProblems(r) {
   return p;
 }
 
+/** Build a map (real engine, a model that holds its first answer), delete it while it builds, then when idle, then restore. @param {Awaited<ReturnType<typeof start>>} x */
+async function busyRun(x) {
+  const b = await x.call('builder', 'POST', `${T}/maps`, { brief: BRIEF, name: 'Glue' });
+  const id = b.json?.id;
+  const building = await x.call('builder', 'DELETE', `${T}/maps/${id}`);
+  await x.call('builder', 'GET', `${T}/maps/${id}/wait?timeout=20000`);
+  const snap = (await x.call('builder', 'GET', `${T}/maps/${id}/snapshot`)).json;
+  const count = () => { try { return fs.readFileSync(path.join(x.home, id, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).length; } catch { return -1; } };
+  const eventsBefore = count();
+  const idle = await x.call('builder', 'DELETE', `${T}/maps/${id}`);
+  const restored = await x.call('builder', 'POST', `${T}/trash/${idle.json?.trashId}/restore`, {});
+  const after = (await x.call('builder', 'GET', `${T}/maps/${id}/snapshot`)).json;
+  return { building, idle, restored, eventsBefore, eventsAfter: count(), nodesBefore: Object.keys(snap?.nodes ?? {}).length, nodesAfter: Object.keys(after?.nodes ?? {}).length };
+}
+
 test('a busy map (its build running) gets 409; once idle it is deleted, and restored intact (real engine)', async () => {
   const x = await start({ hold: 600 });
-  try {
-    const b = await x.call('builder', 'POST', `${T}/maps`, { brief: BRIEF, name: 'Glue' });
-    assert.equal(b.status, 202, b.body);
-    const id = b.json.id;
-    const building = await x.call('builder', 'DELETE', `${T}/maps/${id}`);
-    const w = await x.call('builder', 'GET', `${T}/maps/${id}/wait?timeout=20000`);
-    assert.equal(w.json?.state, 'idle', w.body);
-    const snap = (await x.call('builder', 'GET', `${T}/maps/${id}/snapshot`)).json;
-    const count = () => fs.readFileSync(path.join(x.home, id, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).length;
-    const eventsBefore = count();
-    const idle = await x.call('builder', 'DELETE', `${T}/maps/${id}`);
-    const restored = await x.call('builder', 'POST', `${T}/trash/${idle.json?.trashId}/restore`, {});
-    const after = (await x.call('builder', 'GET', `${T}/maps/${id}/snapshot`)).json;
-    const r = { building, idle, restored, eventsBefore, eventsAfter: count(), nodesBefore: Object.keys(snap.nodes).length, nodesAfter: Object.keys(after?.nodes ?? {}).length };
-    assert.deepEqual(busyProblems(r), []);
-    // Planted fault: a router that deleted it while it was building.
-    assert.ok(busyProblems({ ...r, building: idle }).length > 0);
-  } finally { await x.srv.close(); }
+  try { assert.deepEqual(busyProblems(await busyRun(x)), []); } finally { await x.srv.close(); }
 });
 
+test('planted fault: a router without the busy check on DELETE is reported', async () => {
+  const x = await start({ hold: 600, serve: await faultyStartService(FAULTS.deleteWhileBusy) });
+  try {
+    const problems = busyProblems(await busyRun(x));
+    assert.ok(problems.some((p) => p.startsWith('delete while building: 200')), problems.join('\n'));
+  } finally { await x.srv.close(); }
+});
 
 /**
  * Open a raw event stream and keep everything it sends until it ends.
  * @param {string} url @param {string} p @param {Record<string, string>} headers
  * @returns {Promise<{ status: number, text: () => string, ended: Promise<boolean> }>}
  */
-function openStream(url, p, headers) {
+function openStream(url, p, headers, waitMs = 5000) {
   const u = new URL(url);
   return new Promise((resolve, reject) => {
     let text = '';
     const r = http.get({ host: u.hostname, port: u.port, path: p, headers }, (res) => {
       res.setEncoding('utf8');
-      const ended = new Promise((done) => { res.on('end', () => done(true)); res.on('close', () => done(true)); setTimeout(() => done(false), 5000).unref(); });
+      const ended = new Promise((done) => { res.on('end', () => done(true)); res.on('close', () => done(true)); setTimeout(() => done(false), waitMs).unref(); });
       res.on('data', (c) => { text += c; });
       resolve({ status: /** @type {number} */ (res.statusCode), text: () => text, ended });
     });
@@ -246,27 +271,40 @@ function streamProblems(streams) {
   return p;
 }
 
+/** Two open streams on "named", then boss deletes it: what each stream received, and whether it ended. @param {Awaited<ReturnType<typeof start>>} x @param {number} [waitMs] */
+async function streamRun(x, waitMs = 5000) {
+  const h = { authorization: `Bearer ${x.secrets.boss}` };
+  const a = await openStream(x.url, `${T}/maps/named/events`, h, waitMs);
+  const b = await openStream(x.url, `${T}/maps/named/api/events?from=0`, h, waitMs);
+  await new Promise((r) => setTimeout(r, 200)); // both have their backlog
+  const d = await x.call('boss', 'DELETE', `${T}/maps/named`);
+  const endedA = await a.ended;
+  const endedB = await b.ended;
+  return { deleted: d.status, sent: a.text().includes('"t":"node.added"'), streams: [{ text: a.text(), ended: endedA }, { text: b.text(), ended: endedB }] };
+}
+
 test('on delete every open stream of the map ends with the deleted event; the map is gone after', async () => {
   const x = await start();
   try {
-    const h = { authorization: `Bearer ${x.secrets.boss}` };
-    const a = await openStream(x.url, `${T}/maps/named/events`, h);
-    const b = await openStream(x.url, `${T}/maps/named/api/events?from=0`, h);
-    assert.equal(a.status, 200);
-    await new Promise((r) => setTimeout(r, 200)); // both have their backlog
-    const d = await x.call('boss', 'DELETE', `${T}/maps/named`);
-    assert.equal(d.status, 200, d.body);
-    const endedA = await a.ended;
-    const endedB = await b.ended;
-    const streams = [{ text: a.text(), ended: endedA }, { text: b.text(), ended: endedB }];
-    assert.deepEqual(streamProblems(streams), []);
-    assert.ok(a.text().includes('"t":"node.added"'), 'the stream had sent the map first');
+    const r = await streamRun(x);
+    assert.equal(r.deleted, 200);
+    assert.ok(r.sent, 'the stream had sent the map first');
+    assert.deepEqual(streamProblems(r.streams), []);
     assert.equal((await x.call('boss', 'GET', `${T}/maps/named/events`)).status, 404);
-    // Planted faults: a stream ended plainly (no deleted event), and one left open.
-    const plain = streams.map((s) => ({ ...s, text: s.text.replace(/event: deleted\ndata: .*\n\n$/, '') }));
-    assert.equal(streamProblems(plain).length, 2);
-    assert.equal(streamProblems([{ ...streams[0], ended: false }]).length, 1);
   } finally { await x.srv.close(); }
+});
+
+test('planted faults: streams that end without the deleted event, or stay open, are reported', async () => {
+  const plain = await start({ serve: await faultyStartService(FAULTS.plainEnd) });
+  try {
+    const problems = streamProblems((await streamRun(plain)).streams);
+    assert.equal(problems.filter((p) => /ended without the deleted event/.test(p)).length, 2, problems.join('\n'));
+  } finally { await plain.srv.close(); }
+  const open = await start({ serve: await faultyStartService(FAULTS.leftOpen) });
+  try {
+    const problems = streamProblems((await streamRun(open, 1500)).streams);
+    assert.equal(problems.filter((p) => /is still open/.test(p)).length, 2, problems.join('\n'));
+  } finally { await open.srv.close(); }
 });
 
 /** A cookie DELETE or POST must carry this server's Origin. @param {Record<string, number>} got */
@@ -275,43 +313,59 @@ function originProblems(got) {
   return Object.entries(want).filter(([k, v]) => got[k] !== v).map(([k, v]) => `${k}: ${got[k]}, want ${v}`);
 }
 
+/** A cookie session for boss, then DELETE and restore with a foreign, a missing and the server's own Origin. @param {Awaited<ReturnType<typeof start>>} x */
+async function originRun(x) {
+  const own = x.url;
+  const login = await req(x.url, '/v1/session', { method: 'POST', body: { token: x.secrets.boss }, headers: { origin: own } });
+  const cookie = String(login.headers['set-cookie']).split(';')[0];
+  /** @type {Record<string, number>} */
+  const got = {};
+  got['delete, foreign Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: 'http://evil.example' })).status;
+  got['delete, no Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie })).status;
+  const d = await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: own });
+  got['delete, own Origin'] = d.status;
+  got['restore, foreign Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: 'http://evil.example' })).status;
+  got['restore, own Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: own })).status;
+  return got;
+}
+
 test('a cookie DELETE or restore POST with a foreign Origin (or none) gets 403', async () => {
   const x = await start();
+  try { assert.deepEqual(originProblems(await originRun(x)), []); } finally { await x.srv.close(); }
+});
+
+test('planted fault: an Origin rule that covers POST but not DELETE is reported', async () => {
+  const x = await start({ serve: await faultyStartService(FAULTS.originPostOnly) });
   try {
-    const own = x.url;
-    const login = await req(x.url, '/v1/session', { method: 'POST', body: { token: x.secrets.boss }, headers: { origin: own } });
-    const cookie = String(login.headers['set-cookie']).split(';')[0];
-    /** @type {Record<string, number>} */
-    const got = {};
-    got['delete, foreign Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: 'http://evil.example' })).status;
-    got['delete, no Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie })).status;
-    const d = await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: own });
-    got['delete, own Origin'] = d.status;
-    got['restore, foreign Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: 'http://evil.example' })).status;
-    got['restore, own Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: own })).status;
-    assert.deepEqual(originProblems(got), []);
-    // Planted fault: a router that took the foreign Origin.
-    assert.deepEqual(originProblems({ ...got, 'delete, foreign Origin': 200 }), ['delete, foreign Origin: 200, want 403']);
+    const problems = originProblems(await originRun(x));
+    assert.ok(problems.includes('delete, foreign Origin: 200, want 403'), problems.join('\n'));
   } finally { await x.srv.close(); }
 });
 
+/** The answers that show the check order. @param {Awaited<ReturnType<typeof start>>} x @returns {Promise<Array<[string, number, number]>>} */
+async function orderRows(x) {
+  return [
+    ['no token', (await x.call('', 'DELETE', `${T}/maps/named`)).status, 401],
+    ['another tenant', (await x.call('boss', 'DELETE', '/v1/t/other/maps/named')).status, 404],
+    ['another tenant\'s trash', (await x.call('boss', 'GET', '/v1/t/other/trash')).status, 404],
+    ['read scope on a missing map', (await x.call('reader', 'DELETE', `${T}/maps/no-such-map`)).status, 403],
+    ['read scope restoring a missing item', (await x.call('reader', 'POST', `${T}/trash/nothing--20260101-000000z/restore`, {})).status, 403],
+    ['build scope on a missing map', (await x.call('builder', 'DELETE', `${T}/maps/no-such-map`)).status, 404],
+    ['restore a missing item', (await x.call('builder', 'POST', `${T}/trash/nothing--20260101-000000z/restore`, {})).status, 404],
+    ['restore with a GET', (await x.call('builder', 'GET', `${T}/trash/nothing--20260101-000000z/restore`)).status, 405],
+  ];
+}
+
 test('the check order: 401, tenant 404, scope 403, then a missing map 404', async () => {
   const x = await start();
+  try { assert.deepEqual(statusProblems(await orderRows(x)), []); } finally { await x.srv.close(); }
+});
+
+test('planted fault: a scope check moved after the missing-map check is reported', async () => {
+  const x = await start({ serve: await faultyStartService(FAULTS.scopeAfterMissing) });
   try {
-    /** @type {Array<[string, number, number]>} */
-    const rows = [
-      ['no token', (await x.call('', 'DELETE', `${T}/maps/named`)).status, 401],
-      ['another tenant', (await x.call('boss', 'DELETE', '/v1/t/other/maps/named')).status, 404],
-      ['another tenant\'s trash', (await x.call('boss', 'GET', '/v1/t/other/trash')).status, 404],
-      ['read scope on a missing map', (await x.call('reader', 'DELETE', `${T}/maps/no-such-map`)).status, 403],
-      ['read scope restoring a missing item', (await x.call('reader', 'POST', `${T}/trash/nothing--20260101-000000z/restore`, {})).status, 403],
-      ['build scope on a missing map', (await x.call('builder', 'DELETE', `${T}/maps/no-such-map`)).status, 404],
-      ['restore a missing item', (await x.call('builder', 'POST', `${T}/trash/nothing--20260101-000000z/restore`, {})).status, 404],
-      ['restore with a GET', (await x.call('builder', 'GET', `${T}/trash/nothing--20260101-000000z/restore`)).status, 405],
-    ];
-    assert.deepEqual(statusProblems(rows), []);
-    // Planted fault: a scope check after the missing-map check (read scope would see 404).
-    assert.equal(statusProblems([['read scope on a missing map', 404, 403]]).length, 1);
+    const problems = statusProblems(await orderRows(x));
+    assert.ok(problems.includes('read scope on a missing map: 404, want 403'), problems.join('\n'));
   } finally { await x.srv.close(); }
 });
 
