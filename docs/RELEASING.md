@@ -64,11 +64,14 @@ git push --follow-tags     # pushes the commit and the tag
 
 Then on GitHub → **Actions** → **release** → the waiting run → **Review deployments** → approve `npm-publish`.
 
-The workflow runs two jobs:
-1. **verify** (no publish rights): refuses to go on unless the tag is exactly `v` + the `package.json` version, installs exactly the locked dependencies (`npm ci --ignore-scripts`) and runs the full check.
-2. **publish** (only after verify passes **and** you approve): checks out the same commit and runs `npm publish --access public --ignore-scripts`; npm attaches provenance automatically. This job installs no dependencies and runs no tests.
+The workflow runs three jobs:
+1. **build** (no publish rights): installs exactly the locked dependencies (`npm ci --ignore-scripts`) and runs only `node scripts/build-embed.js`, so esbuild is the only outside code that runs. It records the SHA-256 hash of both bundle files and uploads just those two files and their hashes.
+2. **verify** (no publish rights): refuses to go on unless the tag is exactly `v` + the `package.json` version, downloads build's bundle, checks its hashes, and runs the full check against those exact files. Afterwards it checks the hashes again and fails if anything changed them. It uploads nothing.
+3. **publish** (only after build and verify pass **and** you approve): checks out the same commit, downloads build's bundle, checks both hashes against what build recorded, refuses if `web/dist/` holds any other file, prints the hashes in the log, and runs `npm publish --access public --ignore-scripts`; npm attaches provenance automatically. This job installs no dependencies and runs no tests.
 
-**The export bundle.** The package ships `web/dist/embed.js` and `web/dist/embed-3d.js`, built from `web/embed/` by esbuild, a development dependency. `verify` builds them (`npm run check` runs the build first) and uploads `web/dist/` as a short-lived artifact; `publish` downloads it, checks both files are there and non-empty, and packs them. Publish only receives files: it never installs or runs a dependency, so the rule above still holds.
+**The export bundle.** The package ships `web/dist/embed.js` and `web/dist/embed-3d.js`, built from `web/embed/` by esbuild, a development dependency. Only the build job's files can be published: the tests run elsewhere and cannot swap them, because publish checks the hashes build recorded. To match a published bundle to its release run, compare `sha256sum` of the files in the npm tarball with the hashes printed in that run's publish log.
+
+**Publishing by hand** (emergencies only) must build the bundle first: run `node scripts/build-embed.js` before `npm publish`. `prepack` does this for you, unless you pass `--ignore-scripts`.
 
 Check the result on npmjs.com: the version page shows a **Provenance** badge linking to the exact commit and workflow run.
 
@@ -95,7 +98,8 @@ Checked on 1.1.0: the shasums differ, all 107 files are identical, and SLSA prov
 - **No stored credential:** the publish credential is minted per run by npm from GitHub's OIDC token, and only for `Graydon-dmg/ontologizer`, `release.yml`, environment `npm-publish`.
 - **Human gate:** the `npm-publish` environment requires your approval for every run.
 - **Least privilege:** only the publish job can request an OIDC token (`contents: read`, `id-token: write`); everything else is read-only.
-- **Dependency code never meets the token:** tests (which run dependency code) happen in the verify job, which cannot mint a token. The publish job installs no dependencies, and every install and publish runs with `--ignore-scripts`, so no package lifecycle script runs anywhere in CI.
+- **Dependency code never meets the token:** tests (which run dependency code) happen in the verify job, which cannot mint a token and uploads nothing. The publish job installs no dependencies, and every install and publish runs with `--ignore-scripts`, so no package lifecycle script runs anywhere in CI.
+- **Hash-checked bundle:** publish ships only the two bundle files the build job made, checked against build's SHA-256 hashes.
 - **Pinned actions:** third-party actions are pinned to full commit hashes, so a moved tag upstream cannot change what runs.
 - **Exact npm:** the npm CLI used to publish is pinned to an exact version.
 - **No untrusted input:** the workflows never run on `pull_request_target`, and no event text is pasted into a shell script.

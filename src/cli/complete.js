@@ -17,7 +17,7 @@ const FLAGS = {
   status: ['--home', '--json', '--config'],
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
-  export: ['--format', '--3d', '--budget', '--out', '--live-url'],
+  export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat'],
 };
 const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export']);
 // `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:

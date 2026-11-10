@@ -35,6 +35,26 @@ export function exportFileName(name, format) {
   return `${slug}.${format}`;
 }
 
+/**
+ * The "Open live" link an export carries: this page's address without its query or hash, or null
+ * when the page is on this computer (localhost, 127.0.0.0/8, ::1), where the link would be dead
+ * for anyone reading the export.
+ * @param {string} href @returns {string|null}
+ */
+export function liveLink(href) {
+  let u;
+  try { u = new URL(href); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const loopback = host === 'localhost' || host.endsWith('.localhost')
+    || /^127\.\d+\.\d+\.\d+$/.test(host)
+    || host === '::1' || /^::ffff:(127\.|7f[0-9a-f]{2}:)/.test(host)
+    // "Any address" binds: dead links for anyone else.
+    || host === '0.0.0.0' || host === '::' || /^::ffff:(0\.0\.0\.0|0:0)$/.test(host);
+  if (loopback) return null;
+  return `${u.origin}${u.pathname}`;
+}
+
 /** @type {Promise<string>|null} */
 let bundleText = null;
 /** The 2D bundle, fetched once. Rejects with a readable message when it was never built. */
@@ -172,7 +192,7 @@ export function mountExport(el, shell) {
     try {
       const snap = shell.snapshot();
       const bundle = item.format === 'html' || item.format === 'embed' ? await loadBundle() : undefined;
-      const text = exportMap(snap, { format: item.format, bundle, budget: MENU_BUDGET, liveUrl: location.href });
+      const text = exportMap(snap, { format: item.format, bundle, budget: MENU_BUDGET, liveUrl: liveLink(location.href) });
       if (item.format === 'html') {
         download(text, exportFileName(snap.name, 'html'), 'text/html');
         say('Downloaded a page that works offline.');

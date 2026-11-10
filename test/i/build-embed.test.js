@@ -41,10 +41,10 @@ test('the bundles define the element once, carry their licences, and only the 3D
 });
 
 test('each bundle names every package esbuild put in it, with its full licence text and copyright line', async () => {
-  for (const [entry, threeD] of /** @type {const} */ ([['index.js', false], ['index-3d.js', true]])) {
+  for (const [entry, threeD] of /** @type {const} */ ([[['index.js'], false], [['index.js', 'index-3d.js'], true]])) {
     const pkgs = await bundledPackages(entry);
     assert.ok(pkgs.size >= 10, `${entry}: ${pkgs.size} packages`);
-    assert.deepEqual(licenceHeaderProblems(await bundleText(threeD), pkgs, licenceText), [], entry);
+    assert.deepEqual(licenceHeaderProblems(await bundleText(threeD), pkgs, licenceText), [], entry.join(' + '));
   }
   const pkgs = await bundledPackages('index.js');
   assert.ok([...pkgs.keys()].some((id) => id.startsWith('d3-zoom@')));

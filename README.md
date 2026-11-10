@@ -111,7 +111,7 @@ The server speaks plain HTTP: beyond this machine, put it behind an HTTPS revers
 
 ## Export
 
-`ontologizer export <map> --format html` writes one page that shows the map offline: pan, zoom, click a node for its details, collapse, search. Nothing in it loads from the network. `--format embed` gives a fragment to paste into any page, `--format json` the map itself, and `--format context` a short markdown brief of the map (outline, cross-links, insights, thin areas, sources) to hand to an AI agent, trimmed to `--budget` tokens (4000 by default). On the page, the same four are in the **Export** menu; **Copy for an agent** copies the context pack.
+`ontologizer export <map> --format html` writes one page that shows the map offline: pan, zoom, click a node for its details, collapse, search. Nothing in it loads from the network. `--format embed` gives a fragment to paste into any page, `--format json` the map itself, and `--format context` a short markdown brief of the map (outline, cross-links, insights, thin areas, sources) to hand to an AI agent, trimmed to `--budget` tokens (4000 by default). On the page, the same four are in the **Export** menu; **Copy for an agent** copies the context pack. Several embeds can share one page, 2D and 3D mixed; each keeps the views it was exported with. A page or embed exported from the menu links back to the live map (**Open live**) only when the map is served from an address other people can reach, never `localhost`, and without the address's query or `#` part.
 
 ```bash
 ontologizer export demo --format html --out demo.html
@@ -121,13 +121,14 @@ ontologizer export demo --format context --budget 1500
 ## Requirements
 
 - Node 22+
-- An Anthropic API key
+- An Anthropic API key from the [Claude Console](https://console.anthropic.com/). Claude.ai subscription logins (Pro, Max) can't be used: Anthropic's terms keep them for its own apps.
 
 ## Cost and privacy
 
 - Model calls go to Anthropic's API using your own key. A map costs a few cents of API usage; Explain, Research and Sources (in the node menu or as commands), `fuse` and `rosetta` each make extra calls.
 - Maps are stored locally in `~/.ontologizer`.
-- The page is served only on 127.0.0.1 (your own machine).
+- The page is served only on 127.0.0.1 (your own machine). Service mode listens on the network only when you create a token.
+- Exports carry the map's nodes, summaries, articles and sources, never your API key. The page and embed leave out the chat, your original prompt and job errors; JSON leaves out the chat unless you add `--include-chat`.
 
 See [SECURITY.md](https://github.com/Graydon-dmg/ontologizer/blob/main/SECURITY.md).
 

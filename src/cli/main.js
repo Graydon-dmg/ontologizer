@@ -39,6 +39,9 @@ export async function main(argv, over = {}) {
     return 0;
   }
   const { default: yargs } = await import('yargs');
+  // Our own package.json, never one yargs guesses from where it is installed (a host project's).
+  const { packageVersion } = await import('./banner.js');
+  const version = await packageVersion();
   let code = 0;
   let failed = false;
   const cli = yargs(argv)
@@ -51,7 +54,7 @@ export async function main(argv, over = {}) {
     .strict()
     .help()
     .alias('h', 'help')
-    .version()
+    .version(version)
     .exitProcess(false)
     .showHelpOnFail(false)
     .fail((msg, err) => {
