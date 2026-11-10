@@ -1,10 +1,11 @@
 // @ts-check
 // "Export" in the top bar: the page's side of `ontologizer export`. It runs the same exportMap on the
 // map the page is showing; the page and embed formats inline the built bundle from /dist/embed.js.
-import { exportMap, estimateTokens } from '../../../src/core/export/index.js';
+import { exportMap, estimateTokens, obsidianVault, zipFiles } from '../../../src/core/export/index.js';
 import { keepFitted } from './fit.js';
 import { openConnectPanel } from './connect.js';
 import { TENANT } from '../base.js';
+import { categoryColor } from '../../shared/tokens.js';
 
 /** The menu items, in order. `id` is the element id; `#export-context` is "Copy for an agent". */
 export const EXPORT_ITEMS = /** @type {const} */ ([
@@ -12,12 +13,13 @@ export const EXPORT_ITEMS = /** @type {const} */ ([
   { id: 'export-embed', label: 'Copy embed', format: 'embed', action: 'copy' },
   { id: 'export-json', label: 'Download JSON', format: 'json', action: 'download' },
   { id: 'export-context', label: 'Copy for an agent', format: 'context', action: 'copy' },
+  { id: 'export-obsidian', label: 'Download for Obsidian', format: 'obsidian', action: 'download' },
 ]);
 
 /** The last menu item opens the Connect panel instead of exporting. */
 export const CONNECT_ITEM = /** @type {const} */ ({ id: 'connect-agent', label: 'Connect an agent…', action: 'connect' });
 
-/** Everything the menu shows: the four exports, then Connect an agent. */
+/** Everything the menu shows: the exports, then Connect an agent. */
 export const MENU_ITEMS = /** @type {const} */ ([...EXPORT_ITEMS, CONNECT_ITEM]);
 
 /**
@@ -36,7 +38,7 @@ export const MENU_BUDGET = 4000;
 
 /**
  * A download file name for a map: its name as a slug, plus the format's extension.
- * @param {string} name @param {'html'|'json'} format
+ * @param {string} name @param {'html'|'json'|'zip'} format
  */
 export function exportFileName(name, format) {
   const slug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'map';
@@ -61,6 +63,16 @@ export function liveLink(href) {
     || host === '0.0.0.0' || host === '::' || /^::ffff:(0\.0\.0\.0|0:0)$/.test(host);
   if (loopback) return null;
   return `${u.origin}${u.pathname}`;
+}
+
+/**
+ * The Obsidian download: one .zip holding the map's folder (notes and .obsidian/graph.json), the
+ * same files `ontologizer export --format obsidian` writes.
+ * @param {import('../../../src/core/schema.js').Ontology} snap @returns {Uint8Array}
+ */
+export function obsidianZip(snap) {
+  const v = obsidianVault(snap, { colorOf: categoryColor });
+  return zipFiles([...v.notes, ...v.config].map((f) => ({ name: `${v.folder}/${f.path}`, data: f.text })));
 }
 
 /** @type {Promise<string>|null} */
@@ -92,9 +104,9 @@ async function copyText(text) {
   if (!ok) throw new Error('the browser did not allow copying');
 }
 
-/** @param {string} text @param {string} file @param {string} type */
-function download(text, file, type) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+/** @param {string|Uint8Array} data @param {string} file @param {string} type */
+function download(data, file, type) {
+  const url = URL.createObjectURL(new Blob([/** @type {BlobPart} */ (data)], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = file;
@@ -198,11 +210,16 @@ export function mountExport(el, shell) {
   pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); btn.focus(); } });
   document.addEventListener('mousedown', (e) => { if (!pop.hidden && !el.contains(/** @type {Node} */ (e.target))) close(); }, true);
 
-  /** @param {{ format: 'html'|'embed'|'json'|'context' }} item */
+  /** @param {{ format: 'html'|'embed'|'json'|'context'|'obsidian' }} item */
   async function run(item) {
     say('Working…');
     try {
       const snap = shell.snapshot();
+      if (item.format === 'obsidian') {
+        download(obsidianZip(snap), exportFileName(snap.name, 'zip'), 'application/zip');
+        say('Downloaded a .zip for Obsidian: unzip it and open the folder as a vault, or drop it into an existing vault.');
+        return;
+      }
       const bundle = item.format === 'html' || item.format === 'embed' ? await loadBundle() : undefined;
       const text = exportMap(snap, { format: item.format, bundle, budget: MENU_BUDGET, liveUrl: liveLink(location.href) });
       if (item.format === 'html') {

@@ -29,7 +29,8 @@ The reader chose these sources as the references for this map: ${chosen.join(', 
 const citeOf = (ectx, obj) => (ectx.cite ? ectx.cite(obj?.sources) : []);
 
 const LEVELS = new Set(['beginner', 'intermediate', 'expert']);
-const LINK_TYPES = new Set(['influences', 'requires', 'part-of', 'bridge', 'analog']);
+/** Cross-link kinds the model may emit (each needs a legend row: web/shared/tokens.js EDGE_KINDS). */
+export const LINK_TYPES = new Set(['influences', 'requires', 'part-of', 'bridge', 'analog']);
 const MAX_CATEGORIES = 10;
 const MAX_PER_CATEGORY = 25;
 const MAX_EDGES = 25;

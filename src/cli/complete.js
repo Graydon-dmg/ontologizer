@@ -17,7 +17,7 @@ const FLAGS = {
   status: ['--home', '--json', '--config'],
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
-  export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat'],
+  export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat', '--force'],
   mcp: ['--url', '--token-file', '--allow-http', '--home', '--build-timeout'],
   usage: ['--home', '--days', '--json'],
   delete: ['--yes'],
@@ -28,7 +28,7 @@ const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse',
 // `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:
 // the top-level list is pinned by test/b/complete.test.js. So are `delete` (map names, --yes),
 // `trash` (--json) and `restore` (--as), for the same reason.
-const EXPORT_FORMATS = ['html', 'embed', 'json', 'context'];
+const EXPORT_FORMATS = ['html', 'embed', 'json', 'context', 'obsidian'];
 
 /** @returns {string[]} saved names and draft ids, sorted */
 function savedNames() {

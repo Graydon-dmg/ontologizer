@@ -1,5 +1,5 @@
 // @ts-check
-import { legendGroups, isFused, fusedSwatches } from '../legend.js';
+import { legendGroups, isFused, fusedSwatches, lineRows } from '../legend.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -8,6 +8,32 @@ function svg(tag, attrs) {
   const n = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
   return n;
+}
+
+/**
+ * A 22x12 swatch of one line kind, drawn from its edge style (null = the grey tree line).
+ * Curved kinds bow upward in proportion to their style's curve.
+ * @param {import('../../shared/tokens.js').EdgeStyle|null} st
+ */
+export function lineSwatch(st) {
+  const s = svg('svg', { width: 22, height: 12, viewBox: '0 0 22 12', 'aria-hidden': 'true', class: 'legend-swatch' });
+  const curve = st ? st.curve : 0;
+  const y = curve > 0 ? 9.5 : 6;
+  const lift = Math.min(7, curve * 22);
+  const d = curve > 0 ? `M1 ${y} Q11 ${y - 2 * lift} 21 ${y}` : `M1 ${y} L21 ${y}`;
+  /** @type {Record<string,string|number>} */
+  const attrs = { d, fill: 'none', 'stroke-linecap': 'butt' };
+  if (st) {
+    attrs.stroke = st.color;
+    attrs['stroke-width'] = st.width;
+    if (st.dash) attrs['stroke-dasharray'] = st.dash.join(' ');
+  } else {
+    attrs.stroke = 'var(--muted)';
+    attrs['stroke-opacity'] = 0.75;
+    attrs['stroke-width'] = 1.2;
+  }
+  s.append(svg('path', attrs));
+  return s;
 }
 
 /** @param {HTMLElement} el @param {any} shell */
@@ -33,7 +59,8 @@ export function mountLegend(el, shell) {
     const o = shell.snapshot();
     const groups = legendGroups(o, shell.tokens);
     const fused = isFused(o);
-    const next = JSON.stringify([groups, fused]);
+    const lines = lineRows(o, shell.tokens);
+    const next = JSON.stringify([groups, fused, lines.map((l) => l.type)]);
     if (next === sig) return;
     sig = next;
     body.replaceChildren();
@@ -58,27 +85,15 @@ export function mountLegend(el, shell) {
       }
     }
     if (fused) {
-      const sw = fusedSwatches(shell.tokens);
+      // The bridge line is keyed under "Lines" with the other kinds; Fusion keys the hybrid node.
+      const h = fusedSwatches(shell.tokens).hybrid;
       const t = document.createElement('div');
       t.className = 'legend-title';
       t.textContent = 'Fusion';
       body.append(t);
-
-      const r1 = document.createElement('div');
-      r1.className = 'legend-row';
-      const s1 = svg('svg', { width: 22, height: 10, viewBox: '0 0 22 10' });
-      s1.append(svg('line', {
-        x1: 0, y1: 5, x2: 22, y2: 5, stroke: sw.bridge.color,
-        'stroke-width': sw.bridge.width, 'stroke-dasharray': (sw.bridge.dash || []).join(' '),
-      }));
-      const l1 = document.createElement('span');
-      l1.textContent = 'Bridge';
-      r1.append(s1, l1);
-
       const r2 = document.createElement('div');
       r2.className = 'legend-row';
       const s2 = svg('svg', { width: 22, height: 22, viewBox: '0 0 22 22' });
-      const h = sw.hybrid;
       const ring = (/** @type {number} */ r) => svg('circle', {
         cx: 11, cy: 11, r, fill: 'none', stroke: h.stroke, 'stroke-width': h.width || 1.5,
         'stroke-dasharray': (h.dash || []).join(' '),
@@ -88,8 +103,31 @@ export function mountLegend(el, shell) {
       const l2 = document.createElement('span');
       l2.textContent = 'Hybrid';
       r2.append(s2, l2);
-      body.append(r1, r2);
+      body.append(r2);
     }
+    // Lines: sized to the legend's width, never widening it (long meanings wrap).
+    const sec = document.createElement('div');
+    sec.className = 'legend-lines';
+    const lt = document.createElement('div');
+    lt.className = 'legend-title';
+    lt.textContent = 'Lines';
+    sec.append(lt);
+    for (const l of lines) {
+      const row = document.createElement('div');
+      row.className = 'legend-row legend-line';
+      row.dataset.kind = l.type;
+      const txt = document.createElement('span');
+      const b = document.createElement('span');
+      b.className = 'legend-kind';
+      b.textContent = l.label;
+      const m = document.createElement('span');
+      m.className = 'legend-meaning';
+      m.textContent = ': ' + l.meaning;
+      txt.append(b, m);
+      row.append(lineSwatch(l.style), txt);
+      sec.append(row);
+    }
+    body.append(sec);
     sync();
   }
 

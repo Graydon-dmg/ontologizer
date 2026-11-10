@@ -76,7 +76,7 @@ test('export refuses bad flag combinations with a clear message', async () => {
 });
 
 test('tab completion knows export: its flags, the format values and map names', () => {
-  assert.deepEqual(complete(['export', '--f']), ['--format']);
+  assert.deepEqual(complete(['export', '--f']), ['--format', '--force']);
   assert.deepEqual(complete(['export', 'demo', '--format', 'c']), ['context']);
 });
 

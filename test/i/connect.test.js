@@ -65,12 +65,12 @@ test('usageLines with and without limits', () => {
 
 /** @param {{ id: string }[]} items @returns {string[]} */
 function menuProblems(items) {
-  const want = ['export-html', 'export-embed', 'export-json', 'export-context', 'connect-agent'];
+  const want = ['export-html', 'export-embed', 'export-json', 'export-context', 'export-obsidian', 'connect-agent'];
   const got = items.map((i) => i.id);
   return JSON.stringify(got) === JSON.stringify(want) ? [] : [`menu is ${got.join(', ')}`];
 }
 
-test('the Export menu is the four exports, then Connect an agent', () => {
+test('the Export menu is the exports, then Connect an agent', () => {
   assert.deepEqual(menuProblems([...EXPORT_ITEMS]), []);
   assert.equal(EXPORT_ITEMS.at(-1)?.label, 'Connect an agent…');
 });

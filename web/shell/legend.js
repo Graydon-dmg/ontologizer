@@ -59,3 +59,20 @@ export function sourceMapName(ontology, family) {
   if (roots[family] && roots[family].label) return shortName(roots[family].label);
   return TITLES[family];
 }
+
+/**
+ * The "Lines" rows: the branch (tree) line, then one row per cross-link kind present in the map,
+ * in EDGE_KINDS order. Kinds with no entry in the table are left out (the table is the key).
+ * @param {any} ontology
+ * @param {typeof import('../shared/tokens.js')} tokens
+ * @returns {{ type: string, label: string, meaning: string, style: import('../shared/tokens.js').EdgeStyle|null }[]}
+ */
+export function lineRows(ontology, tokens) {
+  const present = new Set(((ontology && ontology.edges) || []).map((/** @type {any} */ e) => e && e.type));
+  const b = tokens.BRANCH_KIND;
+  return [
+    { type: b.type, label: b.label, meaning: b.meaning, style: null },
+    ...tokens.EDGE_KINDS.filter((k) => present.has(k.type))
+      .map((k) => ({ type: k.type, label: k.label, meaning: k.meaning, style: tokens.edgeStyle(k.type) })),
+  ];
+}

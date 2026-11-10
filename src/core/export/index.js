@@ -6,11 +6,15 @@ import { contextPack, estimateTokens, minContextBudget } from './context.js';
 
 export { contextPack, estimateTokens, minContextBudget, CONTEXT_HEADINGS } from './context.js';
 export { htmlPage, embedFragment, exportSnapshot } from './html.js';
+export { obsidianVault, safeName, mdText, yamlString } from './obsidian.js';
+export { zipFiles, crc32 } from './zip.js';
 
 /** @typedef {import('../schema.js').Ontology} Ontology */
 /** @typedef {'html'|'embed'|'json'|'context'} ExportFormat */
 
 export const FORMATS = /** @type {const} */ (['html', 'embed', 'json', 'context']);
+/** Formats that make a folder of files, not one text: obsidian (obsidianVault; the page zips it with zipFiles). */
+export const FOLDER_FORMATS = /** @type {const} */ (['obsidian']);
 
 /**
  * @param {Ontology} ontology
@@ -41,6 +45,8 @@ export function exportMap(ontology, { format, bundle, budget = 4000, liveUrl = n
       }
       return text;
     }
+    case /** @type {any} */ ('obsidian'):
+      throw new Error('The obsidian format is a folder of notes: use obsidianVault (and zipFiles for one download).');
     default:
       throw new Error(`Unknown export format "${format}": use ${FORMATS.join(', ')}.`);
   }

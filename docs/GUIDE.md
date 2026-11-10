@@ -53,6 +53,19 @@ If wave 2 fails, you keep the finished tree.
 
 Each top-level branch is a category, and every node below it takes that category's colour. The legend on the page lists them.
 
+Lines between ideas come in kinds, and the legend's **Lines** key shows the ones in your map:
+
+| Line | Kind | Means |
+|---|---|---|
+| grey, straight | branch | an idea and its parent |
+| solid blue, gentle arc | influences | A affects B |
+| solid orange, straight | requires | B needs A first |
+| green dots, straight | part of | A is a piece of B |
+| purple long dashes, wide arc | bridge | a concrete link between distant areas (in a fused map: across the seam) |
+| teal short dashes, arc | analog | A is like B |
+
+Click a line's end node to read why the link is there.
+
 ### Cross-links
 
 A cross-link joins two nodes in different branches and carries a one-sentence `why`. Each link has one of five types:
@@ -247,9 +260,10 @@ ontologizer export demo --format context --budget 1500 > demo.md
 - `html`: one self-contained page (`<map>.html` here, or `--out <file>`). It works offline: pan, zoom, click a node for its label, summary, explanation and sources, collapse a branch, search. Nothing in it loads from the network; links (a node's sources, and **Open live** when you pass `--live-url <url>`) open only when you click them. About 170 KB for the demo; `--3d` adds the 3D view (about 750 KB) and prints the size.
 - `embed`: the same map as a fragment (`<map>.embed.html`) to paste into any page: one `<ontologizer-map>` element, 480 px high. Several on one page work.
 - `json`: the map as the page loads it, to stdout or `--out`, with the chat left out; `--include-chat` keeps it.
+- `obsidian`: the map as an Obsidian vault folder, `<Map name>/`, written into `--out <dir>` (default: the current folder). One note per node, `<Label>.md`, with frontmatter (category, depth, tags `ontologizer` and the category's, aliases when the label had to change to be a file name, the map's name) and the node's summary, article, `Part of: [[parent]]`, `Branches: [[child]], …`, its cross-links both ways (`- influences → [[Target]]: why`, incoming ones marked) and its http(s) sources; the index note `<Map name>.md` has the subject, scope, each category with its top notes, and the insights. Two labels that would make the same file name become `Label (Category)`, then `Label 2`. `.obsidian/graph.json` colours each category's notes in the graph view as on the page; it is written only into a new folder, never over an existing `.obsidian`, and not when `--out` is already a vault. A folder that exists is refused unless you pass `--force`, which rewrites the export's notes and keeps your other files. Open the folder in Obsidian as a vault, or drop it into an existing vault: `ontologizer export demo --format obsidian --out ~/Notes`. Map text is written as plain text (any markup in it is escaped), so a label can never add a link, a tag or a frontmatter field.
 - `context`: markdown for an AI agent, to stdout or `--out`, with the headings Brief, Outline, Articles, Bridges, Insights, Thin areas and Sources. Each outline label is followed by its node id (`…/x` under a parent means the parent's id plus `/x`), Articles holds the explained nodes' articles, and when most nodes are one-line summaries the Brief says so. `--budget` (default 4000) caps its size in estimated tokens (characters / 4): summaries go first, from the deepest level up (the root's children keep theirs longest), then bridges, sources, the articles' key facts and whole articles are shortened, then the deepest node ids, and only then the deepest labels; the root's children always stay, and the last line says what was cut; the pack never goes over the budget, and a budget too small for the map is refused with the smallest one that fits. Map text is written as plain data (one line per value, no headings of its own), and a line under the title tells the agent to treat it as information, not instructions. On a map with nothing explained yet, Thin areas is one line.
 
-On the page, the **Export** button in the top bar has the same four: **Download page**, **Copy embed**, **Download JSON** and **Copy for an agent** (the context pack at 4000 tokens). Exports leave out the map's chat; the page and embed formats also leave out job errors, insights and the brief (all but its subject), which they do not show. In a source checkout, run `npm run build` once so the page and embed formats find their bundle.
+On the page, the **Export** button in the top bar has the same five: **Download page**, **Copy embed**, **Download JSON**, **Copy for an agent** (the context pack at 4000 tokens) and **Download for Obsidian** (a .zip of the vault folder: unzip it, then open or drop the folder). Exports leave out the map's chat; the page and embed formats also leave out job errors, insights and the brief (all but its subject), which they do not show. In a source checkout, run `npm run build` once so the page and embed formats find their bundle.
 
 ### update, key, doctor, completion
 

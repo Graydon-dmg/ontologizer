@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0 (2026-11-10)
+
+- **Export to Obsidian.** `ontologizer export <map> --format obsidian` writes the map as an Obsidian folder: one note per idea with `[[links]]` to its parent, branches and cross-links, articles and sources included, tags per category, and graph colours that match the map. On the page: Export → **Download for Obsidian** (a .zip). Open it as a vault or drop it into yours.
+- **A key for the lines.** The legend's new **Lines** section says what each kind of link means (influences: A affects B, requires: B needs A first, part of, bridge, analog), showing only the kinds in your map.
+- **Clearer links.** New maps label their cross-links more consistently: the five kinds are now defined for the model, and "bridge" on a single map means a concrete connection between distant areas, not a likeness.
+
 ## 1.6.0 (2026-11-10)
 
 - **Manage maps.** Rename a map, or delete it to a 30-day trash and restore it, from the map page, the maps home or the command line (`ontologizer delete`, `trash`, `restore`). An **All maps** link goes back to your list. Thanks to Alex Garden ([#9](https://github.com/Graydon-dmg/ontologizer/pull/9)).

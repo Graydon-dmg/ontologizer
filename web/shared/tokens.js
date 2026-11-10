@@ -65,6 +65,23 @@ const EDGES = {
 };
 
 /**
+ * What each cross-link kind means, in the legend's words (one source of truth; the model's
+ * definitions in src/core/engine/prompts.js wave2Prompt must say the same). Order = legend order.
+ * `BRANCH_KIND` is the plain grey tree line between an idea and its parent.
+ * @type {ReadonlyArray<{ type: string, label: string, meaning: string }>}
+ */
+export const EDGE_KINDS = Object.freeze([
+  { type: 'influences', label: 'influences', meaning: 'A affects B' },
+  { type: 'requires', label: 'requires', meaning: 'B needs A first' },
+  { type: 'part-of', label: 'part of', meaning: 'A is a piece of B' },
+  { type: 'bridge', label: 'bridge', meaning: 'links distant areas' },
+  { type: 'analog', label: 'analog', meaning: 'A is like B' },
+].map((k) => Object.freeze(k)));
+
+/** The tree line (idea to parent); drawn in the theme's muted grey, not a cross-link. */
+export const BRANCH_KIND = Object.freeze({ type: 'branch', label: 'branch', meaning: 'idea and its parent' });
+
+/**
  * Edge style by relation type; unknown types get a neutral grey default.
  * @param {string} type
  * @returns {EdgeStyle}

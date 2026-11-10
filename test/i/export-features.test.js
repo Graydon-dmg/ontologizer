@@ -50,10 +50,11 @@ function featureProblems(features, commands, pageText, shell) {
 
 const I4 = FEATURES.filter((f) => f.epic === 'I4');
 
-test('the I4 rows are export (#export) and the context pack (#export-context), in the shared shape', () => {
+test('the I4 rows are export (#export), the context pack (#export-context) and Obsidian (#export-obsidian), in the shared shape', () => {
   assert.deepEqual(I4.map((f) => [f.id, f.cli, f.ui.page, f.ui.id]), [
     ['export', 'export', 'web/index.html', 'export'],
     ['export-context', 'export', 'web/index.html', 'export-context'],
+    ['export-obsidian', 'export', 'web/index.html', 'export-obsidian'],
   ]);
   for (const f of I4) assert.deepEqual(Object.keys(f).sort(), ['cli', 'epic', 'id', 'ui']);
 });
@@ -69,16 +70,18 @@ test('planted fault: an Export menu without "Copy for an agent", or no export co
   assert.ok(featureProblems(I4, await registeredCommands(), page, '').some((p) => p.startsWith('export: no element')));
   assert.deepEqual(featureProblems(I4, new Set(['load']), read, shellSource()), [
     'export: command "export" is not registered', 'export-context: command "export" is not registered',
+    'export-obsidian: command "export" is not registered',
   ]);
 });
 
-test('the Export menu has the four contract items, Copy for an agent at 4000 tokens', async () => {
+test('the Export menu has the four contract items and Download for Obsidian, Copy for an agent at 4000 tokens', async () => {
   const { EXPORT_ITEMS, MENU_BUDGET, exportFileName } = await import('../../web/shell/ui/export.js');
   assert.deepEqual(EXPORT_ITEMS.map((i) => [i.id, i.label, i.format]), [
     ['export-html', 'Download page', 'html'],
     ['export-embed', 'Copy embed', 'embed'],
     ['export-json', 'Download JSON', 'json'],
     ['export-context', 'Copy for an agent', 'context'],
+    ['export-obsidian', 'Download for Obsidian', 'obsidian'],
   ]);
   assert.equal(MENU_BUDGET, 4000);
   assert.equal(exportFileName('Scale Plastic Modeling', 'html'), 'scale-plastic-modeling.html');

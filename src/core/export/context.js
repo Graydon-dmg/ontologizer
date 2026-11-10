@@ -45,7 +45,7 @@ export function oneLine(s, max = FIELD_MAX) {
 }
 
 /** The url when it is an http or https link (normalised, so no newline survives), else ''. @param {unknown} url */
-function webUrl(url) {
+export function webUrl(url) {
   try {
     const u = new URL(String(url ?? '').trim());
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';

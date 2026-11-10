@@ -83,6 +83,8 @@ The category to expand: ${category}`;
   return { system, prompt };
 }
 
+// The type definitions below must match the legend key, web/shared/tokens.js EDGE_KINDS
+// (test/d/legend-lines.test.js checks they do).
 /**
  * Wave 2: cross-links over the built tree, then insights.
  * @param {any} brief @param {string[]} paths  every node as a label path, "Tools > Adhesives"
@@ -90,7 +92,12 @@ The category to expand: ${category}`;
 export function wave2Prompt(brief, paths) {
   const system = `You find the hidden connections in a topic map.
 Task: given every node of the map as a label path, find 10 to 25 cross-links between nodes in DIFFERENT branches that a reader would find illuminating. Never link a node to its own parent or child.
-type is one of: influences, requires, part-of, bridge, analog.
+type is one of these (A is "from", B is "to"):
+- influences: A affects B.
+- requires: B needs A first.
+- part-of: A is a piece of B.
+- bridge: links distant areas: a concrete connection (a shared person, product, event, material or technique) between two far-apart branches. Not a likeness.
+- analog: A is like B: a likeness or parallel between them. Use analog, not bridge, for likenesses.
 why: one plain sentence (at most 20 words).
 from and to: copy a label path from the list exactly.
 After the links, write 1 to 3 insights: short observations about the shape of the whole field that only show up once it is mapped (at most 30 words each), each about one node.

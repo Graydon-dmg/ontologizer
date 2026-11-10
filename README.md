@@ -108,7 +108,7 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer rosetta <map>` | Add a lens that re-explains the map for a persona |
 | `ontologizer explain <name> <node>` | Write an article for one node |
 | `ontologizer research <name> <node>` | Grow the map under one node |
-| `ontologizer export <map> --format <f>` | Export a map: an offline page, an embed, JSON, or a context pack for an agent |
+| `ontologizer export <map> --format <f>` | Export a map: an offline page, an embed, JSON, a context pack for an agent, or an Obsidian vault |
 | `ontologizer update` | Update ontologizer to the latest version |
 | `ontologizer key [action]` | Show, set or clear the Anthropic API key |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place |
@@ -144,6 +144,12 @@ The server speaks plain HTTP: beyond this machine, put it behind an HTTPS revers
 ```bash
 ontologizer export demo --format html --out demo.html
 ontologizer export demo --format context --budget 1500
+```
+
+`--format obsidian` writes the map as a folder of linked notes: one note per node (its summary, article, parent, branches, cross-links and sources as `[[wikilinks]]` and links), an index note named after the map, and the category colours for Obsidian's graph view. Open the folder in Obsidian as a vault, or drop it into an existing vault. It goes into `--out <dir>` (default: the current folder) and an existing folder is refused unless you pass `--force`. On the page it is **Download for Obsidian** in the Export menu (a .zip of the same folder).
+
+```bash
+ontologizer export demo --format obsidian --out ~/Notes
 ```
 
 ## Agents and apps
