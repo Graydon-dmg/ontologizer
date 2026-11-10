@@ -72,22 +72,34 @@ export async function waitForExit(deps, exitAfter) {
 
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** At most this many nodes in one explain (the server's nodeIds cap too). */
+export const NODES_MAX = 8;
+
 /**
- * Shared body of `explain` and `research`: send to a live session, or run headless.
+ * Shared body of `explain` (several nodes, `--sources` for the sources job) and `research` (one node):
+ * send to a live session, or run headless. Every node is resolved before anything starts.
  * @param {any} argv
- * @param {'explain' | 'research'} kind
+ * @param {'explain' | 'research' | 'sources'} kind
  */
 export async function runNodeJob(argv, kind) {
   const deps = argv.deps;
   const store = deps.store();
   const id = await resolveName(deps, store, String(argv.name));
-  const nodeId = resolveNode(store.read(id), String(argv.node));
+  const refs = (Array.isArray(argv.nodes) ? argv.nodes : [argv.node]).map(String);
+  if (refs.length > NODES_MAX) throw new CliError(`At most ${NODES_MAX} nodes at once (you gave ${refs.length}).`, 1);
+  const onto0 = store.read(id);
+  const nodeIds = refs.map((r) => resolveNode(onto0, r));
+  const twice = nodeIds.find((n, i) => nodeIds.indexOf(n) !== i);
+  if (twice) throw new CliError(`${onto0.nodes[twice]?.label ?? twice} (${twice}) is listed twice.`, 1);
   const research = kind === 'research';
+  const many = nodeIds.length > 1;
+  const nodeId = nodeIds[0];
   const mode = argv.general ? 'general' : 'context';
+  const labelOf = (/** @type {string} */ n) => `${store.read(id).nodes[n]?.label ?? n} (${n})`;
 
   const live = store.sessions.get(id);
   if (live) {
-    const body = research ? { type: 'research', nodeId, mode } : { type: 'explain', nodeId };
+    const body = research ? { type: 'research', nodeId, mode } : many ? { type: kind, nodeIds } : { type: kind, nodeId };
     let res;
     try {
       res = await deps.fetch(`http://127.0.0.1:${live.port}/api/action`, {
@@ -102,25 +114,35 @@ export async function runNodeJob(argv, kind) {
     let data = {};
     try { data = await res.json(); } catch { /* no body */ }
     if (!res.ok) throw new CliError(String(data?.error ?? `The open session answered ${res.status}.`), 1);
-    deps.stdout.write(`Sent to the open session (job ${data?.jobId ?? '?'}).\n`);
+    if (!many) {
+      deps.stdout.write(`Sent to the open session (job ${data?.jobId ?? '?'}).\n`);
+      return;
+    }
+    deps.stdout.write('Sent to the open session:\n');
+    for (const j of Array.isArray(data?.jobs) ? data.jobs : []) {
+      deps.stdout.write(`  ${labelOf(j.nodeId)}: ${j.jobId ? `job ${j.jobId}` : j.skipped ?? j.refused ?? 'sent'}\n`);
+    }
     return;
   }
 
+  // Headless. Several nodes: one already explained is skipped, as the server does.
+  const todo = many && kind === 'explain' ? nodeIds.filter((n) => !onto0.nodes[n]?.article) : nodeIds;
+  for (const n of nodeIds) if (!todo.includes(n)) deps.stdout.write(`${labelOf(n)}: already explained, skipped.\n`);
+  if (!todo.length) return;
   const engine = await engineFor({ deps, store, id, needKey: true });
-  /** @type {any} */
-  let outcome = null;
+  /** @type {Map<string, any>} jobId -> its job.done or job.failed event */
+  const outcomes = new Map();
+  /** @type {Map<string, string>} nodeId -> jobId */
+  const jobOf = new Map();
   /** @type {string[]} */
   const added = [];
-  /** @type {string | null} */
-  let jobId = null;
   /** @type {any[]} */
   const finals = [];
   let wake = () => {};
   const finished = new Promise((r) => { wake = () => r(undefined); });
   const check = () => {
-    if (jobId === null || outcome) return;
-    const hit = finals.find((e) => e.job.id === jobId);
-    if (hit) { outcome = hit; wake(); }
+    for (const e of finals) if ([...jobOf.values()].includes(e.job.id)) outcomes.set(e.job.id, e);
+    if (jobOf.size === todo.length && outcomes.size === new Set(jobOf.values()).size) wake();
   };
   const off = store.subscribe(id, (/** @type {any} */ e) => {
     if (e.t === 'node.added' && e.node?.parent === nodeId) added.push(e.node.id);
@@ -130,9 +152,11 @@ export async function runNodeJob(argv, kind) {
   /** @type {any} */
   let timer;
   try {
-    const job = research ? { kind: 'research', nodeId, mode } : { kind: 'explain', nodeId };
-    const r = await engine.enqueue(job, { priority: 10 });
-    jobId = typeof r === 'string' ? r : (r?.jobId ?? r?.id);
+    for (const n of todo) {
+      const job = research ? { kind: 'research', nodeId: n, mode } : { kind, nodeId: n };
+      const r = await engine.enqueue(job, { priority: 10 });
+      jobOf.set(n, typeof r === 'string' ? r : (r?.jobId ?? r?.id));
+    }
     check();
     await Promise.race([
       finished,
@@ -145,23 +169,37 @@ export async function runNodeJob(argv, kind) {
     clearTimeout(timer);
     off();
   }
-  if (outcome.t === 'job.failed') throw new CliError(String(outcome.job.error ?? 'The job failed.'), 1);
 
   const onto = store.read(id);
   const out = deps.stdout;
-  if (research) {
-    out.write(`Added ${added.length} node${added.length === 1 ? '' : 's'} under ${onto.nodes[nodeId]?.label ?? nodeId}:\n`);
-    for (const a of added) out.write(`  ${onto.nodes[a]?.label ?? a}\n`);
-  } else {
-    const a = onto.nodes[nodeId]?.article;
-    if (!a) out.write('(no article)\n');
-    else {
-      out.write(`${a.summary}\n`);
-      if (a.keyFacts?.length) out.write(`\nKey facts:\n${a.keyFacts.map((f) => `  - ${f}`).join('\n')}\n`);
-      if (a.whyItMatters) out.write(`\nWhy it matters:\n  ${a.whyItMatters}\n`);
-      if (a.seeAlso?.length) out.write(`\nSee also:\n${a.seeAlso.map((f) => `  - ${f}`).join('\n')}\n`);
-      if (a.sources?.length) out.write(`\nSources:\n${a.sources.map((s) => `  - ${s.title} — ${s.url}`).join('\n')}\n`);
+  /** @type {string[]} */
+  const failed = [];
+  for (const n of todo) {
+    const outcome = outcomes.get(/** @type {string} */ (jobOf.get(n)));
+    if (outcome?.t === 'job.failed') {
+      if (!many) throw new CliError(String(outcome.job.error ?? 'The job failed.'), 1);
+      failed.push(`${labelOf(n)}: ${outcome.job.error ?? 'the job failed'}`);
+      continue;
+    }
+    if (many) out.write(`\n== ${labelOf(n)} ==\n`);
+    if (research) {
+      out.write(`Added ${added.length} node${added.length === 1 ? '' : 's'} under ${onto.nodes[n]?.label ?? n}:\n`);
+      for (const a of added) out.write(`  ${onto.nodes[a]?.label ?? a}\n`);
+    } else if (kind === 'sources') {
+      const list = onto.nodes[n]?.sources ?? [];
+      out.write(list.length ? `Sources:\n${list.map((s) => `  - ${s.title} — ${s.url}`).join('\n')}\n` : '(no sources)\n');
+    } else {
+      const a = onto.nodes[n]?.article;
+      if (!a) out.write('(no article)\n');
+      else {
+        out.write(`${a.summary}\n`);
+        if (a.keyFacts?.length) out.write(`\nKey facts:\n${a.keyFacts.map((f) => `  - ${f}`).join('\n')}\n`);
+        if (a.whyItMatters) out.write(`\nWhy it matters:\n  ${a.whyItMatters}\n`);
+        if (a.seeAlso?.length) out.write(`\nSee also:\n${a.seeAlso.map((f) => `  - ${f}`).join('\n')}\n`);
+        if (a.sources?.length) out.write(`\nSources:\n${a.sources.map((s) => `  - ${s.title} — ${s.url}`).join('\n')}\n`);
+      }
     }
   }
   store.flush(id);
+  if (failed.length) throw new CliError(`${failed.length} of ${todo.length} failed:\n${failed.map((f) => `  ${f}`).join('\n')}`, 1);
 }

@@ -52,6 +52,7 @@ If `ontologizer mcp` refuses to start, the person's home has sign-in (tokens or 
 | Put a map into a document or page | `export_map` with format `embed` (an offline, interactive fragment) or `html` | free |
 | Make a new map | `check_context` (repeat with answers while it asks questions), `build_map`, `wait_for_map` | **model** |
 | Go deeper on one node | `explain` (write its article) or `research` (add nodes under it), `sources` (find web sources), then `wait_for_map` | **model** |
+| Go deeper on several nodes | `explain` or `sources` with `nodeIds` (at most 8; about one model call per node), then one `wait_for_map` | **model**, per node |
 | Get an answer in prose, with citations | `ask_map` (adds to the map's chat, which others can see) | **model** |
 | Find where two fields connect | `fuse`, `wait_for_map`, then read the new map's Bridges with `get_context` | **model** |
 | Re-explain a map for a persona | `rosetta` | **model** |

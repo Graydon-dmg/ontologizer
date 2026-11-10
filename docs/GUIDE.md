@@ -154,7 +154,7 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer list [--drafts]` | List saved maps. |
 | `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into a new draft. |
 | `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona. |
-| `ontologizer explain <name> <node>` | Write an article for one node. |
+| `ontologizer explain <name> <node> [<node>…] [--sources]` | Write an article for each node (at most 8), or with `--sources` find web sources for each. |
 | `ontologizer research <name> <node> [--general]` | Grow the map under one node. |
 | `ontologizer export <map> --format html\|embed\|json\|context` | Export a map: an offline page, an embed, JSON, or a context pack for an agent. |
 | `ontologizer update` | Update ontologizer to the latest version. |
@@ -220,8 +220,11 @@ ontologizer rosetta plastic-modeling --as "a home chef"
 
 ```
 ontologizer explain plastic-modeling "Plastic Cement"
+ontologizer explain plastic-modeling "Plastic Cement" "CA Glue" --sources
 ontologizer research plastic-modeling Tools --general
 ```
+
+`explain` takes up to 8 nodes; each is its own job (a model call), every one is resolved before any starts, and with several nodes one already explained is skipped. `--sources` runs the Sources job instead (the **Sources** button): web pages that back up each node, attached to it.
 
 `<node>` is a node id or label (an exact label, a unique prefix, or a unique part of it; if unsure it lists close matches). If the map is open in another terminal, the request is sent to that running page (`Sent to the open session (job <id>).`) and you watch it happen there. Otherwise it runs in your terminal and prints the article (summary, key facts, why it matters, see also, sources) or the labels it added (`Added N nodes under <node>:`). `--general` on `research` uses the node's label alone instead of your brief. There is a 10 minute limit.
 

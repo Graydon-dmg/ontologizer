@@ -37,6 +37,14 @@ const OK = { type: 'object', properties: { ok: { type: 'boolean' } }, required: 
 const ANY = { type: 'object', additionalProperties: true };
 const JOB = { type: 'object', properties: { ok: { type: 'boolean' }, jobId: { type: 'string' } }, required: ['ok'] };
 const TEXT = { type: 'string', contentMediaType: 'text/markdown' };
+const nodeIds = { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8, uniqueItems: true,
+  description: 'Several node ids (1 to 8, each once, each in the map) instead of nodeId: one job per node, each about one model call. E.g. ["sourdough/starter/levain", "sourdough/baking/oven-spring"]' };
+/** explain and sources: { ok, jobId } for one node; { ok, jobs: [{ nodeId, jobId?, skipped?, refused? }] } for nodeIds. */
+const JOBS = { type: 'object', properties: { ok: { type: 'boolean' }, jobId: { type: 'string' },
+  jobs: { type: 'array', items: { type: 'object', properties: { nodeId: { type: 'string' }, jobId: { type: 'string' },
+    skipped: { type: 'string', description: 'Why no job was started: "already explained"' },
+    refused: { type: 'string', description: 'The daily limit was reached before this node: the limit\'s message' } }, required: ['nodeId'] } } }, required: ['ok'] };
+const ONE_OR_MANY = 'Give nodeId for one node or nodeIds for several (at most 8), not both.';
 /** @param {Record<string, any>} properties @param {string[]} [required] */
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const mapIn = (/** @type {Record<string, any>} */ more = {}, /** @type {string[]} */ req = []) => obj({ tenant, id, ...more }, ['tenant', 'id', ...req]);
@@ -159,15 +167,15 @@ export const OPS = [
   { name: 'explain', summary: 'Explain a node: write its article',
     http: { method: 'POST', path: `${MAP}/actions`, fixed: { type: 'explain' } },
     mcp: { name: 'explain', title: 'Explain a node (write its article)',
-      description: 'Write the article for one node: a summary, key facts, why it matters, and sources, stored on the node. Use when get_node says the node is "Not explained yet" and you need more than its one-line summary. Don\'t use when the node already has an article (get_node shows it, free) or you want new nodes (research). Returns at once with { ok, jobId }. Next: wait_for_map, then get_node to read the article. ' + COST_NOTE,
+      description: 'Write the article for a node: a summary, key facts, why it matters, and sources, stored on the node. Use when get_node says the node is "Not explained yet" and you need more than its one-line summary; use nodeIds for several nodes your task depends on (at most 8; each is its own job and costs about one model call, so 5 nodes cost about 5 calls). ' + ONE_OR_MANY + ' Don\'t use when the node already has an article (get_node shows it, free) or you want new nodes (research). Returns at once with { ok, jobId } for one node, or { ok, jobs: [{ nodeId, jobId }] } for nodeIds: a node already explained has skipped: "already explained", a node whose job is already running answers that jobId, and once the daily limit is reached each remaining node has refused: <why>. Every node is checked first: an unknown or repeated id starts nothing. Next: wait_for_map (it waits for every job), then get_node on each node to read its article. ' + COST_NOTE,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
-    input: mapIn({ nodeId }, ['nodeId']), output: JOB, scope: 'build', callsModel: true, cli: 'explain', ui: { page: PAGE, id: 'explain' } },
+    input: mapIn({ nodeId, nodeIds }), output: JOBS, scope: 'build', callsModel: true, cli: 'explain', ui: { page: PAGE, id: 'explain' } },
   { name: 'sources', summary: 'Find web sources for a node',
     http: { method: 'POST', path: `${MAP}/actions`, fixed: { type: 'sources' } },
     mcp: { name: 'sources', title: 'Find web sources for a node',
-      description: 'Find web pages that back up one node and attach them to it. Use when a node has no sources and you need citations to show the user. Don\'t use when get_node already lists sources, or on a private map whose content must not go to a web search. Returns at once with { ok, jobId }. Next: wait_for_map, then get_node to see the sources. ' + COST_NOTE,
+      description: 'Find web pages that back up a node and attach them to it. Use when a node has no sources and you need citations to show the user, or ask_map said its web search ran out; use nodeIds for several nodes your task depends on (at most 8; each is its own job and costs about one model call, so 5 nodes cost about 5 calls). ' + ONE_OR_MANY + ' Don\'t use when get_node already lists sources, or on a private map whose content must not go to a web search. Returns at once with { ok, jobId } for one node, or { ok, jobs: [{ nodeId, jobId }] } for nodeIds: a node whose job is already running answers that jobId, and once the daily limit is reached each remaining node has refused: <why>. Every node is checked first: an unknown or repeated id starts nothing. Next: wait_for_map (it waits for every job), then get_node on each node to see its sources. ' + COST_NOTE,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
-    input: mapIn({ nodeId }, ['nodeId']), output: JOB, scope: 'build', callsModel: true, cli: 'explain', ui: { page: PAGE, id: 'sources' } },
+    input: mapIn({ nodeId, nodeIds }), output: JOBS, scope: 'build', callsModel: true, cli: 'explain', ui: { page: PAGE, id: 'sources' } },
   { name: 'fuse', summary: 'Fuse this map with another into a new draft map',
     http: { method: 'POST', path: `${MAP}/actions`, fixed: { type: 'fuse' } },
     mcp: { name: 'fuse', title: 'Fuse two maps (find where they connect)',

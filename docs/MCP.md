@@ -162,6 +162,11 @@ The outputs below have the real shapes (shortened where marked with …); the to
 2. `get_node` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain" }`: its summary, children, cross-links (`neighbours`; on a node with children also `branchLinks`, the links that leave its branch), sources, and `"article": "Not explained yet: …"` when it has no article.
 3. If it is thin: `explain` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain" }` writes its article; `research` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain", "mode": "context" }` adds nodes under it. Each answers `{ "ok": true, "jobId": "job-1" }`.
 4. `wait_for_map` `{ "id": "sourdough" }`, then `get_node` again to read the article or the new children.
+5. Several nodes your task depends on: `explain` (or `sources`) with `nodeIds` instead of `nodeId`, at most 8: `{ "id": "sourdough", "nodeIds": ["sourdough/starter/levain", "sourdough/baking/oven-spring"] }`.
+   ```json
+   { "ok": true, "jobs": [ { "nodeId": "sourdough/starter/levain", "jobId": "job-2" }, { "nodeId": "sourdough/baking/oven-spring", "skipped": "already explained" } ] }
+   ```
+   Each node is its own job, about one model call each: 5 nodes cost about 5 calls. Every id is checked first (an unknown or repeated one starts nothing). A node whose job is already running answers that `jobId`; once the daily limit is reached, each remaining node says `refused` and why. One `wait_for_map` waits for all of them; then `get_node` on each.
 
 ### 4. Ask the map, with citations
 
@@ -300,25 +305,27 @@ Grow a map under one node: the model adds new child nodes there, in place on thi
 
 ### `explain`: Explain a node (write its article)
 
-Write the article for one node: a summary, key facts, why it matters, and sources, stored on the node. Use when get_node says the node is "Not explained yet" and you need more than its one-line summary. Don't use when the node already has an article (get_node shows it, free) or you want new nodes (research). Returns at once with { ok, jobId }. Next: wait_for_map, then get_node to read the article. Calls the model: costs API credits.
+Write the article for a node: a summary, key facts, why it matters, and sources, stored on the node. Use when get_node says the node is "Not explained yet" and you need more than its one-line summary; use nodeIds for several nodes your task depends on (at most 8; each is its own job and costs about one model call, so 5 nodes cost about 5 calls). Give nodeId for one node or nodeIds for several (at most 8), not both. Don't use when the node already has an article (get_node shows it, free) or you want new nodes (research). Returns at once with { ok, jobId } for one node, or { ok, jobs: [{ nodeId, jobId }] } for nodeIds: a node already explained has skipped: "already explained", a node whose job is already running answers that jobId, and once the daily limit is reached each remaining node has refused: <why>. Every node is checked first: an unknown or repeated id starts nothing. Next: wait_for_map (it waits for every job), then get_node on each node to read its article. Calls the model: costs API credits.
 
 **calls the model** · writes to the map · token scope: `build` · HTTP: `POST /v1/t/{tenant}/maps/{id}/actions`
 
 | Input | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | The map id, from list_maps or build_map: a saved map's name or a draft id. E.g. "sourdough" or "draft-20261109-153012" |
-| `nodeId` | string | yes | A node id exactly as get_outline, search_map or get_node shows it; ids are paths. E.g. "sourdough/starter/levain" |
+| `nodeId` | string | no | A node id exactly as get_outline, search_map or get_node shows it; ids are paths. E.g. "sourdough/starter/levain" |
+| `nodeIds` | string[] | no | Several node ids (1 to 8, each once, each in the map) instead of nodeId: one job per node, each about one model call. E.g. ["sourdough/starter/levain", "sourdough/baking/oven-spring"] |
 
 ### `sources`: Find web sources for a node
 
-Find web pages that back up one node and attach them to it. Use when a node has no sources and you need citations to show the user. Don't use when get_node already lists sources, or on a private map whose content must not go to a web search. Returns at once with { ok, jobId }. Next: wait_for_map, then get_node to see the sources. Calls the model: costs API credits.
+Find web pages that back up a node and attach them to it. Use when a node has no sources and you need citations to show the user, or ask_map said its web search ran out; use nodeIds for several nodes your task depends on (at most 8; each is its own job and costs about one model call, so 5 nodes cost about 5 calls). Give nodeId for one node or nodeIds for several (at most 8), not both. Don't use when get_node already lists sources, or on a private map whose content must not go to a web search. Returns at once with { ok, jobId } for one node, or { ok, jobs: [{ nodeId, jobId }] } for nodeIds: a node whose job is already running answers that jobId, and once the daily limit is reached each remaining node has refused: <why>. Every node is checked first: an unknown or repeated id starts nothing. Next: wait_for_map (it waits for every job), then get_node on each node to see its sources. Calls the model: costs API credits.
 
 **calls the model** · writes to the map · token scope: `build` · HTTP: `POST /v1/t/{tenant}/maps/{id}/actions`
 
 | Input | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | The map id, from list_maps or build_map: a saved map's name or a draft id. E.g. "sourdough" or "draft-20261109-153012" |
-| `nodeId` | string | yes | A node id exactly as get_outline, search_map or get_node shows it; ids are paths. E.g. "sourdough/starter/levain" |
+| `nodeId` | string | no | A node id exactly as get_outline, search_map or get_node shows it; ids are paths. E.g. "sourdough/starter/levain" |
+| `nodeIds` | string[] | no | Several node ids (1 to 8, each once, each in the map) instead of nodeId: one job per node, each about one model call. E.g. ["sourdough/starter/levain", "sourdough/baking/oven-spring"] |
 
 ### `fuse`: Fuse two maps (find where they connect)
 

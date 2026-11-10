@@ -37,6 +37,7 @@ Tools that call the model cost the user API credits and say so: check_context, b
 Usual workflows:
 - Learn a field: list_maps; if no map fits, check_context (repeat with answers while it asks questions), build_map, wait_for_map, then get_context and teach or brainstorm from it yourself.
 - Deepen one node: search_map or get_outline for its id, get_node, then explain (write its article) or research (add nodes under it), wait_for_map, get_node again.
+- Deepen several nodes your task depends on: explain or sources with nodeIds (at most 8 in one call; each node is its own job and about one model call), then wait_for_map (it waits for all of them) and get_node on each.
 - Put a map into a document or page: export_map with format "embed" (an offline, interactive fragment) or "html" (a whole page).
 - Where two fields connect: fuse two existing maps, wait_for_map on the new map (draftId), get_context on it and read its Bridges.
 - A question answered in prose with citations: ask_map. It is not a read: it adds the question and answer to the map's chat, which everyone who can open the map sees.
@@ -165,7 +166,12 @@ function valueProblem(v, schema) {
     case 'object': return v && typeof v === 'object' && !Array.isArray(v) ? null : 'must be an object';
     case 'array': {
       if (!Array.isArray(v)) return 'must be a list';
+      if (schema.minItems !== undefined && v.length < schema.minItems) return `must have at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}`;
       if (schema.maxItems !== undefined && v.length > schema.maxItems) return `must have at most ${schema.maxItems} items`;
+      if (schema.uniqueItems === true) {
+        const dup = v.find((x, i) => v.indexOf(x) !== i);
+        if (dup !== undefined) return `lists ${JSON.stringify(dup)} twice`;
+      }
       for (const [i, item] of v.entries()) {
         const p = valueProblem(item, schema.items);
         if (p) return `item ${i + 1} ${p}`;
