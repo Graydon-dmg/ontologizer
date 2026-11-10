@@ -36,6 +36,40 @@ export class UsageLimitError extends Error {
 /** @param {any} n */
 const count = (n) => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
 
+/** A file's identity now (changes when another process writes it). @param {string} file */
+function stamp(file) {
+  try { const st = fs.statSync(file); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return 'missing'; }
+}
+
+const LOCK_STALE_MS = 10_000;
+const LOCK_TRIES = 200;
+const pause = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Take <file>.lock (created with O_EXCL); a lock older than LOCK_STALE_MS is a crashed writer's and
+ * is removed. Retries for about a second. Returns the release function, or null.
+ * @param {string} file @returns {(() => void) | null}
+ */
+export function lock(file) {
+  const lockFile = `${file}.lock`;
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* reported by the write */ }
+  for (let i = 0; i < LOCK_TRIES; i++) {
+    try {
+      const fd = fs.openSync(lockFile, 'wx', 0o600);
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => { try { fs.rmSync(lockFile, { force: true }); } catch { /* already gone */ } };
+    } catch (err) {
+      if (/** @type {any} */ (err)?.code !== 'EEXIST') return null;
+      try {
+        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS) { fs.rmSync(lockFile, { force: true }); continue; }
+      } catch { continue; } // it went away: try again at once
+      Atomics.wait(pause, 0, 0, 5);
+    }
+  }
+  return null;
+}
+
 /**
  * The file, as written; an empty one when it is missing or unreadable (never throws).
  * @param {string} home @returns {UsageFile}
@@ -61,6 +95,105 @@ export function readUsageFile(home) {
 /** Input tokens of one response: fresh input plus cache writes and reads. @param {any} u */
 export const inputTokensOf = (u) => count(u?.input_tokens) + count(u?.cache_creation_input_tokens) + count(u?.cache_read_input_tokens);
 
+/** The input a request carries, estimated (characters / 4, rounded up). @param {any} params */
+const requestTokens = (params) => {
+  try { return Math.ceil(JSON.stringify({ system: params?.system, messages: params?.messages, tools: params?.tools }).length / 4); } catch { return 0; }
+};
+
+/**
+ * Count one streamed answer's tokens as they arrive, once each, so an answer that is aborted or times
+ * out still records what it used. The API reports input (with cache writes and reads) in message_start
+ * and cumulative output (and, on newer models, input) in message_delta; the final message, when there
+ * is one, tops the counts up to its own. A stream that ends with no usage at all (aborted before
+ * message_start) is counted by estimate, never as nothing: the request's size for input and its
+ * max_tokens for output. One that ends after message_start but before any output count is charged
+ * for the text it streamed (characters / 3, rounded up: more tokens than it can have used).
+ * Events come from the stream's own 'streamEvent' (the SDK's MessageStream, whoever consumes it) and
+ * from its iterator as the caller reads it, whichever delivers first; usage counts are totals, so
+ * seeing one twice changes nothing.
+ * @param {any} s the stream @param {any} params the request @param {(add: { inputTokens?: number, outputTokens?: number }) => void} add
+ */
+export function meterStream(s, params, add) {
+  if (!s || typeof s !== 'object') return;
+  const acc = { in: 0, out: 0, sawInput: false, sawOutput: false, chars: 0, settled: false, from: '' };
+  /** @param {number} total */
+  const toIn = (total) => { if (total > acc.in) { add({ inputTokens: total - acc.in }); acc.in = total; } };
+  /** @param {number} total */
+  const toOut = (total) => { if (total > acc.out) { add({ outputTokens: total - acc.out }); acc.out = total; } };
+  /** @param {string} from 'events' or 'iterator' @returns {(ev: any) => void} */
+  const observeFrom = (from) => (ev) => {
+    if (!ev || typeof ev !== 'object') return;
+    // The first source to deliver an event is the one counted (the other sees the same events).
+    if (!acc.from) acc.from = from;
+    if (acc.from !== from) return;
+    if (ev.type === 'message_start' && ev.message?.usage) {
+      acc.sawInput = true;
+      toIn(inputTokensOf(ev.message.usage));
+      toOut(count(ev.message.usage.output_tokens));
+    } else if (ev.type === 'message_delta' && ev.usage) {
+      const u = ev.usage;
+      if (u.input_tokens !== undefined || u.cache_creation_input_tokens !== undefined || u.cache_read_input_tokens !== undefined) {
+        acc.sawInput = true;
+        toIn(inputTokensOf(u));
+      }
+      if (u.output_tokens !== undefined) { acc.sawOutput = true; toOut(count(u.output_tokens)); }
+    } else if (ev.type === 'content_block_delta' && ev.delta) {
+      const d = ev.delta;
+      acc.chars += String(d.text ?? d.partial_json ?? d.thinking ?? '').length;
+    }
+  };
+  /** @param {any} m */
+  const final = (m) => {
+    if (!m?.usage) return;
+    acc.sawInput = true;
+    acc.sawOutput = true;
+    toIn(inputTokensOf(m.usage));
+    toOut(count(m.usage.output_tokens));
+  };
+  const settle = () => {
+    if (acc.settled) return;
+    acc.settled = true;
+    if (!acc.sawInput) toIn(Math.max(acc.in, requestTokens(params)));
+    if (!acc.sawOutput) {
+      const streamed = Math.ceil(acc.chars / 3);
+      const cap = Number.isInteger(params?.max_tokens) && params.max_tokens > 0 ? params.max_tokens : 4096;
+      toOut(acc.sawInput || acc.chars > 0 ? Math.max(acc.out, streamed) : cap);
+    }
+  };
+  if (typeof s.on === 'function') {
+    // The SDK's MessageStream: every raw event, then finalMessage, then end (or abort / error, then end).
+    s.on('streamEvent', observeFrom('events'));
+    s.on('finalMessage', final);
+    for (const e of ['abort', 'error', 'end']) s.on(e, settle);
+  }
+  // Also its iterator and its finalMessage (a stream whose events never fire: a test double, another client).
+  const observe = observeFrom('iterator');
+  const iter = s[Symbol.asyncIterator];
+  if (typeof iter === 'function') {
+    s[Symbol.asyncIterator] = function () {
+      const it = iter.call(s);
+      return {
+        async next() {
+          let r;
+          try { r = await it.next(); } catch (err) { settle(); throw err; }
+          if (r.done) setTimeout(settle, 0); // finalMessage, called right after the loop, tops up first
+          else observe(r.value);
+          return r;
+        },
+        async return(/** @type {any} */ v) { settle(); return typeof it.return === 'function' ? it.return(v) : { done: true, value: v }; },
+        async throw(/** @type {any} */ e) { settle(); if (typeof it.throw === 'function') return it.throw(e); throw e; },
+        [Symbol.asyncIterator]() { return this; },
+      };
+    };
+  }
+  if (typeof s.finalMessage === 'function') {
+    const fm = s.finalMessage.bind(s);
+    s.finalMessage = async () => {
+      try { const m = await fm(); final(m); settle(); return m; } catch (err) { settle(); throw err; }
+    };
+  }
+}
+
 /**
  * @param {{ home: string, limitCalls?: number|null, limitTokens?: number|null, now?: () => number, log?: (line: string) => void }} o
  *   limitCalls, limitTokens: per tenant per UTC day; null (or 0 and below) means no limit.
@@ -71,35 +204,63 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
     calls: Number.isInteger(limitCalls) && /** @type {number} */ (limitCalls) > 0 ? /** @type {number} */ (limitCalls) : null,
     tokens: Number.isInteger(limitTokens) && /** @type {number} */ (limitTokens) > 0 ? /** @type {number} */ (limitTokens) : null,
   };
-  /** Read once at start: a restart keeps today's counts. */
-  const data = readUsageFile(home);
+  /**
+   * The counts as last merged with the file (a restart keeps them; another process's are picked up),
+   * plus this process's additions not yet written (`pending`). Writes add `pending` to the file's
+   * current counts under a lock, so two processes on one home never overwrite each other.
+   */
+  let data = readUsageFile(home);
+  /** @type {Record<string, Record<string, Counts>>} */
+  let pending = {};
+  let seen = stamp(file);
   let warned = false;
-  let dirty = false; // a write failed: try again on the next record or flush
 
-  /** @param {string} tenant @param {string} day @returns {Counts} */
-  function slot(tenant, day) {
-    const days = (data.tenants[tenant] ??= {});
-    return (days[day] ??= { calls: 0, inputTokens: 0, outputTokens: 0 });
+  /** @param {Record<string, Record<string, Counts>>} map @param {string} tenant @param {string} day @returns {Counts} */
+  const slotIn = (map, tenant, day) => ((map[tenant] ??= {})[day] ??= { calls: 0, inputTokens: 0, outputTokens: 0 });
+
+  /** Pick up another process's writes (the file changed since we last read or wrote it). */
+  function refresh() {
+    const st = stamp(file);
+    if (st === seen) return;
+    seen = st;
+    data = readUsageFile(home);
   }
 
-  /** Write the file atomically (temp file, then rename), keeping the last KEEP_DAYS days. */
+  /** Add `pending` to the file's counts, under the lock, atomically; keep the last KEEP_DAYS days. */
   function save() {
-    const oldest = utcDay(now() - (KEEP_DAYS - 1) * DAY_MS);
-    for (const days of Object.values(data.tenants)) {
-      for (const d of Object.keys(days)) if (d < oldest) delete days[d];
+    if (!Object.keys(pending).length) return;
+    const release = lock(file);
+    if (!release) {
+      if (!warned) log(`could not lock ${file}: another process holds it; the counts are kept and written next time`);
+      warned = true;
+      return;
     }
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
+      const merged = readUsageFile(home);
+      for (const [t, days] of Object.entries(pending)) {
+        for (const [d, c] of Object.entries(days)) {
+          const m = slotIn(merged.tenants, t, d);
+          m.calls += c.calls; m.inputTokens += c.inputTokens; m.outputTokens += c.outputTokens;
+        }
+      }
+      const oldest = utcDay(now() - (KEEP_DAYS - 1) * DAY_MS);
+      for (const days of Object.values(merged.tenants)) {
+        for (const d of Object.keys(days)) if (d < oldest) delete days[d];
+      }
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+      fs.writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
       fs.renameSync(tmp, file);
+      data = merged;
+      pending = {};
+      seen = stamp(file);
       warned = false;
-      dirty = false;
     } catch (err) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing to remove */ }
-      dirty = true;
       if (!warned) log(`could not write ${file}: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`);
       warned = true;
+    } finally {
+      release();
     }
   }
 
@@ -108,17 +269,26 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
    * @param {string} tenant @param {{ calls?: number, inputTokens?: number, outputTokens?: number }} add
    */
   function record(tenant, add) {
-    const c = slot(tenant, utcDay(now()));
+    const day = utcDay(now());
+    const c = slotIn(pending, tenant, day);
     c.calls += count(add.calls);
     c.inputTokens += count(add.inputTokens);
     c.outputTokens += count(add.outputTokens);
     save();
   }
 
+  /** The counts as this process knows them: the file's, plus what it has not written yet. @param {string} tenant @param {string} day */
+  function current(tenant, day) {
+    refresh();
+    const f = data.tenants[tenant]?.[day];
+    const p = pending[tenant]?.[day];
+    return { calls: (f?.calls ?? 0) + (p?.calls ?? 0), inputTokens: (f?.inputTokens ?? 0) + (p?.inputTokens ?? 0), outputTokens: (f?.outputTokens ?? 0) + (p?.outputTokens ?? 0) };
+  }
+
   /** @param {string} tenant */
   function today(tenant) {
     const t = now();
-    const c = data.tenants[tenant]?.[utcDay(t)] ?? { calls: 0, inputTokens: 0, outputTokens: 0 };
+    const c = current(tenant, utcDay(t));
     return { tenant, day: utcDay(t), calls: c.calls, inputTokens: c.inputTokens, outputTokens: c.outputTokens,
       limits: { ...limits }, resetsAt: new Date(nextUtcDay(t)).toISOString() };
   }
@@ -173,16 +343,7 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
             const o = withSignal(opts);
             const s = o === undefined ? target.stream(params) : target.stream(params, o);
             record(tenant, { calls: 1 });
-            let counted = false;
-            /** @param {any} m */
-            const once = (m) => { if (!counted && m?.usage) { counted = true; tokens(m.usage); } };
-            if (s && typeof s.on === 'function') {
-              s.on('finalMessage', once);
-            }
-            if (s && typeof s.finalMessage === 'function') {
-              const final = s.finalMessage.bind(s);
-              s.finalMessage = async () => { const m = await final(); once(m); return m; };
-            }
+            meterStream(s, params, (/** @type {any} */ add) => record(tenant, add));
             return s;
           };
         }
@@ -211,5 +372,5 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
     });
   }
 
-  return { file, limits, record, today, over, wrap, flush: () => { if (dirty) save(); } };
+  return { file, limits, record, today, over, wrap, flush: save };
 }
