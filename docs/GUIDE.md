@@ -627,7 +627,7 @@ Three ways in, made from one list of operations (`src/ops.js`), all through the 
 
 The MCP tools: `check_context`, `build_map`, `wait_for_map`, `list_maps`, `get_outline`, `search_map`, `get_node`, `research`, `explain`, `sources`, `ask_map`, `fuse`, `rosetta`, `save_map`, `get_context`, `export_map`. Each map is also a resource, `ontologizer://<tenant>/maps/<id>/snapshot`. The tools whose description ends with "Calls the model: costs API credits." spend your Anthropic credits: `check_context`, `build_map`, `research`, `explain`, `sources`, `ask_map`, `fuse` and `rosetta`. The others only read (`save_map` renames). A good start for an agent is `list_maps`, then `get_context` or `get_outline` on a map.
 
-**Claude Code, on this machine** (stdio; an in-process server on your home, loopback only, no token):
+**Claude Code, on this machine** (stdio; an in-process server on your home, loopback only, no token; a home with tokens or a config is refused, so use the `--url` form below for it):
 
 ```bash
 claude mcp add ontologizer -- npx -y ontologizer mcp
@@ -687,7 +687,7 @@ It uses `fetch` only, so it runs in Node 22+ and in browsers. A refused call thr
 
 ### Limits and usage
 
-`serve` counts, per tenant and per UTC day, the model calls and the tokens (input, including cache reads and writes, plus output) that every model call reports, whatever started it: a build, a job, a question, fuse or rosetta. The counts live in `<home>/usage.json` (the last 31 days) and survive a restart.
+`serve` counts, per tenant and per UTC day, the model calls and the tokens (input, including cache reads and writes, plus output) that every model call reports, whatever started it: a build, a job, a question, fuse or rosetta. The counts live in `<home>/usage.json` (the last 31 days) and survive a restart; two processes on one home add up rather than overwrite. Tokens are counted as an answer streams, so a stopped answer still counts what it used; a stream that reports no usage is counted by estimate, never as free.
 
 ```bash
 ontologizer serve --limit-calls 500 --limit-tokens 2000000    # per tenant per day (default: no limit)

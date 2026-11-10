@@ -596,7 +596,8 @@ ontologizer mcp [--url <server>] [--token-file <file>] [--home <dir>]
     stdio. With --url: forwards every tool call over HTTP to that server, with the token from --token-file
     (or ONTOLOGIZER_TOKEN). Never takes a token on the command line.
     Without --url: starts the service in-process on 127.0.0.1 (a random port) for the home, open mode
-    (loopback only, no token), and forwards to it. Logs go to stderr; stdout is the protocol only.
+    (loopback only, no token), and forwards to it. Refuses (exit 1) a home with tokens or a config.
+    Logs go to stderr; stdout is the protocol only.
 ```
 
 - **One security path.** No MCP code calls the engine or a store. Each tool call becomes an HTTP request to the router (`requestFor(op, input)`), carrying the caller's own credentials:
@@ -658,7 +659,8 @@ ontologizer usage [--home <dir>] [--days 7] [--json]       reads <home>/usage.js
 - Counted per tenant per UTC day: model calls and tokens (input, with cache reads and writes, plus output), from the `usage` field of each SDK response, by wrapping every model client the engine gets (the default client and the model port's), so every purpose counts. **Dollars are not counted** (there is no price table): this is a usage limit, not a spend cap.
 - `makeEngine({ store, id, tenant, clientFor?, meter })`: the engine factory wraps every client with `meter(client)`. `createUsage({ home, limitCalls, limitTokens })` → `{ wrap(client, { tenant, signal }), today(tenant), over(tenant), flush(), file }`.
 - Over a limit (calls made ≥ `--limit-calls`, or tokens ≥ `--limit-tokens`), every op with `callsModel` answers **429** with `Retry-After` (seconds to the next UTC midnight) and `{ ok: false, error }` naming the limit and when it resets, until the next UTC day. The checks come after the auth, tenant, scope and read-rule checks. A model call that starts while over the limit (a build already running) throws instead, so a build stops at the limit.
-- Counters persist in `<home>/usage.json` (`{ version: 1, tenants: { <tenant>: { <YYYY-MM-DD>: { calls, inputTokens, outputTokens } } } }`, written atomically, mode 0600, the last 31 days kept), read at start, so a restart keeps them. One server per home writes it.
+- Counters persist in `<home>/usage.json` (`{ version: 1, tenants: { <tenant>: { <YYYY-MM-DD>: { calls, inputTokens, outputTokens } } } }`, written atomically, mode 0600, the last 31 days kept), read at start, so a restart keeps them. Each write adds this process's new counts to the file's current ones under `usage.json.lock` (`O_EXCL`; a lock older than 10 s is a crashed writer's and is taken over), and a changed file is re-read, so two processes on one home add up.
+- Tokens are counted from the stream's events as they arrive (`message_start`: input and cache; `message_delta`: cumulative output), each once, topped up by the final message: an aborted or timed-out answer counts what it used. A stream that ends with no usage counts an estimate: the request's size (characters / 4) in and its `max_tokens` out; one that ends after `message_start` but before an output count, the streamed text (characters / 3).
 - Default: no limits (counting only).
 
 ### Build timeout
@@ -710,6 +712,11 @@ ontologizer usage [--home <dir>] [--days 7] [--json]       reads <home>/usage.js
 | `docs/MCP.md`'s catalog is the generated one; README, AGENTS.md and AGENT-INSTALL.md link the guide. | A hand edit in the catalog; a file without the link. |
 | `build_map` lists exactly the sources the caller holds; the instructions arrive at initialize; a prompt expands and refuses a missing argument. | (A token without a sources list sees only the public source.) |
 | A fresh agent given only the instructions, tools and prompts plans five tasks right (by hand). | (The plans before W9.) |
+| `ontologizer mcp` without `--url` refuses a home with tokens or a config. | The guard that checked nothing (a home with tokens.json served open; one with a config). |
+| Tokens of an aborted or timed-out answer are counted from its events; a stream with no usage counts an estimate. | The finalMessage-only counter (an aborted answer counted 0). |
+| Two writers on one home add up in `usage.json` (in one process, and two real processes); a stale lock is taken over. | The read-once writer (half the counts lost). |
+| A hostile node id (with a newline) cannot start a line in the outline: MCP, HTTP and the chat's own. | The raw id and label in the outline line. |
+| MCP check_context on the real engine (a scripted model) returns the brief, and is metered. | (The `:check` regression, PR #5.) |
 | `test/a` to `test/i` (I1, I2, I4) pass unchanged; `npm audit` is clean; no new dependency. | |
 
 ## Try it
@@ -727,8 +734,8 @@ node -e "import('ontologizer/client').then(async ({ createClient }) => console.l
 
 1. **The router describes itself, it is not generated.** `src/ops.js` describes the hand-written router, and a test keeps them in step both ways. Generating the router from the list would remove the test but rewrite the security-reviewed code.
 2. **Usage is not money.** Calls and tokens are counted; prices change and differ by model, so no dollar figure is kept. A spend cap belongs with the API provider's own limits.
-3. **One writer per home for `usage.json`.** Two servers on one home (or `ontologizer mcp` without `--url` beside `serve`) each keep their own counts and the last write wins.
-4. **`ontologizer mcp` without `--url` opens a loopback port** while it runs, open to this machine as `ontologizer load` is.
+3. **`usage.json` is shared by every process on a home.** Writes merge under a lock file; on a network filesystem without reliable `O_EXCL`, keep one server per home.
+4. **`ontologizer mcp` without `--url` opens a loopback port** while it runs, open to this machine as `ontologizer load` is. It refuses a home that has tokens or a config (exit 1, pointing to `--url` and `--token-file` against a running `serve`).
 
 ---
 

@@ -18,7 +18,7 @@ Don't use it for a single fact you can look up directly, or for live data: a map
 
 ### Claude Code
 
-On this machine, over stdio (an in-process server on your own maps in `~/.ontologizer`, loopback only, no token):
+On this machine, over stdio (an in-process server on your own maps in `~/.ontologizer`, loopback only, no token). A home with tokens or a config is refused: it has sign-in, so use a running `serve` with `--url` and `--token-file` instead (below).
 
 ```bash
 claude mcp add ontologizer -- npx -y ontologizer mcp
