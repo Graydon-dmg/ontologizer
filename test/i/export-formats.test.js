@@ -75,8 +75,12 @@ test("the embed's data reader parses the demo export's data tag back to the same
     assert.ok(r.ok, format);
     assert.deepEqual(r.ok && r.ontology, exportSnapshot(demo()));
   }
-  // For the demo (no chat, every job finished) the exported snapshot is the snapshot itself.
-  assert.deepEqual(exportSnapshot(demo()), demo());
+  // The exported snapshot is an allow-list of what the embed shows (export-review.test.js checks
+  // the fields): the same nodes and edges as the map, and no jobs, chat or insights.
+  const snap = exportSnapshot(demo());
+  assert.deepEqual(Object.keys(snap.nodes), Object.keys(demo().nodes));
+  assert.equal(snap.edges.length, demo().edges.length);
+  assert.deepEqual([snap.jobs, snap.chat, snap.insights], [{}, [], []]);
 });
 
 test('planted fault: a malformed data tag is a clear error, never an empty map', async () => {

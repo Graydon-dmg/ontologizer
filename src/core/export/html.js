@@ -5,19 +5,56 @@
 /** @typedef {import('../schema.js').Ontology} Ontology */
 
 /**
- * The snapshot an html or embed export carries: the map as /api/snapshot returns it, minus the chat
- * (questions people asked are not part of a published map) and minus jobs that never finished (a
- * static page cannot finish them).
+ * A node's sources as the element reads them: title and url, and for a source ref (a configured
+ * source's item) its source name and ref, which the details panel shows as "source · title".
+ * @param {any} list
+ */
+const sourcesOf = (list) => (Array.isArray(list) ? list.map((x) => ({
+  title: x?.title ?? '', url: x?.url ?? '',
+  ...(typeof x?.source === 'string' ? { source: x.source.slice(0, 64), ref: String(x?.ref ?? '').slice(0, 500) } : {}),
+})) : []);
+
+/**
+ * The snapshot an html or embed export carries: only what the element and its views read (see
+ * web/embed/ and web/views/), built from an allow-list so nothing the reader never sees goes
+ * along. Left out: the chat (questions people asked are not part of a published map), every job
+ * (a static page cannot run one, and a failed job's error text can hold local paths), insights,
+ * and the brief but its subject. The shape stays a full map, so the embed can fold view events.
  * @param {Ontology} ontology
  * @returns {Ontology}
  */
 export function exportSnapshot(ontology) {
-  /** @type {Ontology['jobs']} */
-  const jobs = {};
-  for (const [id, j] of Object.entries(ontology.jobs || {})) {
-    if (j && (j.state === 'done' || j.state === 'failed')) jobs[id] = j;
+  /** @type {Ontology['nodes']} */
+  const nodes = {};
+  for (const [id, n] of Object.entries(ontology.nodes || {})) {
+    const a = n.article;
+    nodes[id] = /** @type {any} */ ({
+      id: n.id, label: n.label, parent: n.parent ?? null, category: n.category, depth: n.depth,
+      ...(n.summary !== undefined ? { summary: n.summary } : {}),
+      origin: n.origin, status: n.status, sources: sourcesOf(n.sources),
+      article: a ? { summary: a.summary ?? '', keyFacts: Array.isArray(a.keyFacts) ? a.keyFacts : [], whyItMatters: a.whyItMatters ?? '', seeAlso: [], sources: sourcesOf(a.sources) } : null,
+    });
   }
-  return { ...ontology, jobs, chat: [] };
+  /** @type {Ontology['lenses']} */
+  const lenses = {};
+  for (const [id, l] of Object.entries(ontology.lenses || {})) lenses[id] = { id: l.id, persona: l.persona, analogs: l.analogs };
+  const out = /** @type {Ontology} */ ({
+    name: ontology.name,
+    root: ontology.root,
+    version: ontology.version,
+    brief: /** @type {any} */ ({ subject: ontology.brief?.subject ?? '' }),
+    categories: (ontology.categories || []).map((c) => ({ id: c.id, label: c.label, index: c.index, family: c.family })),
+    nodes,
+    edges: (ontology.edges || []).map((e) => ({ id: e.id, from: e.from, to: e.to, type: e.type, why: e.why })),
+    lenses,
+    view: ontology.view,
+    jobs: {},
+    insights: [],
+    chat: [],
+  });
+  const vis = /** @type {any} */ (ontology).visibility;
+  if (vis !== undefined) /** @type {any} */ (out).visibility = vis;
+  return out;
 }
 
 /**

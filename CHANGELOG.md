@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0 (2026-11-09)
+
+- **Export.** `ontologizer export <map> --format html | embed | json | context`, and an **Export** menu on the page. `html` is one page that shows the map offline (pan, zoom, click, collapse, search; `--3d` adds the 3D view). `embed` is a fragment to paste into any page; several can share a page, 2D and 3D mixed. `json` is the map itself. Thanks to Alex Garden ([#3](https://github.com/Graydon-dmg/ontologizer/pull/3)).
+- **Copy for an agent.** `--format context` (or **Copy for an agent** in the menu) gives a short markdown brief of the map to hand to an AI agent, kept within `--budget` tokens. Map text is cleaned so it can't pose as instructions.
+- **Exports share only what they show.** Pages and embeds leave out the chat, your original prompt and job errors. JSON leaves out the chat unless you add `--include-chat`. **Open live** links back only from a map served at an address others can reach.
+- **Search finds hidden matches.** A search opens the collapsed branches that hold a match, once you pause typing or press Enter.
+- **Safer releases.** The export bundle is built in its own step, checked by hash, and published byte for byte.
+- **Fixed:** `ontologizer --version` printed the wrong number when ontologizer was installed inside another project.
+
 ## 1.3.0 (2026-11-09)
 
 - **Service mode.** `ontologizer serve` runs one server for every map in a folder: on your laptop, a Linux host or in Docker. A maps home page lists your maps and has a **New map** button (it asks the same questions as `ontologizer new`, then opens the live map). Thanks to Alex Garden ([#2](https://github.com/Graydon-dmg/ontologizer/pull/2)).

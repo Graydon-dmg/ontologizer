@@ -172,21 +172,38 @@ test('N1: a store whose ready rejects is 503, not kept, and the next request ope
   } finally { await srv.close(); }
 });
 
+/** The 110-ghost result is fine: nothing opened, no connection held. @param {{ opened: number, extra: number, statuses: number[] }} r */
+function pgGhostProblems(r) {
+  const p = [];
+  if (r.opened > 0) p.push(`${r.opened} stores opened for ghost tenants`);
+  if (r.extra > 4) p.push(`${r.extra} more Postgres connections after the ghosts`);
+  const bad = r.statuses.find((x) => x >= 500);
+  if (bad) p.push(`a probe answered ${bad}`);
+  return p;
+}
+
 test('N1 (Postgres): 110 ghost tenants add at most 4 connections', pgOpts, async () => {
+  // Planted fault: the re-review's probe result, one store and one held connection per ghost.
+  assert.ok(pgGhostProblems({ opened: 110, extra: 110, statuses: [] }).length === 2);
   const pg = await import('pg');
+  // Only this test's connections are counted (other Postgres tests may run at the same time): the
+  // server's stores connect with this application_name.
+  const tag = `ghosts-${rnd()}`;
+  const tagged = `${PG_URL}${String(PG_URL).includes('?') ? '&' : '?'}application_name=${tag}`;
   const admin = new pg.default.Pool({ connectionString: PG_URL, max: 2 });
-  const conns = async () => Number((await admin.query("SELECT count(*) AS n FROM pg_stat_activity WHERE datname = 'postgres'")).rows[0].n);
-  const { srv, secrets, url } = await start({ tokens: { boss: { scopes: ['admin'] } }, config: { store: postgresStorePort({ url: /** @type {string} */ (PG_URL) }) } });
+  const conns = async () => Number((await admin.query('SELECT count(*) AS n FROM pg_stat_activity WHERE application_name = $1', [tag])).rows[0].n);
+  const port = postgresStorePort({ url: tagged, root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-rec-pg-')) });
+  let opened = 0;
+  /** @param {string} tenant */
+  const counting = (tenant) => { opened++; return port(tenant); };
+  counting.exists = port.exists;
+  const { srv, secrets, url } = await start({ tokens: { boss: { scopes: ['admin'] } }, config: { store: counting } });
   try {
     const before = await conns();
     const statuses = [];
     for (let i = 0; i < 110; i++) statuses.push((await req(url, `/v1/t/g${rnd()}${i}/status`, { headers: auth(secrets.boss) })).status);
-    const after = await conns();
-    const extra = after - before;
-    // Planted fault: one connection per ghost.
-    assert.ok(110 > 4);
-    assert.ok(statuses.every((s) => s < 500), `a probe answered ${statuses.find((s) => s >= 500)}`);
-    assert.ok(extra <= 4, `${extra} more Postgres connections after 110 ghosts`);
+    const extra = (await conns()) - before;
+    assert.deepEqual(pgGhostProblems({ opened, extra, statuses }), []);
   } finally { await srv.close(); await admin.end(); }
 });
 
@@ -244,7 +261,8 @@ test('N2 (Postgres): terminating the lock backend fails the tenant (503) without
   const pg = await import('pg');
   const admin = new pg.default.Pool({ connectionString: PG_URL, max: 2 });
   const ta = `t${rnd()}`; const tb = `t${rnd()}`;
-  const { srv, url } = await start({ config: { store: (/** @type {string} */ tenant) => openPostgresStore({ url: /** @type {string} */ (PG_URL), tenant }) } });
+  const pgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-rec-pg-'));
+  const { srv, url } = await start({ config: { store: (/** @type {string} */ tenant) => openPostgresStore({ url: /** @type {string} */ (PG_URL), tenant, root: path.join(pgRoot, tenant) }) } });
   const crashed = [];
   const spy = (/** @type {any} */ e) => crashed.push(e);
   process.on('uncaughtException', spy);

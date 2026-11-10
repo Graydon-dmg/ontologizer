@@ -8,7 +8,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 - **Served to your browser:** the local web page that `ontologizer` opens serves the d3 packages and `three` to your browser straight from `node_modules`.
 - **Platform binaries:** `@napi-rs/keyring` ships one prebuilt binary per platform; npm installs only the one for your system.
 
-179 shipped packages: MIT 148, ISC 24, BSD-3-Clause 3, Apache-2.0 2, Unlicense 1, BSD-2-Clause 1. Plus 41 development-only packages (MIT 39, ISC 2), listed at the end: never shipped.
+179 shipped packages: MIT 148, ISC 24, BSD-3-Clause 3, Apache-2.0 2, Unlicense 1, BSD-2-Clause 1. Plus 41 development-only packages (MIT 39, ISC 2), listed under Build tools at the end: never shipped.
 
 ## Packages
 
@@ -101,7 +101,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 | eventsource | 3.0.7 | MIT | Copyright (c) EventSource GitHub organisation |
 | eventsource-parser | 3.1.1 | MIT | Copyright (c) 2026 Espen Hovlandsdal <espen@hovlandsdal.com> |
 | express | 5.3.0 | MIT | Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca> |
-| express-rate-limit | 8.7.3 | MIT | Copyright 2023 Nathan Friedly, Vedant K |
+| express-rate-limit | 8.7.4 | MIT | Copyright 2023 Nathan Friedly, Vedant K |
 | fast-deep-equal | 3.1.3 | MIT | Copyright (c) 2017 Evgeny Poberezkin |
 | fast-sha256 | 1.3.0 | Unlicense | Author: Dmitry Chestnykh |
 | fast-string-truncated-width | 3.0.3 | MIT | Copyright (c) 2024-present Fabio Spampinato |
@@ -985,7 +985,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Used by: express-rate-limit@8.7.3
+Used by: express-rate-limit@8.7.4
 
 ```text
 MIT License
@@ -1116,9 +1116,9 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <http://unlicense.org>
 ```
 
-## Development only: never shipped or bundled
+## Build tools: installed for development only, never shipped or bundled
 
-These are development dependencies: the build tools that make `web/dist/` from source, and packages used only by the tests. They are not part of the published package or of any exported page. `pg` is also an optional peer dependency: install it yourself to use `ontologizer/store-postgres`.
+These are development dependencies: the tools that build `web/dist/` from source, and drivers used only by the tests (such as `pg`, which a deployment that uses the optional Postgres store installs itself). None is part of the published package or of any exported page.
 
 | Package | Version | Licence | Copyright |
 |---|---|---|---|

@@ -39,7 +39,7 @@ export function generate() {
   /** @typedef {{ name: string, version: string, license: string, copyright: string, platform: boolean, parent: string, text: string|null }} Row */
   /** @type {Row[]} shipped: installed next to Ontologizer */
   const rows = [];
-  /** @type {Row[]} development dependencies (build tools and test-only packages): never shipped or bundled */
+  /** @type {Row[]} build tools: development dependencies, never shipped or bundled */
   const devRows = [];
   const nameOf = (/** @type {string} */ path, /** @type {any} */ meta) => meta.name ?? path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
   /** The package that lists a platform binary as an optional dependency (its real parent). @param {string} name */
@@ -82,7 +82,7 @@ export function generate() {
     for (const r of list) counts[r.license] = (counts[r.license] || 0) + 1;
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ');
   };
-  const devNote = devRows.length ? ` Plus ${devRows.length} development-only packages (${tally(devRows)}), listed at the end: never shipped.` : '';
+  const devNote = devRows.length ? ` Plus ${devRows.length} development-only packages (${tally(devRows)}), listed under Build tools at the end: never shipped.` : '';
   out.push(`${rows.length} shipped packages: ${tally(rows)}.${devNote}`, '');
   out.push('## Packages', '');
   out.push('| Package | Version | Licence | Copyright |', '|---|---|---|---|');
@@ -107,8 +107,8 @@ export function generate() {
     if (plat.length) out.push(`Platform binaries under this licence (text as for ${[...new Set(plat.map((r) => r.parent))].join(', ')} above): ${plat.map((r) => r.name).join(', ')}.`, '');
   }
   if (devRows.length) {
-    out.push('## Development only: never shipped or bundled', '');
-    out.push('These are development dependencies: the build tools that make `web/dist/` from source, and packages used only by the tests. They are not part of the published package or of any exported page. `pg` is also an optional peer dependency: install it yourself to use `ontologizer/store-postgres`.', '');
+    out.push('## Build tools: installed for development only, never shipped or bundled', '');
+    out.push('These are development dependencies: the tools that build `web/dist/` from source, and drivers used only by the tests (such as `pg`, which a deployment that uses the optional Postgres store installs itself). None is part of the published package or of any exported page.', '');
     out.push('| Package | Version | Licence | Copyright |', '|---|---|---|---|');
     for (const r of devRows) out.push(`| ${esc(r.name)} | ${r.version} | ${r.license} | ${esc(r.copyright)} |`);
     out.push('');

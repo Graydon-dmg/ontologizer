@@ -53,7 +53,8 @@ export default {
     .option('3d', { type: 'boolean', default: false, describe: 'html and embed only: add the 3D view (a bigger file)' })
     .option('budget', { type: 'number', default: 4000, describe: 'context only: size limit in estimated tokens' })
     .option('out', { type: 'string', describe: 'File to write (html, embed: default <map>.html / <map>.embed.html here; json, context: default stdout)' })
-    .option('live-url', { type: 'string', describe: 'html and embed only: an "Open live" link to this address' }),
+    .option('live-url', { type: 'string', describe: 'html and embed only: an "Open live" link to this address' })
+    .option('include-chat', { type: 'boolean', default: false, describe: 'json only: keep the map\'s chat (left out by default)' }),
   handler: async (/** @type {any} */ argv) => {
     const deps = argv.deps;
     const format = /** @type {'html'|'embed'|'json'|'context'} */ (argv.format);
@@ -62,6 +63,8 @@ export default {
     if (threeD && !page) throw new CliError('--3d only applies to --format html or embed.', 1);
     const budget = Number(argv.budget);
     if (format === 'context' && !(Number.isInteger(budget) && budget >= 100)) throw new CliError('--budget must be a whole number of tokens, at least 100.', 1);
+    const includeChat = Boolean(argv.includeChat);
+    if (includeChat && format !== 'json') throw new CliError('--include-chat only applies to --format json.', 1);
     const liveUrl = argv.liveUrl ?? null;
     if (liveUrl !== null) {
       if (!page) throw new CliError('--live-url only applies to --format html or embed.', 1);
@@ -74,7 +77,7 @@ export default {
     const bundle = page ? readBundle(threeD) : undefined;
     let text;
     try {
-      text = exportMap(ontology, { format, bundle, budget, liveUrl });
+      text = exportMap(ontology, { format, bundle, budget, liveUrl, includeChat });
     } catch (err) {
       throw new CliError(/** @type {Error} */ (err).message, 1);
     }

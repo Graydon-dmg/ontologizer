@@ -17,7 +17,7 @@ const FLAGS = {
   status: ['--home', '--json', '--config'],
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
-  export: ['--format', '--3d', '--budget', '--out', '--live-url'],
+  export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat'],
   mcp: ['--url', '--token-file', '--home'],
   usage: ['--home', '--days', '--json'],
 };

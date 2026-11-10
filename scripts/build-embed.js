@@ -12,11 +12,32 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DIST_DIR = path.join(ROOT, 'web', 'dist');
-export const ENTRIES = /** @type {const} */ ([['index.js', 'embed.js'], ['index-3d.js', 'embed-3d.js']]);
+// Each bundle is one or more parts, each its own esbuild build, written one after the other. The 3D
+// bundle is the 2D part (graph view and element) followed by the 3D add-on (the 3D view alone).
+export const ENTRIES = /** @type {const} */ ([[['index.js'], 'embed.js'], [['index.js', 'index-3d.js'], 'embed-3d.js']]);
 
-// Several exports on one page each carry the bundle; only the first one to run defines the element.
-const GUARD_OPEN = 'if(!(globalThis.customElements&&customElements.get("ontologizer-map"))){';
+// Several exports on one page each carry a bundle. A part runs only if the page does not have it
+// yet: the first 2D part defines the element and the 2D view, the first 3D add-on the 3D view, in
+// either order (web/embed/registry.js holds the views every bundle shares).
+/** @type {Record<string, { tag: string, views: string[] }>} entry -> the element it defines, the views it adds */
+const PARTS = {
+  'index.js': { tag: 'ontologizer-map', views: ['graph-2d'] },
+  'index-3d.js': { tag: 'onto-sky', views: ['sky-3d'] },
+};
+/** @param {string} tag */
+export const guardOpen = (tag) => `if(!(globalThis.customElements&&customElements.get(${JSON.stringify(tag)}))){`;
 const GUARD_CLOSE = '}';
+
+/**
+ * Runs first, always: marks the <ontologizer-map> just before this <script> (how both export
+ * formats are laid out) with the views its bundle brings, unless it already says. That is how one
+ * shared element knows which maps on a page were exported with 3D.
+ * @param {string[]} views
+ */
+export function markExport(views) {
+  return `(()=>{const s=typeof document<"u"?document.currentScript:null,e=s&&s.previousElementSibling;`
+    + `if(e&&e.localName==="ontologizer-map"&&!e.hasAttribute("data-views"))e.setAttribute("data-views",${JSON.stringify(views.join(' '))})})();\n`;
+}
 
 /** @param {string} dir @returns {string|null} */
 export function licenceText(dir) {
@@ -58,14 +79,19 @@ function options(entry) {
 }
 
 /**
- * The packages an entry's bundle includes, by running esbuild without writing anything.
- * @param {string} entry  'index.js' or 'index-3d.js'
+ * The packages a bundle includes, by running esbuild on each of its parts without writing anything.
+ * @param {string|readonly string[]} entries  a part ('index.js', 'index-3d.js') or a bundle's parts
  * @returns {Promise<Map<string, string>>} name@version -> package dir
  */
-export async function bundledPackages(entry) {
+export async function bundledPackages(entries) {
   const { build } = await import('esbuild');
-  const probe = await build({ ...options(entry), write: false, metafile: true, outfile: path.join(DIST_DIR, 'probe.js') });
-  return packagesOf(Object.keys(probe.metafile?.inputs ?? {}));
+  /** @type {Map<string, string>} */
+  const all = new Map();
+  for (const entry of typeof entries === 'string' ? [entries] : entries) {
+    const probe = await build({ ...options(entry), write: false, metafile: true, outfile: path.join(DIST_DIR, 'probe.js') });
+    for (const [id, dir] of packagesOf(Object.keys(probe.metafile?.inputs ?? {}))) all.set(id, dir);
+  }
+  return all;
 }
 
 /**
@@ -101,8 +127,9 @@ export function inlineHazards(code) {
 }
 
 /**
- * @param {{ outdir?: string, quiet?: boolean, entries?: ReadonlyArray<readonly [string, string]> }} [opts]
- *   entries: [entry under web/embed/ (or an absolute path), output file name]; tests only.
+ * @param {{ outdir?: string, quiet?: boolean, entries?: ReadonlyArray<readonly [string|readonly string[], string]> }} [opts]
+ *   entries: [part(s) under web/embed/ (or absolute paths), output file name]; tests only. A part
+ *   not in PARTS is guarded like the 2D one and marks nothing.
  * @returns {Promise<{ file: string, bytes: number }[]>}
  */
 export async function buildEmbed({ outdir = DIST_DIR, quiet = false, entries = ENTRIES } = {}) {
@@ -111,17 +138,22 @@ export async function buildEmbed({ outdir = DIST_DIR, quiet = false, entries = E
   const out = [];
   for (const [entry, name] of entries) {
     const file = path.join(outdir, name);
+    const parts = typeof entry === 'string' ? [entry] : entry;
     // First pass: find which packages go in. Second pass: write the bundle with their licences on top.
-    const licences = licenceComment(await bundledPackages(entry));
-    const res = await build({
-      ...options(entry),
-      outfile: file,
-      write: false,
-      legalComments: 'none', // every licence is in the comment above, once
-      banner: { js: licences + GUARD_OPEN },
-      footer: { js: GUARD_CLOSE },
-    });
-    const code = res.outputFiles[0].text;
+    const licences = licenceComment(await bundledPackages(parts));
+    const views = parts.flatMap((p) => PARTS[p]?.views ?? []);
+    let code = licences + (views.length ? markExport(views) : '');
+    for (const part of parts) {
+      const res = await build({
+        ...options(part),
+        outfile: file,
+        write: false,
+        legalComments: 'none', // every licence is in the comment above, once
+        banner: { js: guardOpen(PARTS[part]?.tag ?? 'ontologizer-map') },
+        footer: { js: GUARD_CLOSE },
+      });
+      code += res.outputFiles[0].text;
+    }
     const hazards = inlineHazards(code);
     if (hazards.length) {
       throw new Error(`${name} contains ${hazards.map((h) => `"${h}"`).join(' and ')}, which would break the <script> it is inlined in (a dependency update?). Find where it comes from and avoid it; the bundle was not written.`);

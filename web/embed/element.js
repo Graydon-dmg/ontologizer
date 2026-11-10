@@ -1,7 +1,7 @@
 // @ts-check
 // <ontologizer-map>: a read-only map for offline exports. Shadow DOM; data from the page; the
 // existing 2D graph view, the shared layout and the shared tokens. Nothing is ever sent anywhere.
-import { getView, listViews } from '../shared/view.js';
+import { pageViews, viewsFor, VIEWS_EVENT } from './registry.js';
 import * as tokens from '../shared/tokens.js';
 import { createGraphLayout } from '../shared/layout/graph.js';
 import { fold } from '../../src/core/events.js';
@@ -78,6 +78,18 @@ class OntologizerMap extends Base {
     /** @type {HTMLElement|null} */ this.panel = null;
     /** @type {string|null} */ this.openId = null;
     /** @type {ResizeObserver|null} */ this.ro = null;
+    /** A bundle added views after this map was drawn (a 3D export's own add-on runs last). */
+    this.onViews = () => this.syncViews();
+  }
+
+  /** The views this export may use: those its data-views names, of the ones on the page. */
+  views() {
+    return viewsFor(this.getAttribute('data-views'), pageViews());
+  }
+
+  /** @param {string} id */
+  viewEntry(id) {
+    return this.views().find((v) => v.id === id) || null;
   }
 
   connectedCallback() {
@@ -107,6 +119,7 @@ class OntologizerMap extends Base {
   }
 
   disconnectedCallback() {
+    if (typeof document !== 'undefined') document.removeEventListener(VIEWS_EVENT, this.onViews);
     if (this.ro) this.ro.disconnect();
     this.ro = null;
     if (this.view) {
@@ -168,6 +181,7 @@ class OntologizerMap extends Base {
     root.append(panel);
 
     this.mountView(this.firstViewId());
+    document.addEventListener(VIEWS_EVENT, this.onViews);
     refreshBanner();
     if (typeof ResizeObserver !== 'undefined') {
       this.ro = new ResizeObserver(() => this.publishInsets());
@@ -180,8 +194,38 @@ class OntologizerMap extends Base {
 
   /** @returns {string|null} */
   firstViewId() {
-    const want = getView('graph-2d');
-    return want ? want.id : (listViews()[0] ? listViews()[0].id : null);
+    const all = this.views();
+    const want = all.find((v) => v.id === 'graph-2d');
+    return want ? want.id : (all[0] ? all[0].id : null);
+  }
+
+  /** Offer views a later bundle added: the toggle, or a first view if none could be drawn. */
+  syncViews() {
+    if (!this.stage) return;
+    if (!this.viewId) { this.mountView(this.firstViewId()); return; }
+    this.syncToggle();
+  }
+
+  /** The 2D / 3D toggle, present only when this export has more than one view on the page. */
+  syncToggle() {
+    const bar = this.bar;
+    if (!bar) return;
+    const many = this.views().length > 1;
+    if (many && !this.toggle) {
+      const toggle = /** @type {HTMLButtonElement} */ (button('', () => {
+        const all = this.views();
+        const i = all.findIndex((v) => v.id === this.viewId);
+        this.mountView(all[(i + 1) % all.length].id);
+      }));
+      toggle.title = 'Switch between 2D and 3D';
+      this.toggle = toggle;
+      // before the "Open live" slot, which stays last
+      bar.insertBefore(toggle, bar.querySelector('slot[name="live"]'));
+    } else if (!many && this.toggle) {
+      this.toggle.remove();
+      this.toggle = null;
+    }
+    if (this.toggle) this.toggle.textContent = this.toggleLabel();
   }
 
   buildBar() {
@@ -210,21 +254,10 @@ class OntologizerMap extends Base {
 
     bar.append(button('Fit', () => this.dispatch({ t: 'view.changed', at: 0, patch: { focus: this.onto.root } })));
 
-    const views = listViews();
-    if (views.length > 1) {
-      const toggle = /** @type {HTMLButtonElement} */ (button('', () => {
-        const all = listViews();
-        const i = all.findIndex((v) => v.id === this.viewId);
-        this.mountView(all[(i + 1) % all.length].id);
-      }));
-      toggle.title = 'Switch between 2D and 3D';
-      this.toggle = toggle; // labelled by mountView, once a view is up
-      bar.append(toggle);
-    }
-
     const live = document.createElement('slot');
     live.name = 'live';
     bar.append(live);
+    this.syncToggle(); // labelled again by mountView, once a view is up
     return bar;
   }
 
@@ -240,7 +273,7 @@ class OntologizerMap extends Base {
 
   /** Label for the toggle: the view it would switch to. */
   toggleLabel() {
-    const all = listViews();
+    const all = this.views();
     const i = all.findIndex((v) => v.id === this.viewId);
     const next = all[(i + 1) % all.length];
     return next ? next.label : '';
@@ -256,7 +289,7 @@ class OntologizerMap extends Base {
     this.view = null;
     this.viewId = null;
     stage.replaceChildren();
-    const entry = id ? getView(id) : null;
+    const entry = id ? this.viewEntry(id) : null;
     if (!entry) {
       stage.append(el('div', 'No view is available.', 'msg'));
       return;
@@ -278,12 +311,12 @@ class OntologizerMap extends Base {
       try { v.unmount(); } catch { /* it never fully mounted */ }
       stage.replaceChildren(el('div', `The ${entry.label} view could not start here: ${err instanceof Error ? err.message : String(err)}`, 'msg'));
       this.viewId = entry.id;
-      if (this.toggle) this.toggle.textContent = this.toggleLabel();
+      this.syncToggle();
       return;
     }
     this.view = v;
     this.viewId = entry.id;
-    if (this.toggle) this.toggle.textContent = this.toggleLabel();
+    this.syncToggle();
     applyViewState(v, viewStateToApply(this.onto.view));
   }
 
