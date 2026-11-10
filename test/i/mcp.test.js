@@ -75,7 +75,8 @@ export function samePathProblems(mcp, http) {
     else if (mcp.text !== http.body) p.push('MCP and HTTP bodies differ');
   } else {
     if (!mcp.isError) p.push(`MCP answered but HTTP said ${http.status} ${http.error}`);
-    else if (mcp.text !== http.error) p.push(`MCP said "${mcp.text}", HTTP said "${http.error}"`);
+    // The server's own words come first (then what to call next), so not-found reads as over HTTP.
+    else if (!mcp.text.startsWith(String(http.error))) p.push(`MCP said "${mcp.text}", HTTP said "${http.error}"`);
   }
   return p;
 }
@@ -98,6 +99,9 @@ test('a reader\'s get_outline on a private map is the same not-found as HTTP; th
     assert.equal(h.error, 'not found');
     assert.equal(read.isError, true);
     assert.deepEqual(samePathProblems({ isError: read.isError, text: text(read) }, h), []);
+    // Hidden and missing read exactly the same over MCP too, hint included.
+    const gone = /** @type {any} */ (await reader.callTool({ name: 'get_outline', arguments: { id: 'no-such-map' } }));
+    assert.equal(text(read), text(gone));
     const adm = /** @type {any} */ (await boss.callTool({ name: 'get_outline', arguments: { id: 'secret-map' } }));
     assert.ok(!adm.isError);
     assert.deepEqual(samePathProblems({ isError: adm.isError, text: text(adm) }, await viaHttp(secrets.boss)), []);
@@ -126,7 +130,7 @@ export function callerAnswerProblems(r, want) {
   /** @type {string[]} */
   const p = [];
   if (!r.isError) p.push('expected an error result');
-  if (r.text !== want) p.push(`expected "${want}" but got "${r.text}"`);
+  if (!r.text.startsWith(want)) p.push(`expected "${want}" but got "${r.text}"`);
   return p;
 }
 
@@ -204,12 +208,14 @@ test('open mode: check, build, wait, read the map through the tools and resource
     // ask_map on the stub: an answer or a clean error result, never a crash
     const ask = /** @type {any} */ (await c.callTool({ name: 'ask_map', arguments: { id, text: 'What is this?' } }));
     assert.ok(Array.isArray(ask.content) && ask.content.length === 1);
-    // unknown tool is a protocol error
-    await assert.rejects(c.callTool({ name: 'drop_everything', arguments: {} }));
+    // an unknown tool is a tool error that lists the tools, never an exception
+    const unknown = /** @type {any} */ (await c.callTool({ name: 'drop_everything', arguments: {} }));
+    assert.equal(unknown.isError, true);
+    assert.match(text(unknown), /^Unknown tool "drop_everything"\. The tools: list_maps/);
     // a missing map is a tool error with the server's words
     const miss = /** @type {any} */ (await c.callTool({ name: 'get_outline', arguments: { id: 'nope' } }));
     assert.equal(miss.isError, true);
-    assert.equal(text(miss), 'not found');
+    assert.match(text(miss), /^not found\. No map with that id exists that you may read\. Call list_maps/);
   } finally { await c.close(); await srv.close(); }
 });
 

@@ -11,7 +11,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, McpError, ErrorCode,
+  ListResourceTemplatesRequestSchema, ReadResourceRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema,
+  McpError, ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { OPS, opByName, requestFor, COST_NOTE } from '../ops.js';
 
@@ -23,15 +24,103 @@ import { OPS, opByName, requestFor, COST_NOTE } from '../ops.js';
 export const MCP_OPS = OPS.filter((o) => o.mcp);
 export { COST_NOTE };
 
-/** The tools: name, description (verbatim from the op), and the op's input schema without `tenant`. */
+/** Sent in the initialize result: what the server holds and how the tools fit together. */
+export const INSTRUCTIONS = `Ontologizer builds and serves topic maps: a tree of categories and nodes about one field (each node has an id like "sourdough/starter/levain", a label and a one-line summary), with cross-links between categories (bridges), insights, thin areas, and sources (web pages, or documents from configured sources). A map is built once by the model and then read for free.
+
+Start with the free reads: list_maps (what exists), get_context (a whole map as markdown sized for your context: the best first read), get_outline (every node and its id), search_map (find a node), get_node (one node in full). They never call the model.
+
+Tools that call the model cost the user API credits and say so: check_context, build_map, research, explain, sources, ask_map, fuse, rosetta. Use them only when the free reads cannot answer.
+
+Usual workflows:
+- Learn a field: list_maps; if no map fits, check_context (repeat with answers while it asks questions), build_map, wait_for_map, then get_context and teach or brainstorm from it yourself.
+- Deepen one node: search_map or get_outline for its id, get_node, then explain (write its article) or research (add nodes under it), wait_for_map, get_node again.
+- Put a map into a document or page: export_map with format "embed" (an offline, interactive fragment) or "html" (a whole page).
+- Where two fields connect: fuse two existing maps, wait_for_map on the new map (draftId), get_context on it and read its Bridges.
+- A question answered in prose with citations: ask_map.
+
+Jobs (build_map, research, explain, sources, fuse, rosetta) answer at once and run in the background: wait on the map with wait_for_map. Drafts are kept; save_map only names a map.
+
+Private maps: a map built from a private source (build_map with sources) is private for good; only callers who hold its sources can read it, and to everyone else it does not exist ("not found", the same as a missing map). Runs on a private map use no web search. Its exports are marked Private: share them only with people who may read the map.
+
+Errors come back as tool results that say what went wrong and what to call next.`;
+
+/**
+ * Starting points a client can offer. `text(args)` is the user message the prompt expands to.
+ * @type {Array<{ name: string, title: string, description: string, arguments: Array<{ name: string, description: string, required?: boolean }>, text: (a: Record<string, string>) => string }>}
+ */
+export const PROMPTS = [
+  { name: 'learn-a-field', title: 'Learn a field',
+    description: 'Map a field you know nothing about, then learn it from the map.',
+    arguments: [{ name: 'topic', description: 'The field, and who it is for. E.g. "home espresso for a complete beginner"', required: true }],
+    text: (a) => `Help me learn ${a.topic}. First call list_maps and use a map that already covers it. If none does, call check_context with a description of the topic and who it is for; answer its questions (ask me if you cannot), call it again with the answers until it is ready, then build_map with the brief and wait_for_map until it is idle. Then call get_context and teach me the field from it: the big picture, the key ideas, and where to start. Use get_node for detail. Do not call research, explain or ask_map unless I ask.` },
+  { name: 'brainstorm-from-map', title: 'Brainstorm from a map',
+    description: 'Ground a brainstorm in a map you already have.',
+    arguments: [{ name: 'map', description: 'The map id. E.g. "home-espresso"', required: true },
+      { name: 'goal', description: 'What the ideas are for. E.g. "a weekend side project"' }],
+    text: (a) => `Call get_context on the map "${a.map}" (budget 6000) and brainstorm${a.goal ? ` ideas for ${a.goal}` : ' ideas'} from it yourself. Use its thin areas and bridges for less obvious ideas, and name the nodes each idea builds on. Use search_map and get_node for detail. Do not call tools that call the model.` },
+  { name: 'map-for-a-doc', title: 'Put a map into a document',
+    description: 'An interactive map of a field, ready to paste into a document or web page.',
+    arguments: [{ name: 'topic', description: 'The field, and who the document is for. E.g. "electric bicycles, for a product team"', required: true },
+      { name: 'format', description: '"embed" (a fragment for a document, the default) or "html" (a whole page)' }],
+    text: (a) => `I need a map of ${a.topic} in a document. Call list_maps and use a map that already covers it; otherwise check_context, build_map and wait_for_map until it is idle. Then call export_map with format "${a.format === 'html' ? 'html' : 'embed'}" and put the result into my document as it is: it works offline and loads nothing from the network. Use get_context if you also need to write about the map.` },
+  { name: 'connect-two-fields', title: 'Find where two fields connect',
+    description: 'Fuse two maps and read the bridges between them.',
+    arguments: [{ name: 'a', description: 'The first map id. E.g. "sourdough"', required: true },
+      { name: 'b', description: 'The second map id. E.g. "fermentation-science"', required: true }],
+    text: (a) => `Find where "${a.a}" and "${a.b}" connect. Call list_maps to check both exist (build a missing one first). Call fuse on "${a.a}" with "${a.b}", then wait_for_map on the draftId it returns, then get_context on that new map and explain its Bridges to me, naming the nodes on each side.` },
+  { name: 'deepen-a-node', title: 'Look into one node and go deeper',
+    description: 'See what a map says about one node, then extend it.',
+    arguments: [{ name: 'map', description: 'The map id. E.g. "sourdough"', required: true },
+      { name: 'node', description: 'The node, in words. E.g. "levain"', required: true }],
+    text: (a) => `On the map "${a.map}", call search_map for "${a.node}" and get_node on the best match, and tell me what the map says. Then, if it is thin, call explain (to write its article) or research (to add nodes under it), wait_for_map, and get_node again to show me what is new.` },
+  { name: 'private-map', title: 'A private map from your own sources',
+    description: 'Build a map from a private source and keep it private.',
+    arguments: [{ name: 'topic', description: 'What the map is about. E.g. "our onboarding process"', required: true },
+      { name: 'source', description: 'A private source you hold, as listed on build_map. E.g. "wiki"', required: true }],
+    text: (a) => `Build a private map of ${a.topic} from the source "${a.source}": check_context with the topic (no private details in it), then build_map with the brief and sources ["${a.source}"], then wait_for_map. The map is private from the start because the source is private; list_maps shows visibility "private". Read it with get_context. Do not export it or call sources on it unless I say who may see it.` },
+];
+
+/** A schema without `additionalProperties: false` (an output may grow; the client checks against it). @param {any} s @returns {any} */
+function loose(s) {
+  if (Array.isArray(s)) return s.map(loose);
+  if (!s || typeof s !== 'object') return s;
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (const [k, v] of Object.entries(s)) {
+    if (k === 'additionalProperties' && v === false) continue;
+    out[k] = loose(v);
+  }
+  return out;
+}
+
+const ASK_OUTPUT = { type: 'object', properties: {
+  answer: { type: 'string' }, chatId: { type: 'string' },
+  citedNodes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } } } },
+  sources: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, url: { type: 'string' } } } },
+}, required: ['answer', 'citedNodes', 'sources'] };
+
+/** The tool's output schema: the op's JSON object output (a list is wrapped as { maps }); none for text. @param {import('../ops.js').Op} op */
+export function outputSchemaOf(op) {
+  if (op.name === 'list_maps') return { type: 'object', properties: { maps: loose(op.output) }, required: ['maps'] };
+  if (op.name === 'ask_map') return ASK_OUTPUT;
+  if (op.output?.type === 'object' && !op.http.type) return loose(op.output);
+  return undefined;
+}
+
+/** The tools: name, title, description and annotations (from the op), the op's input schema without `tenant`, the output schema. */
 export function toolList() {
   return MCP_OPS.map((op) => {
     const { tenant: _t, ...properties } = op.input.properties ?? {};
     const required = (op.input.required ?? []).filter((/** @type {string} */ k) => k !== 'tenant');
+    const m = /** @type {NonNullable<import('../ops.js').Op['mcp']>} */ (op.mcp);
+    const outputSchema = outputSchemaOf(op);
     return {
-      name: /** @type {{ name: string }} */ (op.mcp).name,
-      description: /** @type {{ description: string }} */ (op.mcp).description,
+      name: m.name,
+      ...(m.title ? { title: m.title } : {}),
+      description: m.description,
       inputSchema: { ...op.input, properties, required },
+      ...(outputSchema ? { outputSchema } : {}),
+      ...(m.annotations ? { annotations: { ...(m.title ? { title: m.title } : {}), ...m.annotations } } : {}),
     };
   });
 }
@@ -41,18 +130,41 @@ const tryJson = (s) => { try { return JSON.parse(s); } catch { return undefined;
 /** @param {string} text @param {boolean} [isError] */
 const textResult = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
 
-/** The server's error string of a non-2xx answer (plus the wait for a 429). @param {CallResult} r */
-function errorText(r) {
+/**
+ * A non-2xx answer as an actionable message: the server's own error first (so "not found" reads the same
+ * as over HTTP, for a hidden map and a missing one alike), then what to call next. The hint depends only
+ * on the status and the tool, never on whether a hidden map exists.
+ * @param {CallResult} r @param {string} [tool]
+ */
+export function errorText(r, tool = '') {
   const j = tryJson(r.text);
   let msg = j && typeof j === 'object' && typeof j.error === 'string' ? j.error : (r.text.trim() || `HTTP ${r.status}`);
-  if (r.status === 429) {
+  const s = r.status;
+  if (s === 429) {
     const n = Number(r.headers['retry-after']);
     if (Number.isFinite(n) && n >= 0) msg += ` (try again in ${n} seconds)`;
+    msg += /Daily limit/.test(msg) ? ' Tools that do not call the model (get_context, get_outline, search_map, get_node, export_map) still work.' : '';
+    return msg;
   }
-  return msg;
+  if (s === 404 && tool === 'get_node' && Array.isArray(j?.didYouMean)) {
+    return `${msg}${j.didYouMean.length ? ` Close node ids: ${j.didYouMean.join(', ')}.` : ''} Call search_map or get_outline for node ids.`;
+  }
+  /** @type {Record<number, string>} */
+  const next = {
+    400: 'Check the arguments against this tool\'s input schema.',
+    401: 'This server needs a token: send "Authorization: Bearer <token>" (HTTP) or start ontologizer mcp with --token-file.',
+    403: 'Your token does not allow this. The free read tools (get_context, get_outline, search_map, get_node) may still work; for more, ask the server\'s operator for a token with that scope.',
+    404: 'No map with that id exists that you may read. Call list_maps for the ids you can use.',
+    409: 'Something is still running on the map: call wait_for_map, then try again.',
+    413: 'The request is too large: send less text.',
+    502: 'The model call failed: try again later; if it keeps failing, the server\'s API key may be missing or wrong.',
+    503: 'The server cannot serve this right now (its store, or it is stopping): try again shortly.',
+  };
+  const hint = next[s] ?? (s >= 500 ? 'The server failed: try again later.' : '');
+  return hint ? `${msg}${/[.!?)]$/.test(msg) ? '' : '.'} ${hint}` : msg;
 }
 
-/** The text an SSE chat stream carries. @param {string} body */
+/** The text an SSE chat stream carries, and its parts. @param {string} body */
 export function collectChat(body) {
   let answer = '';
   /** @type {Array<{ label: string, id: string }>} */
@@ -75,7 +187,7 @@ export function collectChat(body) {
   if (cited.length) out += `${out ? '\n\n' : ''}Cited nodes:\n${cited.map((c) => `- ${c.label} (${c.id})`).join('\n')}`;
   if (sources.length) out += `${out ? '\n\n' : ''}Sources:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`;
   if (error) out += `${out ? '\n\n' : ''}Error: ${error}`;
-  return { text: out, isError: error !== null && !answer.trim(), error };
+  return { text: out, isError: error !== null && !answer.trim(), error, answer: answer.trim(), cited, sources };
 }
 
 /**
@@ -83,8 +195,8 @@ export function collectChat(body) {
  * @returns {Server}
  */
 export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
-  const server = new Server({ name: 'ontologizer', version }, { capabilities: { tools: {}, resources: {} } });
-  const tools = toolList();
+  const server = new Server({ name: 'ontologizer', title: 'Ontologizer', version },
+    { capabilities: { tools: {}, resources: {}, prompts: {} }, instructions: INSTRUCTIONS });
   const abs = (/** @type {any} */ u) => (typeof u === 'string' && u.startsWith('/') ? `${baseUrl.replace(/\/+$/, '')}${u}` : u);
 
   /** The caller's tenant, asked once. @type {Promise<string>|null} */
@@ -100,26 +212,55 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     return tenantP;
   };
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  // build_map lists the sources this caller holds (the router's own answer), so an agent knows the names.
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const tools = toolList();
+    try {
+      const r = await call(/** @type {any} */ (opByName('list_sources')), { tenant: await tenant() });
+      const held = r.status >= 200 && r.status < 300 ? tryJson(r.text) : null;
+      if (Array.isArray(held) && held.length && held.every((x) => x && typeof x.name === 'string')) {
+        const build = /** @type {any} */ (tools.find((t) => t.name === 'build_map'));
+        const prop = build.inputSchema.properties.sources;
+        build.inputSchema = { ...build.inputSchema, properties: { ...build.inputSchema.properties,
+          sources: { ...prop, items: { type: 'string', enum: held.map((x) => x.name) },
+            description: `${prop.description}. You hold: ${held.map((x) => `${x.name} (${x.visibility === 'private' ? 'private' : 'public'})`).join(', ')}` } } };
+      }
+    } catch { /* no sources to list: the static schema */ }
+    return { tools };
+  });
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map((p) => ({ name: p.name, title: p.title, description: p.description, arguments: p.arguments })),
+  }));
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const p = PROMPTS.find((x) => x.name === request.params.name);
+    if (!p) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}. Prompts: ${PROMPTS.map((x) => x.name).join(', ')}.`);
+    const args = /** @type {Record<string, string>} */ (request.params.arguments ?? {});
+    const missing = p.arguments.filter((a) => a.required && !String(args[a.name] ?? '').trim()).map((a) => a.name);
+    if (missing.length) throw new McpError(ErrorCode.InvalidParams, `The prompt ${p.name} needs: ${missing.join(', ')}.`);
+    return { description: p.description, messages: [{ role: 'user', content: { type: 'text', text: p.text(args) } }] };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
     const op = MCP_OPS.find((o) => o.mcp?.name === name);
-    if (!op) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
+    if (!op) return textResult(`Unknown tool "${name}". The tools: ${MCP_OPS.map((o) => o.mcp?.name).join(', ')}.`, true);
     const args = request.params.arguments ?? {};
-    if (typeof args !== 'object' || Array.isArray(args)) return textResult('arguments must be an object', true);
+    if (typeof args !== 'object' || Array.isArray(args)) return textResult('The arguments must be an object: see this tool\'s input schema.', true);
     /** @type {CallResult} */
     let r;
     try {
       const { tenant: _ignored, ...rest } = /** @type {Record<string, any>} */ (args);
       r = await call(op, { ...rest, tenant: await tenant() });
     } catch (/** @type {any} */ err) {
-      return textResult(String(err?.message ?? err), true);
+      return textResult(`Could not reach the server: ${String(err?.message ?? err)}. Try again shortly.`, true);
     }
-    if (r.status < 200 || r.status >= 300) return textResult(errorText(r), true);
+    if (r.status < 200 || r.status >= 300) return textResult(errorText(r, name), true);
     if (op.name === 'ask_map') {
       const c = collectChat(r.text);
-      return textResult(c.text || 'The map gave no answer.', c.isError || !c.text);
+      if (c.isError || !c.text) return textResult(c.error ? `${c.error} Try again, or read the map with get_context.` : 'The map gave no answer. Try again, or read the map with get_context.', true);
+      const structured = { answer: c.answer, chatId: String(/** @type {any} */ (args).chatId ?? 'main'), citedNodes: c.cited, sources: c.sources };
+      return { content: [{ type: 'text', text: c.text }], structuredContent: structured };
     }
     const isJson = /json/i.test(r.type) || (op.http.type ?? 'application/json') === 'application/json';
     if (!isJson) return textResult(r.text);
@@ -129,8 +270,11 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
       if (j.viewUrl) j.viewUrl = abs(j.viewUrl);
       if (j.eventsUrl) j.eventsUrl = abs(j.eventsUrl);
     }
+    if (op.name === 'fuse' && j && typeof j === 'object' && j.url) j.url = abs(j.url);
     const plain = j !== null && typeof j === 'object' && !Array.isArray(j);
-    return { content: [{ type: 'text', text: JSON.stringify(j, null, 2) }], ...(plain ? { structuredContent: j } : {}) };
+    // list_maps answers a list: its structured result is { maps } (structured content is an object).
+    const structured = op.name === 'list_maps' && Array.isArray(j) ? { maps: j } : plain ? j : null;
+    return { content: [{ type: 'text', text: JSON.stringify(structured ?? j, null, 2) }], ...(structured ? { structuredContent: structured } : {}) };
   });
 
   const uriFor = (/** @type {string} */ t, /** @type {string} */ id) => `ontologizer://${t}/maps/${encodeURIComponent(id)}/snapshot`;
