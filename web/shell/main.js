@@ -24,10 +24,11 @@ import { mountSide } from './ui/side.js';
 import { mountChat, mountChatButton } from './ui/chat.js';
 import { computeInsets, sameInsets, tickerStrip } from './insets.js';
 import { createExplainRequests, privateBadge } from './explain.js';
-import { TENANT, api } from './base.js';
+import { TENANT, BASE, api } from './base.js';
 import { connBanner, stillSignedIn } from './conn.js';
 import { mountServerPanel } from './ui/server.js';
 import { mountBrandMenu } from './ui/brand.js';
+import { mountAllMaps, fitAllMaps, mountMapMenu } from './ui/manage.js';
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
@@ -178,6 +179,18 @@ if (TENANT) {
   // The brand mark becomes a button: All maps, New map (the one-map page keeps it decorative).
   try { mountBrandMenu(/** @type {HTMLElement} */ (document.querySelector('#topbar .brand-mark'))); }
   catch (err) { console.error('[shell] mount "brand-menu" failed', err); }
+  // Manage maps (I5): "‹ All maps" before the map name, and the name as a menu (Rename…, Delete…).
+  document.body.classList.add('service');
+  try {
+    const mapId = decodeURIComponent(BASE.split('/maps/')[1] ?? '');
+    const link = mountAllMaps($('map-name'));
+    fitAllMaps(link, $('topbar'), $('map-name'));
+    mountMapMenu($('map-name'), { tenant: TENANT, id: mapId, name: () => source.snapshot().name || mapId });
+    // The Private badge hangs under the map name, which the link moved to the right.
+    const badgeUnderName = () => { $('private-badge').style.left = `${$('map-name').offsetLeft}px`; };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(badgeUnderName).observe($('topbar'));
+    badgeUnderName();
+  } catch (err) { console.error('[shell] mount "manage maps" failed', err); }
 }
 // The ⓘ tooltips go in once, after every control exists.
 try { mountTips(shell); } catch (err) { console.error('[shell] tips failed', err); }
@@ -199,8 +212,9 @@ setInterval(() => {
   let t = null;
   const show = (/** @type {string} */ s) => {
     clearTimeout(t);
-    if (s === 'signed-out') {
-      // Service mode only: access was lost (a 401). Offer sign-in, coming back to this page.
+    if (s === 'signed-out' || s === 'deleted') {
+      // Service mode only: access was lost (a 401), or the map went to the trash. Offer sign-in, coming
+      // back to this page, or the maps home.
       const b = /** @type {any} */ (connBanner(s, location.pathname));
       const a = document.createElement('a');
       a.href = b.link.href;
@@ -264,7 +278,7 @@ source.subscribe((event, ontology) => {
   try { activeView?.apply(event); } catch (err) { console.error('[shell] view.apply failed', err); }
   const mapName = ontology?.name || source.snapshot().name || '';
   $('map-name').textContent = mapName;
-  $('map-name').title = mapName; // the full name when it is truncated
+  $('map-name').title = TENANT && mapName ? `${mapName}: rename or delete` : mapName; // the full name when it is truncated
   const title = mapName ? `${mapName} · Ontologizer` : 'Ontologizer';
   if (document.title !== title) document.title = title;
   badge = privateBadge(ontology, [event], badge);

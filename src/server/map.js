@@ -542,11 +542,19 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     streams: () => sseClients.size,
     /** Whether a chat answer is being written right now (it appends to the map). */
     chatting: () => chatBusy,
-    /** End every stream, stop a chat in flight, and close any draft servers started for fuses. */
-    async close() {
+    /**
+     * End every stream, stop a chat in flight, and close any draft servers started for fuses.
+     * deleted: the map went to the trash; each stream gets a last named event, `event: deleted`, which
+     * the page shows as "This map was deleted" (an EventSource's onmessage never sees a named event).
+     * @param {{ deleted?: boolean }} [o]
+     */
+    async close({ deleted = false } = {}) {
       if (closed) return;
       closed = true;
-      for (const r of sseClients) r.end();
+      for (const r of sseClients) {
+        if (deleted) { try { r.write('event: deleted\ndata: {"deleted":true}\n\n'); } catch { /* already gone */ } }
+        r.end();
+      }
       if (chatRes) chatRes.destroy(); // the relay aborts the model call
       await Promise.all([...children].map((c) => c.close().catch(() => {})));
       children.clear();

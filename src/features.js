@@ -19,4 +19,10 @@ export const FEATURES = [
   { id: 'mcp-home', epic: 'I3', cli: 'mcp', ui: { page: 'web/home/index.html', id: 'server-connect-agent' } },
   { id: 'api', epic: 'I3', cli: 'serve', ui: { page: 'web/home/index.html', id: 'server-api' } },
   { id: 'usage', epic: 'I3', cli: 'usage', ui: { page: 'web/home/index.html', id: 'server-usage' } },
+  // I5 · Manage maps. Back to the maps home has no command of its own: `list` is the command line's view of the maps.
+  { id: 'back-to-home', epic: 'I5', cli: 'list',    ui: { page: 'web/index.html',      id: 'all-maps' } },
+  { id: 'rename',       epic: 'I5', cli: 'save',    ui: { page: 'web/index.html',      id: 'map-rename' } },
+  { id: 'delete',       epic: 'I5', cli: 'delete',  ui: { page: 'web/index.html',      id: 'map-delete' } },
+  { id: 'trash',        epic: 'I5', cli: 'trash',   ui: { page: 'web/home/index.html', id: 'trash-list' } },
+  { id: 'restore',      epic: 'I5', cli: 'restore', ui: { page: 'web/home/index.html', id: 'trash-section' } },
 ];

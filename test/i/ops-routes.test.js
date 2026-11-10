@@ -14,6 +14,8 @@ import { boot, seed } from './helpers-service.js';
 const ROOT = new URL('../../', import.meta.url);
 const MAP = 'demo';
 const NODE = 'plastic-modeling';
+// The DELETE probe trashes a map of its own, so every other probe still finds MAP.
+const DOOMED = 'delete-probe';
 
 /**
  * One request; resolves at the response's headers (an event stream never ends), with the body when
@@ -51,6 +53,9 @@ function sample(op) {
   if (op.name === 'search_map') input.q = 'paint';
   if (op.name === 'export_map') input.format = 'json';
   if (op.name === 'wait_for_map') input.timeout = 0;
+  if (op.name === 'delete_map') input.id = DOOMED;
+  // An id that is not in the trash: the restore route answers its own 404 ("not in the trash"), not the router's miss.
+  input.trashId = 'nothing--20260101-000000z';
   return input;
 }
 
@@ -126,9 +131,10 @@ test('every op is served by the router, and every /v1 route the router serves ha
   const { home, srv, origin } = await boot();
   try {
     await seed(home, 'default', MAP);
+    await seed(home, 'default', DOOMED);
     assert.deepEqual(await unservedOps(OPS, origin), []);
     const words = routerWords();
-    for (const w of ['outline', 'usage', '/v1/openapi.json', 'snapshot', 'events', 'actions', 'chat', 'api/snapshot', 'nodes', 'wait', 'save', 'view']) {
+    for (const w of ['outline', 'usage', '/v1/openapi.json', 'snapshot', 'events', 'actions', 'chat', 'api/snapshot', 'nodes', 'wait', 'save', 'view', 'trash', 'restore']) {
       assert.ok(words.includes(w), `the word list holds ${w}`);
     }
     assert.deepEqual(await routesWithoutOps(OPS, origin, words), []);
@@ -136,6 +142,8 @@ test('every op is served by the router, and every /v1 route the router serves ha
     // Planted fault: a route added to the router only (here: its op missing from the list) is reported.
     const withoutUsage = OPS.filter((o) => o.name !== 'get_usage');
     assert.deepEqual(await routesWithoutOps(withoutUsage, origin, ['usage']), ['GET /v1/t/default/usage is served (200) but has no op']);
+    const withoutTrash = OPS.filter((o) => o.name !== 'list_trash');
+    assert.deepEqual(await routesWithoutOps(withoutTrash, origin, ['trash']), ['GET /v1/t/default/trash is served (200) but has no op']);
     const withoutNodes = OPS.filter((o) => o.name !== 'get_node');
     assert.ok((await routesWithoutOps(withoutNodes, origin, [NODE])).some((p) => p.startsWith(`GET /v1/t/default/maps/${MAP}/nodes/${NODE}`)));
     // Planted fault: an op the router does not serve is reported.

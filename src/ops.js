@@ -44,6 +44,11 @@ const MAP_ROW = obj({
   id: { type: 'string' }, name: { type: 'string' }, root: { type: 'string' }, nodes: { type: 'integer' },
   updatedAt: { type: 'number' }, draft: { type: 'boolean' }, visibility: { enum: ['public', 'private'] },
 }, ['id', 'name', 'nodes', 'draft']);
+const TRASH_ROW = obj({
+  trashId: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, root: { type: 'string' }, nodes: { type: 'integer' },
+  draft: { type: 'boolean' }, deletedAt: { type: 'number' }, deletedBy: { type: ['string', 'null'] }, purgeAt: { type: 'number' },
+  visibility: { enum: ['public', 'private'] },
+}, ['trashId', 'id', 'name', 'draft', 'deletedAt', 'purgeAt']);
 const BRIEF = { type: 'object', additionalProperties: true, description: 'The brief from check_context (context, subject, scope, purpose, level, size)' };
 
 /**
@@ -203,6 +208,21 @@ export const OPS = [
     input: mapIn({ name: str('The new name and id: lowercase letters, digits and hyphens, at most 63 characters. E.g. "home-espresso"') }, ['name']),
     output: obj({ ok: { type: 'boolean' }, id: { type: 'string' }, viewUrl: { type: 'string' } }, ['ok', 'id']),
     scope: 'build', callsModel: false, cli: 'save', ui: { page: PAGE, id: 'map-name' } },
+  // ---- the trash (I5): HTTP only, never MCP tools (an agent deleting maps is a step too far to offer) ----
+  { name: 'delete_map', summary: 'Move a map to the trash, where it can be restored for 30 days. A draft needs build; a named map needs admin. 409 while anything runs on it',
+    http: { method: 'DELETE', path: MAP }, mcp: null,
+    input: mapIn(), output: obj({ ok: { type: 'boolean' }, trashId: { type: 'string' } }, ['ok', 'trashId']),
+    scope: 'build', callsModel: false, cli: 'delete', ui: { page: PAGE, id: 'map-delete' } },
+  { name: 'list_trash', summary: 'The deleted maps the caller could read and restore, newest first, with when each is purged',
+    http: { method: 'GET', path: '/v1/t/{tenant}/trash' }, mcp: null,
+    input: obj({ tenant }, ['tenant']), output: { type: 'array', items: TRASH_ROW },
+    scope: 'build', callsModel: false, cli: 'trash', ui: { page: HOME, id: 'trash-list' } },
+  { name: 'restore_map', summary: 'Bring a map back from the trash, under its own id or a new name. A draft needs build; a named map needs admin',
+    http: { method: 'POST', path: '/v1/t/{tenant}/trash/{trashId}/restore' }, mcp: null,
+    input: obj({ tenant, trashId: str('The trash id, from list_trash. E.g. "sourdough--20261109-153012z"'),
+      as: str('Restore under this name instead (lowercase letters, digits and hyphens); a draft restored with a name comes back saved. E.g. "sourdough-2"') }, ['tenant', 'trashId']),
+    output: obj({ ok: { type: 'boolean' }, id: { type: 'string' }, viewUrl: { type: 'string' } }, ['ok', 'id']),
+    scope: 'build', callsModel: false, cli: 'restore', ui: { page: HOME, id: 'trash-list' } },
   { name: 'get_outline', summary: 'The map as an indented outline (one line per node), as text',
     http: { method: 'GET', path: `${MAP}/outline`, type: 'text/markdown' },
     mcp: { name: 'get_outline', title: 'Read a map\'s outline',
