@@ -67,11 +67,17 @@ export function createEngine({ store, id, client = null, models = defaultModels(
    * The context build.js and jobs.js get for one run: its emit stamps the actor, its calls go to the
    * model port with this purpose, and `{ useTools: true }` on a call offers the run's source tools.
    * @param {Purpose} purpose @param {RunOpts} [o]
+   * @param {{ mapless?: boolean }} [kind] mapless: the run has no map (the context check: it writes
+   *   nothing, offers no tools and no web search, and its engine id, e.g. service mode's ':check', is
+   *   never a stored map). Its calls carry no visibility check; anything that reads its map throws.
    */
-  function runCtx(purpose, { actor = null, principal = null, tools = null, privateSources = [], picked = [] } = {}) {
+  function runCtx(purpose, { actor = null, principal = null, tools = null, privateSources = [], picked = [] } = {}, { mapless = false } = {}) {
     /** @param {string} t @param {object} fields */
     const emitAs = actor ? (t, fields) => emit(t, { ...fields, actor }) : emit;
-    const run = createRun({ tools, emit: emitAs, read: () => store.read(id), durable });
+    const read = mapless
+      ? () => { throw new Error(`internal: the ${purpose} run has no map to read`); }
+      : () => store.read(id);   // a store error (STORE_FAILED) propagates: the run fails closed
+    const run = createRun({ tools: mapless ? null : tools, emit: emitAs, read, durable });
     return {
       store, id, models, queue, actor, run, durable,
       picked: Array.isArray(privateSources) ? privateSources.filter((n) => typeof n === 'string' && n) : [],
@@ -82,7 +88,8 @@ export function createEngine({ store, id, client = null, models = defaultModels(
       call: (params, onObject) => {
         const { useTools, ...p } = params;
         // Every call knows whether the map is private now (a private map's run gets no web search).
-        return runCall(() => getClient(purpose, principal), { ...p, tools: useTools ? run.tools : null, restricted: run.restricted }, onObject);
+        // A mapless run (the check) has no visibility to check, and asks for no tools or web search.
+        return runCall(() => getClient(purpose, principal), { ...p, tools: useTools && !mapless ? run.tools : null, ...(mapless ? {} : { restricted: run.restricted }) }, onObject);
       },
       /** The verified source refs of a model line's `sources`. @param {any} list */
       cite: (list) => run.cite(list),
@@ -92,7 +99,7 @@ export function createEngine({ store, id, client = null, models = defaultModels(
 
   const engine = {
     /** @param {string} context @param {any[]} [answers] @param {{ principal?: any }} [opts] */
-    check: (context, answers = [], opts = {}) => check(runCtx('check', { principal: opts?.principal }), context, answers),
+    check: (context, answers = [], opts = {}) => check(runCtx('check', { principal: opts?.principal }, { mapless: true }), context, answers),
 
     /** @param {any} brief @param {{ depth?: number } & RunOpts} [opts] */
     build: (brief, { depth = 2, ...o } = {}) => build(runCtx('build', o), brief, { depth }),
