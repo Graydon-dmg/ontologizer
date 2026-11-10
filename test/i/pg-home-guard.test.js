@@ -82,7 +82,10 @@ test('the Postgres-store tests, run with HOME pointed at an empty folder, leave 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-guard-home-'));
     try {
       const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', ...PG_FILES], { cwd: ROOT, env: envWithHome(home), encoding: 'utf8', timeout: 240000 });
-      const failing = String(r.stdout).split('\n').filter((l) => /^\s*not ok /.test(l) && !/\.test\.js$/.test(l)).join('\n');
+      // Each failing nested test with its error lines, so a failure here says what broke.
+      const lines = String(r.stdout).split('\n');
+      const failing = lines.flatMap((l, i) => (/^\s*not ok /.test(l) && !/\.test\.js$/.test(l)
+        ? [l, ...lines.slice(i + 1, i + 30).filter((x) => /error|expected|actual|Error|missing|timed/.test(x))] : [])).join('\n');
       assert.equal(r.status, 0, `the Postgres tests failed under the guard:\n${failing}\n${String(r.stdout).slice(-1500)}`);
       // They really ran, Postgres parts included (a nested run that ran nothing proves nothing).
       const pass = Number(/^# pass (\d+)/m.exec(String(r.stdout))?.[1] ?? 0);

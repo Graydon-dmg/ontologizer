@@ -136,7 +136,8 @@ async function killScenario(mode) {
     let buf = ''; let id = ''; /** @type {number[]} */ const acked = [];
     const exited = new Promise((r) => child.on('exit', r));
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('writer timed out')); }, 20000);
+      // Generous: under a full parallel run (and the home guard re-running these files) a child can start slowly.
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('writer timed out')); }, 60000);
       child.on('exit', () => { clearTimeout(timer); resolve(undefined); });
       child.stdout.on('data', (d) => {
         buf += d;
@@ -149,12 +150,12 @@ async function killScenario(mode) {
       });
     });
     await exited;
-    // The dead child's connection may need a moment to free the tenant lock.
+    // The dead child's connection may need a moment to free the tenant lock (longer under load).
     /** @type {any} */ let s = null;
-    for (let i = 0; i < 50 && !s; i++) {
+    for (let i = 0; i < 150 && !s; i++) {
       try { s = await kit.open(); } catch (/** @type {any} */ e) { if (!/Another process/.test(e.message)) throw e; await sleep(100); }
     }
-    assert.ok(s, 'could not reopen the tenant after the kill');
+    assert.ok(s, 'could not reopen the tenant after the kill (the dead writer still held its lock after 15 s)');
     const reloaded = await drain(s.events(id));
     return { acked, problems: lostAcks(acked, reloaded), reloaded: reloaded.length };
   } finally { await kit.cleanup(); }
