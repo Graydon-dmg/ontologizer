@@ -18,8 +18,8 @@ import { createSources, heldSources } from './sources.js';
 import { portNames } from './config.js';
 import { slug } from '../core/engine/ids.js';
 import { openApi } from '../ops.js';
-import { buildIndex, runTool } from '../core/engine/chat.js';
-import { agentMap, outlineText } from './reads.js';
+import { buildIndex } from '../core/engine/chat.js';
+import { agentMap, outlineText, nodeForAgent } from './reads.js';
 import { exportMap } from '../core/export/index.js';
 import { handleMcpHttp, loopbackCaller } from './mcp.js';
 import { createUsage, EXIT_WAIT_MS } from './usage.js';
@@ -1200,8 +1200,7 @@ export async function startService({
         if (rest.length !== 4) return fail(res, 404, 'not found');
         let nid = '';
         try { nid = decodeURIComponent(rest[3]); } catch { return fail(res, 400, 'bad node id'); }
-        const safe = agentMap(map);
-        const r = runTool('get_node', { id: nid }, safe, buildIndex(safe), null);
+        const r = nodeForAgent(map, nid);
         return r.error ? json(res, 404, { ok: false, ...r.result }) : json(res, 200, r.result);
       }
       const format = sub === 'context' ? 'context' : String(query.get('format') ?? '');

@@ -35,7 +35,7 @@ export const TOOLS = [
   },
   {
     name: 'get_node',
-    description: 'Read one node of the map in full: its article (summary, key facts, why it matters), sources, parent, children and cross-linked neighbours.',
+    description: 'Read one node of the map in full: its article (summary, key facts, why it matters), sources, parent, children, cross-linked neighbours and, for a node with children, the cross-links of the nodes under it (branchLinks).',
     input_schema: { type: 'object', properties: { id: { type: 'string', description: 'The node id, exactly as shown in the outline or a search result' } }, required: ['id'] },
   },
 ];
@@ -441,8 +441,8 @@ function childrenOf(nodes) {
 }
 
 /**
- * The compact outline: one line per node, indented by depth: "- Label (id): summary  ≈ analog".
- * Big maps drop summaries below depth 2 to keep the prompt small.
+ * The compact outline: one line per node, indented by depth: "- Label (id): summary  ≈ analog [explained]"
+ * ("[explained]" when the node has an article). Big maps drop summaries below depth 2 to keep the prompt small.
  * @param {any} o @param {string|null} lens
  */
 export function outline(o, lens = null) {
@@ -458,7 +458,7 @@ export function outline(o, lens = null) {
     seen.add(n.id);
     const summary = n.summary && !(big && d > 2) ? `: ${clip(n.summary, 110)}` : '';
     const analog = analogs[n.id]?.label ? `  ≈ ${clip(analogs[n.id].label, 60)}` : '';
-    lines.push(`${'  '.repeat(d)}- ${flat(n.label)} (${safeId(n.id)})${summary}${analog}`);
+    lines.push(`${'  '.repeat(d)}- ${flat(n.label)} (${safeId(n.id)})${summary}${analog}${n.article ? ' [explained]' : ''}`);
     for (const c of kids.get(n.id) ?? []) walk(c, d + 1);
   };
   if (nodes[o.root]) walk(nodes[o.root], 0);
@@ -540,6 +540,22 @@ export function buildIndex(o, lens = null) {
   };
 }
 
+const BRANCH_LINKS_MAX = 20;
+
+/** Every node under id (not id itself), following parent links; safe on a parent cycle. @param {Record<string, any>} nodes @param {string} id */
+function descendantsOf(nodes, id) {
+  const kids = childrenOf(nodes);
+  /** @type {Set<string>} */ const out = new Set();
+  const todo = [...(kids.get(id) ?? [])];
+  while (todo.length) {
+    const c = /** @type {any} */ (todo.pop());
+    if (c.id === id || out.has(c.id)) continue;
+    out.add(c.id);
+    todo.push(...(kids.get(c.id) ?? []));
+  }
+  return out;
+}
+
 /**
  * Run one map tool. Read-only: takes a snapshot, returns plain data.
  * @param {string} name @param {any} input @param {any} o @param {ReturnType<typeof buildIndex>} index @param {string|null} lens
@@ -563,6 +579,22 @@ export function runTool(name, input, o, index, lens) {
     const label = (/** @type {string} */ x) => nodes[x]?.label ?? x;
     const a = n.article;
     const analog = lens ? o.lenses?.[lens]?.analogs?.[n.id] : null;
+    // explain merges the article's sources into the node's own, so the two lists overlap: one entry per url.
+    const seenUrl = new Set();
+    const sources = [...(n.sources ?? []), ...(a?.sources ?? [])].filter((s) => {
+      const k = String(s?.url ?? '').trim().replace(/#.*$/, '').replace(/\/+$/, '');
+      if (!k) return true;
+      if (seenUrl.has(k)) return false;
+      seenUrl.add(k);
+      return true;
+    });
+    // Cross-links sit on leaves, so a category's own neighbours are usually empty: the links that
+    // leave its branch (one end under it, the other outside) say how it connects.
+    const under = descendantsOf(nodes, n.id);
+    const branchLinks = (o.edges ?? []).filter((e) => under.has(e.from) !== under.has(e.to) && e.from !== n.id && e.to !== n.id
+      && (under.has(e.from) ? nodes[e.to] : nodes[e.from]))
+      .slice(0, BRANCH_LINKS_MAX)
+      .map((e) => ({ from: { id: e.from, label: label(e.from) }, to: { id: e.to, label: label(e.to) }, type: e.type, why: e.why }));
     return {
       result: {
         id: n.id, label: n.label, path: labelPath(nodes, n.id).join(' > '),
@@ -570,12 +602,13 @@ export function runTool(name, input, o, index, lens) {
         summary: n.summary ?? '', hook: n.hook ?? '',
         article: a ? { summary: a.summary, keyFacts: a.keyFacts, whyItMatters: a.whyItMatters, seeAlso: a.seeAlso }
           : 'Not explained yet: the reader can click Explain on this node.',
-        sources: [...(n.sources ?? []), ...(a?.sources ?? [])].slice(0, 10),
+        sources: sources.slice(0, 10),
         children: kids.map((c) => ({ id: c.id, label: c.label, summary: c.summary ?? '' })),
         neighbours: (o.edges ?? []).filter((e) => e.from === n.id || e.to === n.id).map((e) => {
           const other = e.from === n.id ? e.to : e.from;
           return { id: other, label: label(other), type: e.type, why: e.why, direction: e.from === n.id ? 'out' : 'in' };
         }),
+        ...(kids.length ? { branchLinks } : {}),
         ...(analog ? { analog } : {}),
       },
     };

@@ -7,7 +7,7 @@
 // exports themselves are exportMap's own output.
 import { exportSnapshot } from '../core/export/html.js';
 import { cleanMap, oneLine, PREAMBLE } from '../core/export/context.js';
-import { outline } from '../core/engine/chat.js';
+import { outline, runTool, buildIndex } from '../core/engine/chat.js';
 
 /**
  * The allow-listed, escaped copy of a map. cleanMap covers names, labels, summaries, the brief,
@@ -38,4 +38,20 @@ export function agentMap(o) {
 export function outlineText(o, id) {
   const c = agentMap(o);
   return `${PREAMBLE}\n\n# ${c.name || id}\n\n${outline(c)}\n`;
+}
+
+/**
+ * The get_node route's answer: the chat's get_node over the agent copy, with the "not explained"
+ * text written for an agent: how much of the map is only one line, and the next step. Explaining
+ * stays a deliberate call (it costs credits); this read never starts one.
+ * @param {any} o a folded map @param {string} nodeId @returns {{ result: any, error?: boolean }}
+ */
+export function nodeForAgent(o, nodeId) {
+  const safe = agentMap(o);
+  const r = runTool('get_node', { id: nodeId }, safe, buildIndex(safe), null);
+  if (r.error || typeof r.result.article !== 'string') return r;
+  const all = Object.values(safe.nodes);
+  const plain = all.filter((/** @type {any} */ n) => !n.article).length;
+  const article = `Not explained yet: the map has only the one-line summary above. ${plain} of ${all.length} nodes in this map are one-line summaries. If your task depends on this node, call explain on it (it calls the model, so it costs credits), then wait_for_map and get_node again.`;
+  return { result: { ...r.result, article } };
 }
