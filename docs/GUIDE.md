@@ -20,6 +20,7 @@ Ontologizer builds a live, color-coded map of any topic with Claude and streams 
 9. [Troubleshooting](#9-troubleshooting)
 10. [Service mode](#10-service-mode)
 11. [Ports and private sources](#11-ports-and-private-sources)
+12. [Agents and apps](#12-agents-and-apps)
 
 ---
 
@@ -163,6 +164,8 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer serve [--host] [--port] [--home] [--tokens] [--max-builds] [--allow-host] [--open]` | Service mode: serve every map. See [Service mode](#10-service-mode). |
 | `ontologizer status [--home] [--json]` | The home, tenants, tokens and the running server. |
 | `ontologizer token create\|list\|revoke` | Access tokens for service mode. |
+| `ontologizer mcp [--url] [--token-file] [--home]` | MCP over stdio for agents. See [Agents and apps](#12-agents-and-apps). |
+| `ontologizer usage [--home] [--days] [--json]` | Model calls and tokens per tenant per day. |
 | `ontologizer --version`, `-h` / `--help` | Version and help. |
 
 ### new
@@ -613,3 +616,86 @@ In service mode every change a request makes to a map is stamped with who made i
 `ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8.23.1`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order. Every change the server confirms is stored first, so a crash loses nothing it acknowledged. If a write ever fails, the store stops taking changes (the server answers 503) rather than leaving a gap, until you restart it. **One server per tenant**: a second server opening the same tenant is refused ("Another process already has the Postgres store for tenant … open"). If the store loses its database connection (a database restart, an administrator ending it), that tenant answers 503 and `/v1/health/ready` reports not ready until you restart the server; the server itself keeps running.
 
 Each open tenant holds a few database connections. `serve --max-stores <n>` (default 16) caps how many tenants have a store open at once: keep it well below your database's `max_connections`. A store function you write yourself can carry `exists(tenant)` (sync or async) so the server never opens a store for a tenant that does not exist; `postgresStorePort` sets it for you. Chat images stay on local disk (`<home>/pg/<tenant>/`).
+
+## 12. Agents and apps
+
+Three ways in, made from one list of operations (`src/ops.js`), all through the same HTTP routes and the same checks: tokens, tenants, scopes, private maps and limits apply to an agent exactly as to the page.
+
+### MCP for agents
+
+The MCP tools: `check_context`, `build_map`, `wait_for_map`, `list_maps`, `get_outline`, `search_map`, `get_node`, `research`, `explain`, `sources`, `ask_map`, `fuse`, `rosetta`, `save_map`, `get_context`, `export_map`. Each map is also a resource, `ontologizer://<tenant>/maps/<id>/snapshot`. The tools whose description ends with "Calls the model: costs API credits." spend your Anthropic credits: `check_context`, `build_map`, `research`, `explain`, `sources`, `ask_map`, `fuse` and `rosetta`. The others only read (`save_map` renames). A good start for an agent is `list_maps`, then `get_context` or `get_outline` on a map.
+
+**Claude Code, on this machine** (stdio; an in-process server on your home, loopback only, no token):
+
+```bash
+claude mcp add ontologizer -- npx -y ontologizer mcp
+claude mcp add ontologizer -- npx -y ontologizer mcp --home ~/team-maps     # another home
+```
+
+**Claude Code, a running `ontologizer serve`** (streamable HTTP). On loopback with no tokens:
+
+```bash
+claude mcp add --transport http ontologizer http://127.0.0.1:8787/v1/mcp
+```
+
+With tokens, pass one in a header (`ontologizer token create --name agent --scopes read` for an agent that only reads, `read,build` for one that builds):
+
+```bash
+claude mcp add --transport http ontologizer https://maps.example.com/v1/mcp --header "Authorization: Bearer <YOUR_TOKEN>"
+```
+
+Or keep the token in a file and let stdio forward to the server: `claude mcp add ontologizer -- npx -y ontologizer mcp --url https://maps.example.com --token-file ~/.ontologizer-token` (or set `ONTOLOGIZER_TOKEN`). `ontologizer mcp` never takes a token on the command line, where other users of the machine could see it.
+
+On the page, **Connect an agent** (the last item of the Export menu, and a button in the Server panel) shows these commands and a JSON block for any MCP client, with `<YOUR_TOKEN>` in place of a token: the page never shows one.
+
+**The Agent SDK** takes the same server in its MCP settings, for example:
+
+```js
+mcpServers: { ontologizer: { type: 'http', url: 'http://127.0.0.1:8787/v1/mcp', headers: { Authorization: `Bearer ${process.env.ONTOLOGIZER_TOKEN}` } } }
+// or, on this machine: { command: 'npx', args: ['-y', 'ontologizer', 'mcp'] }
+```
+
+### The HTTP API
+
+`GET /v1/openapi.json` describes every route (OpenAPI 3.1, no token needed); the **API** link in the Server panel opens it. Besides the routes in section 10, agents and apps get cheap reads of a map:
+
+| Route | What it does |
+|---|---|
+| `GET /v1/t/<tenant>/maps/<id>/outline` | The map as an indented outline (markdown) |
+| `GET /v1/t/<tenant>/maps/<id>/search?q=&limit=` | Nodes matching the words |
+| `GET /v1/t/<tenant>/maps/<id>/nodes/<nodeId>` | One node: summary, article, sources, children, cross-links |
+| `GET /v1/t/<tenant>/maps/<id>/context?budget=` | The context pack (as `export --format context`) |
+| `GET /v1/t/<tenant>/maps/<id>/export?format=json\|context\|html\|embed` | An export, as the `export` command makes it |
+| `GET /v1/t/<tenant>/usage` | Today's model calls and tokens, and the limits |
+
+### The JS client
+
+```js
+import { createClient } from 'ontologizer/client';
+const c = createClient({ url: 'http://127.0.0.1:8787', token: process.env.ONTOLOGIZER_TOKEN });
+const { brief } = await c.maps.check('Sourdough baking for a beginner');   // or answer its questions first
+const { id } = await c.maps.build(brief);
+await c.maps.wait(id, { timeout: 120000 });
+console.log(await c.maps.context(id, { budget: 2000 }));
+for await (const ev of c.maps.events(id)) { /* every event, live */ }
+for await (const item of c.maps.ask(id, 'Where should I start?')) if (item.type === 'delta') process.stdout.write(item.text);
+```
+
+It uses `fetch` only, so it runs in Node 22+ and in browsers. A refused call throws an `OntologizerError` with `status`, `error` and, for a 429, `retryAfter` in seconds. `c.call(name, input)` reaches any operation by name.
+
+### Limits and usage
+
+`serve` counts, per tenant and per UTC day, the model calls and the tokens (input, including cache reads and writes, plus output) that every model call reports, whatever started it: a build, a job, a question, fuse or rosetta. The counts live in `<home>/usage.json` (the last 31 days) and survive a restart.
+
+```bash
+ontologizer serve --limit-calls 500 --limit-tokens 2000000    # per tenant per day (default: no limit)
+ontologizer usage                                             # the last 7 days, per tenant
+ontologizer usage --days 31 --json
+```
+
+Over a limit, everything that calls the model answers 429 with `Retry-After` until 00:00 UTC, and a build already running stops at its next model call. Reads, waits, exports and view changes keep working. The Server panel shows today's counts and the limits.
+
+**This is not a spend cap.** Ontologizer counts calls and tokens, not money: prices differ by model and change. To cap what you spend, set a limit with your API provider as well.
+
+**Build timeout.** A build that runs longer than `--build-timeout` minutes (default 15) is stopped: its model calls are aborted, the map shows "Timed out after 15 minutes" in its jobs tray, and the next build in the queue starts.
+

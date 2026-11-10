@@ -91,6 +91,8 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer serve` | Service mode: serve every map, build new ones from the browser |
 | `ontologizer status` | Show the home, tenants, tokens and the running server |
 | `ontologizer token create / list / revoke` | Manage access tokens for service mode |
+| `ontologizer mcp` | MCP over stdio: the map tools for an agent |
+| `ontologizer usage` | Model calls and tokens per tenant per day (service mode) |
 
 Every command takes `--help`. Full detail is in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md).
 
@@ -117,6 +119,17 @@ The server speaks plain HTTP: beyond this machine, put it behind an HTTPS revers
 ontologizer export demo --format html --out demo.html
 ontologizer export demo --format context --budget 1500
 ```
+
+## Agents and apps
+
+Agents use your maps through MCP: `ontologizer mcp` (stdio) or `/v1/mcp` on `ontologizer serve`. The tools build a map, wait for it, read its outline, search it, open a node, run research or explain, ask it a question, and export it or its context pack. **Connect an agent** (in the Export menu, and in the Server panel) shows the setup to copy:
+
+```bash
+claude mcp add ontologizer -- npx -y ontologizer mcp                    # this machine, your own maps
+claude mcp add --transport http ontologizer http://127.0.0.1:8787/v1/mcp  # a running ontologizer serve
+```
+
+Apps use the HTTP API (described at `/v1/openapi.json`) or the JS client, `import { createClient } from 'ontologizer/client'`. Tools that call the model say so and spend your API credits; `serve --limit-calls` and `--limit-tokens` cap each tenant's model calls and tokens per day (`ontologizer usage` shows them). See the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#12-agents-and-apps).
 
 ## Requirements
 
