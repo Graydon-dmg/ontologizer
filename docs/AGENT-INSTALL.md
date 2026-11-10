@@ -61,6 +61,8 @@ Follow these steps in order. Do not skip ahead.
 
    If you want to confirm the demo starts, run it in the background for a few seconds, check that it prints `Serving … at http://127.0.0.1:<port>/`, then stop it.
 
+7. **Optional: give yourself the map tools.** To use maps yourself (read a map's outline or context pack, search it, build or extend one), add Ontologizer as an MCP server, for example `claude mcp add ontologizer -- npx -y ontologizer mcp`. The tools, workflows and costs are in [MCP.md](MCP.md). Tools that call the model say so in their description: ask the human before using them, as for the chat.
+
 ## Optional: shell completion
 
 Doctor's fix line for zsh is `eval "$(ontologizer completion zsh)"` (added to `~/.zshrc`). For bash or fish use `ontologizer completion bash` or `ontologizer completion fish`. Only edit an rc file if the human agrees.

@@ -6,6 +6,8 @@ import { TYPES, json, plain, readBody as readJsonBody } from './http.js';
 import { MAX_BODY as MAX_CHAT_BODY, TOO_LARGE, ChatError, readCappedBody, drainCapped, validateChat, storeAttachment, findAttachment, imageSize, relayAsk } from './chat.js';
 
 const PING_MS = 15000;
+/** The actions that call the model (the daily limits refuse them). */
+const MODEL_ACTIONS = new Set(['research', 'explain', 'sources', 'rosetta', 'fuse']);
 
 /** @param {number} ms @param {{ timers: Set<any> }} c */
 function sleep(ms, c) {
@@ -27,9 +29,11 @@ function sleep(ms, c) {
  *   event sent; also watched while its chat answer is written);
  * - sync(): resolves when every write so far is stored (a Postgres store); awaited before a write's 2xx;
  * - isPrivate(mapId): whether another map is private (fuse keeps its id out of this map's log).
+ * - limit(): null, or { error, retryAfter } when the tenant's daily model limit is reached: a
+ *   model-calling action (research, explain, sources, rosetta, fuse) or a chat answers 429.
  * @typedef {{ valid?: (ev?: any) => boolean|Promise<boolean>, actor?: any, principal?: any, tools?: () => Promise<any>,
  *   canRead?: (mapId: string) => boolean|Promise<boolean>, sync?: () => Promise<void>,
- *   isPrivate?: (mapId: string) => boolean }} RequestCtx
+ *   isPrivate?: (mapId: string) => boolean, limit?: () => ({ error: string, retryAfter: number } | null) }} RequestCtx
  */
 
 /**
@@ -167,6 +171,9 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
   async function action(req, res, ctx = {}) {
     const body = await readBody(req, res);
     if (!body) return;
+    // Over the tenant's daily limit, nothing that calls the model starts.
+    const over = MODEL_ACTIONS.has(body.type) && ctx.limit ? ctx.limit() : null;
+    if (over) return json(res, 429, { ok: false, error: over.error }, { 'Retry-After': String(over.retryAfter) });
     const actor = ctx.actor ?? null;
     /** @param {Record<string, any>} ev */
     const as = (ev) => (actor ? { ...ev, actor } : ev);
@@ -419,6 +426,13 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     };
     const ctype = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
     if (ctype !== 'application/json') return refuse(415, 'Content-Type must be application/json.');
+    const over = ctx.limit ? ctx.limit() : null;
+    if (over) {
+      const within = await drainCapped(req, MAX_CHAT_BODY);
+      res.writeHead(within ? 429 : 413, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', 'Retry-After': String(over.retryAfter) });
+      res.end(JSON.stringify({ ok: false, error: within ? over.error : TOO_LARGE }));
+      return;
+    }
     if (chatBusy) return refuse(409, 'A chat answer is already being written for this map: wait for it to finish.');
     chatBusy = true;
     chatRes = res;

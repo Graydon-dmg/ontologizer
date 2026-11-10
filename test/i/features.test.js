@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { FEATURES } from '../../src/features.js';
+import { OPS } from '../../src/ops.js';
 import { COMMANDS } from '../../src/cli/main.js';
 
 const ROOT = new URL('../../', import.meta.url);
@@ -95,4 +96,18 @@ test('planted faults: a feature row with a missing button, or an unregistered co
   assert.deepEqual(featureProblems(missingCommand, commands, readPage), ['y: command "nope" is not registered']);
   const missingPage = [{ id: 'z', epic: 'I1', cli: 'serve', ui: { page: 'web/nope.html', id: 'new-map' } }];
   assert.equal(featureProblems(missingPage, commands, readPage).length, 1);
+});
+
+test('every op has a registered command and its button in its page', async () => {
+  const commands = await registered();
+  const rows = OPS.map((op) => ({ id: op.name, epic: 'I3', cli: op.cli, ui: op.ui }));
+  assert.ok(rows.length > 20);
+  assert.deepEqual(featureProblems(rows, commands, readPage, readModules), []);
+});
+
+test('planted fault: an op whose ui id is not in its page is reported', async () => {
+  const commands = await registered();
+  const bad = { ...OPS[0], name: 'bad_op', ui: { ...OPS[0].ui, id: 'no-such-button' } };
+  const rows = [bad].map((op) => ({ id: op.name, epic: 'I3', cli: op.cli, ui: op.ui }));
+  assert.deepEqual(featureProblems(rows, commands, readPage, readModules), [`bad_op: no element #no-such-button in ${bad.ui.page}`]);
 });
