@@ -54,6 +54,26 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
    ontologizer doctor
    ```
 
+4. **Optional: give your AI agent the map tools (MCP).** Your agent can then list, read, build and ask your maps itself. It uses the API key you set in step 2.
+
+   - **Claude Code:**
+
+     ```bash
+     claude mcp add ontologizer -- ontologizer mcp
+     ```
+
+     Start a new Claude Code session, then check it with `claude mcp list` (or `/mcp` inside a session): `ontologizer` should show as connected. Try asking: *"use ontologizer to list my maps"*.
+   - **Claude Desktop, or any other MCP client:** add this to the client's MCP config. For Claude Desktop that's `claude_desktop_config.json`, opened from Settings → Developer → Edit Config. Then restart the client:
+
+     ```json
+     { "mcpServers": { "ontologizer": { "command": "ontologizer", "args": ["mcp"] } } }
+     ```
+
+     If the client can't find `ontologizer`, use the full path that `which ontologizer` prints.
+   - **A shared server** (`ontologizer serve` with tokens): see [For AI agents](https://github.com/Graydon-dmg/ontologizer/blob/main/FOR-AGENTS.md#install-the-map-tools-mcp).
+
+   Tools that call the model spend your API credits and say so; the others only read your maps.
+
 ## Your first map in 30 seconds
 
 ```bash
