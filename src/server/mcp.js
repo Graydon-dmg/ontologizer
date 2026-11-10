@@ -28,16 +28,19 @@ export { COST_NOTE };
 /** Sent in the initialize result: what the server holds and how the tools fit together. */
 export const INSTRUCTIONS = `Ontologizer builds and serves topic maps: a tree of categories and nodes about one field (each node has an id like "sourdough/starter/levain", a label and a one-line summary), with cross-links between categories (bridges), insights, thin areas, and sources (web pages, or documents from configured sources). A map is built once by the model and then read for free.
 
-Start with the free reads: list_maps (what exists), get_context (a whole map as markdown sized for your context: the best first read), get_outline (every node and its id), search_map (find a node), get_node (one node in full). They never call the model.
+Start with the free reads: list_maps (what exists), get_context (a whole map as markdown sized for your context: the best first read), get_outline (every node and its id), search_map (find a node), get_node (one node in full). They never call the model. get_context gives each node's id after its label, so you rarely need get_outline just for ids.
+
+A new map is mostly one-line summaries: a node has an article only once someone calls explain on it. get_context and get_node say how much of the map is still one line; call explain on the nodes your task depends on (it costs credits), never on a whole map by default.
 
 Tools that call the model cost the user API credits and say so: check_context, build_map, research, explain, sources, ask_map, fuse, rosetta. Use them only when the free reads cannot answer.
 
 Usual workflows:
 - Learn a field: list_maps; if no map fits, check_context (repeat with answers while it asks questions), build_map, wait_for_map, then get_context and teach or brainstorm from it yourself.
 - Deepen one node: search_map or get_outline for its id, get_node, then explain (write its article) or research (add nodes under it), wait_for_map, get_node again.
+- Deepen several nodes your task depends on: explain or sources with nodeIds (at most 8 in one call; each node is its own job and about one model call), then wait_for_map (it waits for all of them) and get_node on each.
 - Put a map into a document or page: export_map with format "embed" (an offline, interactive fragment) or "html" (a whole page).
 - Where two fields connect: fuse two existing maps, wait_for_map on the new map (draftId), get_context on it and read its Bridges.
-- A question answered in prose with citations: ask_map.
+- A question answered in prose with citations: ask_map. It is not a read: it adds the question and answer to the map's chat, which everyone who can open the map sees.
 
 Jobs (build_map, research, explain, sources, fuse, rosetta) answer at once and run in the background: wait on the map with wait_for_map. Drafts are kept; save_map only names a map.
 
@@ -98,6 +101,8 @@ const ASK_OUTPUT = { type: 'object', properties: {
   answer: { type: 'string' }, chatId: { type: 'string' },
   citedNodes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } } } },
   sources: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, url: { type: 'string' } } } },
+  webSearch: { type: 'object', description: 'Whether the answer searched the web, and the error_code of a search that failed or ran out',
+    properties: { used: { type: 'boolean' }, failed: { enum: ['max_uses_exceeded', 'too_many_requests', 'unavailable', 'query_too_long', 'invalid_input'] } }, required: ['used'] },
 }, required: ['answer', 'citedNodes', 'sources'] };
 
 /** The tool's output schema: the op's JSON object output (a list is wrapped as { maps }); none for text. @param {import('../ops.js').Op} op */
@@ -161,7 +166,12 @@ function valueProblem(v, schema) {
     case 'object': return v && typeof v === 'object' && !Array.isArray(v) ? null : 'must be an object';
     case 'array': {
       if (!Array.isArray(v)) return 'must be a list';
+      if (schema.minItems !== undefined && v.length < schema.minItems) return `must have at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}`;
       if (schema.maxItems !== undefined && v.length > schema.maxItems) return `must have at most ${schema.maxItems} items`;
+      if (schema.uniqueItems === true) {
+        const dup = v.find((x, i) => v.indexOf(x) !== i);
+        if (dup !== undefined) return `lists ${JSON.stringify(dup)} twice`;
+      }
       for (const [i, item] of v.entries()) {
         const p = valueProblem(item, schema.items);
         if (p) return `item ${i + 1} ${p}`;
@@ -265,6 +275,9 @@ export function collectChat(body) {
   const sources = [];
   /** @type {string|null} */
   let error = null;
+  /** @type {{ used: boolean, failed?: string } | null} */
+  let webSearch = null;
+  let webNote = '';
   for (const block of body.split('\n\n')) {
     const line = block.split('\n').find((l) => l.startsWith('data:'));
     if (!line) continue;
@@ -274,12 +287,17 @@ export function collectChat(body) {
     else if (item.type === 'citation' && !cited.some((c) => c.id === item.nodeId)) cited.push({ label: String(item.label ?? item.nodeId), id: String(item.nodeId) });
     else if (item.type === 'source' && !sources.some((s) => s.url === item.url)) sources.push({ title: String(item.title ?? item.url), url: String(item.url) });
     else if (item.type === 'error') error = String(item.error ?? 'error');
+    else if (item.type === 'websearch') {
+      webSearch = { used: item.used === true, ...(typeof item.failed === 'string' && item.failed ? { failed: item.failed } : {}) };
+      webNote = typeof item.note === 'string' ? item.note : '';
+    }
   }
   let out = answer.trim();
   if (cited.length) out += `${out ? '\n\n' : ''}Cited nodes:\n${cited.map((c) => `- ${c.label} (${c.id})`).join('\n')}`;
   if (sources.length) out += `${out ? '\n\n' : ''}Sources:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`;
+  if (webNote) out += `${out ? '\n\n' : ''}Web search: ${webNote}`;
   if (error) out += `${out ? '\n\n' : ''}Error: ${error}`;
-  return { text: out, isError: error !== null && !answer.trim(), error, answer: answer.trim(), cited, sources };
+  return { text: out, isError: error !== null && !answer.trim(), error, answer: answer.trim(), cited, sources, webSearch };
 }
 
 /**
@@ -354,7 +372,7 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     if (op.name === 'ask_map') {
       const c = collectChat(r.text);
       if (c.isError || !c.text) return textResult(c.error ? `${c.error} Try again, or read the map with get_context.` : 'The map gave no answer. Try again, or read the map with get_context.', true);
-      const structured = { answer: c.answer, chatId: String(/** @type {any} */ (args).chatId ?? 'main'), citedNodes: c.cited, sources: c.sources };
+      const structured = { answer: c.answer, chatId: String(/** @type {any} */ (args).chatId ?? 'main'), citedNodes: c.cited, sources: c.sources, ...(c.webSearch ? { webSearch: c.webSearch } : {}) };
       return { content: [{ type: 'text', text: c.text }], structuredContent: structured };
     }
     const isJson = /json/i.test(r.type) || (op.http.type ?? 'application/json') === 'application/json';

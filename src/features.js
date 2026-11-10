@@ -19,4 +19,9 @@ export const FEATURES = [
   { id: 'mcp-home', epic: 'I3', cli: 'mcp', ui: { page: 'web/home/index.html', id: 'server-connect-agent' } },
   { id: 'api', epic: 'I3', cli: 'serve', ui: { page: 'web/home/index.html', id: 'server-api' } },
   { id: 'usage', epic: 'I3', cli: 'usage', ui: { page: 'web/home/index.html', id: 'server-usage' } },
+  // Deepening several nodes in one call (explain and sources with nodeIds; `ontologizer explain <map>
+  // <node>… [--sources]`): no new button. The page already has one per node (Explain, Sources), and a
+  // batch is only those clicks in one request, each node still its own job.
+  { id: 'explain-several', epic: 'I3', cli: 'explain', ui: { page: 'web/index.html', id: 'explain' } },
+  { id: 'sources-several', epic: 'I3', cli: 'explain', ui: { page: 'web/index.html', id: 'sources' } },
 ];

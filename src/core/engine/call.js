@@ -30,6 +30,35 @@ export function jobErrorMessage(e) {
 
 export const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 
+/** What each web search error_code means, in plain words ("web search …"). */
+const SEARCH_FAILURES = /** @type {Record<string, string>} */ ({
+  max_uses_exceeded: `ran out: one call may search ${WEB_SEARCH_TOOL.max_uses} times`,
+  too_many_requests: 'was rate-limited (too many requests)',
+  unavailable: 'was unavailable',
+  query_too_long: 'failed: a query was too long',
+  invalid_input: 'failed: a query was not valid',
+});
+
+/** "web search ran out: …" for an error_code. @param {string} code */
+export function searchFailureText(code) {
+  return `web search ${SEARCH_FAILURES[code] ?? `failed (${code})`}`;
+}
+
+/**
+ * The error_code of the last failed web search in a response's content, or null. A failed search
+ * is a web_search_tool_result whose content is { type: 'web_search_tool_result_error', error_code }
+ * (max_uses_exceeded, too_many_requests, unavailable, query_too_long, invalid_input).
+ * @param {any[]} content @returns {string|null}
+ */
+export function searchFailure(content) {
+  let code = null;
+  for (const b of content ?? []) {
+    const c = b?.type === 'web_search_tool_result' ? b.content : null;
+    if (c && !Array.isArray(c) && c.type === 'web_search_tool_result_error') code = typeof c.error_code === 'string' && c.error_code ? c.error_code : 'unavailable';
+  }
+  return code;
+}
+
 /** Tool turns one call may take before it must answer. */
 export const MAX_TOOL_TURNS = 6;
 
@@ -41,7 +70,8 @@ export const MAX_TOOL_TURNS = 6;
  *   restricted: whether the map is private now. Checked before every turn: a private map's run gets
  *   no web search (and its tools' defs are already only private sources), so private text cannot
  *   leave through another tool. Absent or false: exactly as before.
- * @typedef {{ stopReason: string|null, sources: { title: string, url: string }[], objects: number }} CallResult
+ * @typedef {{ stopReason: string|null, sources: { title: string, url: string }[], objects: number, searchFailed: string|null }} CallResult
+ *   searchFailed: the error_code of the last web search that failed in this call, or null
  */
 
 /**
@@ -75,6 +105,7 @@ export async function runCall(getClient, p, onObject) {
   const sources = new Map();
   let objects = 0;
   let stopReason = null;
+  /** @type {string|null} */ let searchFailed = null;
 
   let pauses = 0;                                 // at most two pause_turn resumes
   let toolTurns = 0;                              // at most MAX_TOOL_TURNS rounds of source tools
@@ -101,6 +132,7 @@ export async function runCall(getClient, p, onObject) {
     const final = await stream.finalMessage();
     stopReason = final.stop_reason ?? null;
     collectSources(final.content, sources);
+    searchFailed = searchFailure(final.content) ?? searchFailed;
 
     if (stopReason === 'refusal') throw new RefusalError(final.stop_details?.category ?? undefined);
     if (stopReason === 'pause_turn' && pauses < 2) {
@@ -125,7 +157,7 @@ export async function runCall(getClient, p, onObject) {
     }
     break;                                        // end_turn, max_tokens (keep what streamed), or out of resumes
   }
-  return { stopReason, sources: [...sources.values()], objects };
+  return { stopReason, sources: [...sources.values()], objects, searchFailed };
 }
 
 /** Whether any of the run's source tools is on offer this turn. @param {CallTools} tools @param {Set<string>} offered */

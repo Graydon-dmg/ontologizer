@@ -18,8 +18,8 @@ import { createSources, heldSources } from './sources.js';
 import { portNames } from './config.js';
 import { slug } from '../core/engine/ids.js';
 import { openApi } from '../ops.js';
-import { buildIndex, runTool } from '../core/engine/chat.js';
-import { agentMap, outlineText } from './reads.js';
+import { buildIndex } from '../core/engine/chat.js';
+import { agentMap, outlineText, nodeForAgent } from './reads.js';
 import { exportMap } from '../core/export/index.js';
 import { handleMcpHttp, loopbackCaller } from './mcp.js';
 import { createUsage, EXIT_WAIT_MS } from './usage.js';
@@ -1200,8 +1200,7 @@ export async function startService({
         if (rest.length !== 4) return fail(res, 404, 'not found');
         let nid = '';
         try { nid = decodeURIComponent(rest[3]); } catch { return fail(res, 400, 'bad node id'); }
-        const safe = agentMap(map);
-        const r = runTool('get_node', { id: nid }, safe, buildIndex(safe), null);
+        const r = nodeForAgent(map, nid);
         return r.error ? json(res, 404, { ok: false, ...r.result }) : json(res, 200, r.result);
       }
       const format = sub === 'context' ? 'context' : String(query.get('format') ?? '');
@@ -1257,7 +1256,10 @@ export async function startService({
           return row ? can(p, 'read', { tenant, mapId: other, map: visibilityOf(tenant, other, row) }) : false;
         },
         // The tenant's daily limit: a model-calling action or a chat answers 429 when it is reached.
-        limit: () => usage.over(tenant),
+        // `extra`: calls a batch has already started in this request (one per node); `base`: the
+        // tenant's calls when it began (calls(), read once), so a started call is never counted twice.
+        limit: (/** @type {number} */ extra = 0, /** @type {number|null} */ base = null) => usage.over(tenant, extra, base),
+        calls: () => usage.today(tenant).calls,
         // Whether a map is private (fuse keeps a private map's id out of another map's log).
         isPrivate: (/** @type {string} */ other) => visibilityOf(tenant, other, store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other)).visibility === 'private',
       });
