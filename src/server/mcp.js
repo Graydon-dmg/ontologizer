@@ -28,7 +28,9 @@ export { COST_NOTE };
 /** Sent in the initialize result: what the server holds and how the tools fit together. */
 export const INSTRUCTIONS = `Ontologizer builds and serves topic maps: a tree of categories and nodes about one field (each node has an id like "sourdough/starter/levain", a label and a one-line summary), with cross-links between categories (bridges), insights, thin areas, and sources (web pages, or documents from configured sources). A map is built once by the model and then read for free.
 
-Start with the free reads: list_maps (what exists), get_context (a whole map as markdown sized for your context: the best first read), get_outline (every node and its id), search_map (find a node), get_node (one node in full). They never call the model.
+Start with the free reads: list_maps (what exists), get_context (a whole map as markdown sized for your context: the best first read), get_outline (every node and its id), search_map (find a node), get_node (one node in full). They never call the model. get_context gives each node's id after its label, so you rarely need get_outline just for ids.
+
+A new map is mostly one-line summaries: a node has an article only once someone calls explain on it. get_context and get_node say how much of the map is still one line; call explain on the nodes your task depends on (it costs credits), never on a whole map by default.
 
 Tools that call the model cost the user API credits and say so: check_context, build_map, research, explain, sources, ask_map, fuse, rosetta. Use them only when the free reads cannot answer.
 
@@ -37,7 +39,7 @@ Usual workflows:
 - Deepen one node: search_map or get_outline for its id, get_node, then explain (write its article) or research (add nodes under it), wait_for_map, get_node again.
 - Put a map into a document or page: export_map with format "embed" (an offline, interactive fragment) or "html" (a whole page).
 - Where two fields connect: fuse two existing maps, wait_for_map on the new map (draftId), get_context on it and read its Bridges.
-- A question answered in prose with citations: ask_map.
+- A question answered in prose with citations: ask_map. It is not a read: it adds the question and answer to the map's chat, which everyone who can open the map sees.
 
 Jobs (build_map, research, explain, sources, fuse, rosetta) answer at once and run in the background: wait on the map with wait_for_map. Drafts are kept; save_map only names a map.
 

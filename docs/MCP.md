@@ -86,7 +86,9 @@ Every MCP tool has a client method (`c.maps.check`, `build`, `wait`, `list`, `ou
 - **Free reads first.** `list_maps`, `get_context`, `get_outline`, `search_map`, `get_node`, `export_map` and `wait_for_map` never call the model. `get_context` is the best first read of a map.
 - **Building is two steps.** `check_context` turns a plain description into a brief (it may ask up to three rounds of questions); `build_map` builds from the brief.
 - **Jobs run in the background.** `build_map`, `research`, `explain`, `sources`, `fuse` and `rosetta` answer at once. Wait with `wait_for_map` on the map (jobs have no id to wait on); call it again while it says `"busy"`.
-- **Ids.** A map id is a saved map's name (`sourdough`) or a draft id (`draft-20261109-153012`). Drafts are kept; `save_map` only names a map, and its old id stops working. A node id is a path (`plastic-modeling/techniques/airbrush-basics`): take it from `get_outline` or `search_map`, never guess it.
+- **Ids.** A map id is a saved map's name (`sourdough`) or a draft id (`draft-20261109-153012`: the date and time the build started by the server's clock, usually UTC). Drafts are kept; `save_map` only names a map, and its old id stops working. A node id is a path (`plastic-modeling/techniques/airbrush-basics`): take it from `get_context` (after each label in its Outline: `…/airbrush-basics` there means the parent line's id plus `/airbrush-basics`), `get_outline` or `search_map`, never guess it.
+- **Explain on demand.** A new map is mostly one-line summaries; a node has an article only once `explain` writes it. `get_context` puts every article in its **Articles** section and says in its Brief when most nodes are still one line; `get_node` says the same on a node with no article. Call `explain` on the nodes your task depends on: it costs credits, so it is never automatic.
+- **`ask_map` writes.** It adds the question and answer to the map's chat, which everyone who can open the map sees. Read with `get_context` and `get_node` when a written answer isn't needed.
 - **MCP prompts** (`learn-a-field`, `brainstorm-from-map`, `map-for-a-doc`, `connect-two-fields`, `deepen-a-node`, `private-map`) are ready-made starting points for these workflows.
 
 ## Workflows
@@ -97,7 +99,7 @@ The outputs below have the real shapes (shortened where marked with …); the to
 
 1. `list_maps` `{}` to see whether a map already covers it.
    ```json
-   { "maps": [ { "id": "sourdough", "name": "Sourdough", "root": "sourdough", "nodes": 76, "draft": false } ] }
+   { "maps": [ { "id": "sourdough", "name": "Sourdough", "root": "sourdough", "nodes": 76, "updatedAt": 1794279738145, "draft": false } ] }
    ```
 2. No map fits, so `check_context` `{ "context": "Home espresso for a complete beginner: machines, grinders, beans, technique" }`.
    ```json
@@ -120,17 +122,23 @@ The outputs below have the real shapes (shortened where marked with …); the to
    ## Brief
    - Subject: Home espresso
    - Size: 74 nodes in 8 categories, 19 cross-links, 0 explained
+   - Depth: 74 of 74 nodes are one-line summaries; call explain on the nodes your task depends on (it calls the model, so it costs credits).
+   - Ids: each outline label is followed by its node id in parentheses; "…/x" means the parent line's id followed by "/x".
 
    ## Outline
-   - Home espresso
-     - Machines
-       - Single boiler machines: …
+   - Home espresso (home-espresso)
+     - Machines (…/machines)
+       - Single boiler machines (…/single-boiler-machines): …
    …
+   ## Articles
+   None yet.
+
    ## Bridges
    - Grind size → Extraction (influences): …
    ## Thin areas
    …
    ```
+   When the budget cut anything, the last line says what (`_Trimmed to fit 6000 tokens: …_`); without it, the whole map is there.
 7. Teach and brainstorm from the pack yourself. Use the thin areas and bridges for less obvious ideas, and `get_node` for detail. No more model calls are needed.
 
 ### 2. A map in a design doc
@@ -151,7 +159,7 @@ The outputs below have the real shapes (shortened where marked with …); the to
    ```json
    { "results": [ { "id": "sourdough/starter/levain", "label": "Levain", "path": "Sourdough > Starter > Levain", "snippet": "…" } ] }
    ```
-2. `get_node` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain" }`: its summary, children, cross-links, sources, and `"article": "Not explained yet: …"` when it has no article.
+2. `get_node` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain" }`: its summary, children, cross-links (`neighbours`; on a node with children also `branchLinks`, the links that leave its branch), sources, and `"article": "Not explained yet: …"` when it has no article.
 3. If it is thin: `explain` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain" }` writes its article; `research` `{ "id": "sourdough", "nodeId": "sourdough/starter/levain", "mode": "context" }` adds nodes under it. Each answers `{ "ok": true, "jobId": "job-1" }`.
 4. `wait_for_map` `{ "id": "sourdough" }`, then `get_node` again to read the article or the new children.
 
@@ -235,7 +243,7 @@ Generated from the tool definitions (`src/ops.js`) by `scripts/mcp-catalog.js`; 
 
 ### `list_maps`: List maps
 
-List the maps on this server that you may read. Use when you start, to find a map by name, or to check that a map you built exists and whether it is private. Don't use when you already have the map id. Returns { maps: [{ id, name, root, nodes, draft, visibility? }] }: drafts are kept like saved maps; visibility "private" means only holders of its sources can read it. Next: get_context or get_outline on an id.
+List the maps on this server that you may read. Use when you start, to find a map by name, or to check that a map you built exists and whether it is private. Don't use when you already have the map id. Returns { maps: [{ id, name, root, nodes, updatedAt, draft, visibility? }] }: updatedAt is when the map last changed, in milliseconds since 1970 (UTC); drafts are kept like saved maps, and a draft id ("draft-20261109-153012") is the date and time its build started by the server's clock, usually UTC, so it can read as tomorrow where you are; visibility "private" means only holders of its sources can read it. Next: get_context or get_outline on an id.
 
 free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tenant}/maps`
 
@@ -336,7 +344,7 @@ Add a lens to a map: every node gets an analog from a persona's own world ("a ch
 
 ### `ask_map`: Ask a map a question
 
-Ask one question about a map and get a written answer that cites the map's nodes (and web pages for what the map lacks; none on a private map). The question and answer are saved in the map's chat. Use when the user wants an answer in prose grounded in the map, with citations. Don't use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId }. Next: get_node on a cited node, or ask_map again with the same chatId to follow up. Calls the model: costs API credits.
+Ask one question about a map and get a written answer that cites the map's nodes (and web pages for what the map lacks; none on a private map). It is not a read: the question and answer are added to the map's chat (the chatId conversation), which everyone who can open the map sees. Use when the user wants an answer in prose grounded in the map, with citations. Don't use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId }. Next: get_node on a cited node, or ask_map again with the same chatId to follow up. Calls the model: costs API credits.
 
 **calls the model** · writes to the map · token scope: `ask` · HTTP: `POST /v1/t/{tenant}/maps/{id}/chat`
 
@@ -360,7 +368,7 @@ free · writes to the map · destructive (the old id stops working) · token sco
 
 ### `get_outline`: Read a map's outline
 
-Read a whole map as an indented outline, one line per node: "- Label (nodeId): summary". Use when you need every node and its id, e.g. to pick a node for get_node, research or explain. Don't use when you want the map's meaning in your context with its cross-links and gaps (get_context is better for that). Returns markdown text. Free: no model call. Next: get_node on a node id.
+Read a whole map as an indented outline, one line per node: "- Label (nodeId): summary", ending in "[explained]" when the node has an article (get_node reads it). Use when you need every node and its id, e.g. to pick a node for get_node, research or explain. Don't use when you want the map's meaning in your context with its cross-links and gaps (get_context is better for that). Returns markdown text. Free: no model call. Next: get_node on a node id.
 
 free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tenant}/maps/{id}/outline`
 
@@ -382,7 +390,7 @@ free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tena
 
 ### `get_node`: Read one node
 
-Read everything a map says about one node: its path, summary, article (or "Not explained yet"), sources, children and cross-links to other nodes. Use when you need the detail behind one line of the outline, or to see what research or explain added. Don't use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. Next: explain or research on the node if it is thin.
+Read everything a map says about one node: its path, summary, article (or "Not explained yet", with how much of the map is one line), sources (once each), children, its own cross-links (neighbours) and, for a node with children, the cross-links that leave its branch (branchLinks: a category's links usually sit on the nodes under it). Use when you need the detail behind one line of the outline, or to see what research or explain added. Don't use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. Next: explain or research on the node if it is thin.
 
 free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tenant}/maps/{id}/nodes/{nodeId}`
 
@@ -393,7 +401,7 @@ free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tena
 
 ### `get_context`: Bring a map into your context
 
-Read a map as a context pack: markdown with its brief, outline, bridges (cross-links between categories), insights, thin areas and sources, trimmed to a token budget. Use when you want to learn, teach, brainstorm or write from a map: this is the best first read. Don't use when you need one node in depth (get_node) or a file for a person (export_map). Returns markdown text; its last line says what was trimmed. Free: no model call. Next: brainstorm or answer from it yourself; get_node for detail.
+Read a map as a context pack: markdown with its brief, outline (each label followed by its node id), the articles of explained nodes, bridges (cross-links between categories), insights, thin areas and sources, trimmed to a token budget. Use when you want to learn, teach, brainstorm or write from a map: this is the best first read. Don't use when you need one node in depth (get_node) or a file for a person (export_map). Returns markdown text. When anything was trimmed to fit the budget, the last line says what ("_Trimmed to fit …_"); without that line the whole map is there. When most nodes are one-line summaries, the Brief says so. Free: no model call. Next: brainstorm or answer from it yourself; get_node for detail; explain on the nodes your task depends on when the Brief says the map is mostly one-line summaries.
 
 free · read-only · idempotent · token scope: `read` · HTTP: `GET /v1/t/{tenant}/maps/{id}/context`
 

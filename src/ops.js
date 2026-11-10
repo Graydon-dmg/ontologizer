@@ -42,7 +42,7 @@ const obj = (properties, required = []) => ({ type: 'object', properties, requir
 const mapIn = (/** @type {Record<string, any>} */ more = {}, /** @type {string[]} */ req = []) => obj({ tenant, id, ...more }, ['tenant', 'id', ...req]);
 const MAP_ROW = obj({
   id: { type: 'string' }, name: { type: 'string' }, root: { type: 'string' }, nodes: { type: 'integer' },
-  updatedAt: { type: 'number' }, draft: { type: 'boolean' }, visibility: { enum: ['public', 'private'] },
+  updatedAt: { type: 'number', description: 'When the map last changed, in milliseconds since 1970 (UTC)' }, draft: { type: 'boolean' }, visibility: { enum: ['public', 'private'] },
 }, ['id', 'name', 'nodes', 'draft']);
 const BRIEF = { type: 'object', additionalProperties: true, description: 'The brief from check_context (context, subject, scope, purpose, level, size)' };
 
@@ -101,7 +101,7 @@ export const OPS = [
   { name: 'list_maps', summary: 'The maps the caller may read',
     http: { method: 'GET', path: '/v1/t/{tenant}/maps' },
     mcp: { name: 'list_maps', title: 'List maps',
-      description: 'List the maps on this server that you may read. Use when you start, to find a map by name, or to check that a map you built exists and whether it is private. Don\'t use when you already have the map id. Returns { maps: [{ id, name, root, nodes, draft, visibility? }] }: drafts are kept like saved maps; visibility "private" means only holders of its sources can read it. Next: get_context or get_outline on an id.',
+      description: 'List the maps on this server that you may read. Use when you start, to find a map by name, or to check that a map you built exists and whether it is private. Don\'t use when you already have the map id. Returns { maps: [{ id, name, root, nodes, updatedAt, draft, visibility? }] }: updatedAt is when the map last changed, in milliseconds since 1970 (UTC); drafts are kept like saved maps, and a draft id ("draft-20261109-153012") is the date and time its build started by the server\'s clock, usually UTC, so it can read as tomorrow where you are; visibility "private" means only holders of its sources can read it. Next: get_context or get_outline on an id.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     input: obj({ tenant }, ['tenant']), output: { type: 'array', items: MAP_ROW },
     scope: 'read', callsModel: false, cli: 'list', ui: { page: HOME, id: 'maps-list' } },
@@ -189,7 +189,7 @@ export const OPS = [
   { name: 'ask_map', summary: 'Ask the map a question; the answer streams as server-sent events',
     http: { method: 'POST', path: `${MAP}/chat`, type: 'text/event-stream' },
     mcp: { name: 'ask_map', title: 'Ask a map a question',
-      description: 'Ask one question about a map and get a written answer that cites the map\'s nodes (and web pages for what the map lacks; none on a private map). The question and answer are saved in the map\'s chat. Use when the user wants an answer in prose grounded in the map, with citations. Don\'t use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId }. Next: get_node on a cited node, or ask_map again with the same chatId to follow up. ' + COST_NOTE,
+      description: 'Ask one question about a map and get a written answer that cites the map\'s nodes (and web pages for what the map lacks; none on a private map). It is not a read: the question and answer are added to the map\'s chat (the chatId conversation), which everyone who can open the map sees. Use when the user wants an answer in prose grounded in the map, with citations. Don\'t use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId }. Next: get_node on a cited node, or ask_map again with the same chatId to follow up. ' + COST_NOTE,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
     input: mapIn({ text: str('The question, at most 4000 characters. E.g. "Which grinder settings matter most for a beginner?"'),
       chatId: str('A conversation name: questions with the same chatId see the earlier questions and answers. Letters, digits, hyphens. E.g. "espresso-agent". Default "main", the conversation the map page shows'),
@@ -206,7 +206,7 @@ export const OPS = [
   { name: 'get_outline', summary: 'The map as an indented outline (one line per node), as text',
     http: { method: 'GET', path: `${MAP}/outline`, type: 'text/markdown' },
     mcp: { name: 'get_outline', title: 'Read a map\'s outline',
-      description: 'Read a whole map as an indented outline, one line per node: "- Label (nodeId): summary". Use when you need every node and its id, e.g. to pick a node for get_node, research or explain. Don\'t use when you want the map\'s meaning in your context with its cross-links and gaps (get_context is better for that). Returns markdown text. Free: no model call. Next: get_node on a node id.',
+      description: 'Read a whole map as an indented outline, one line per node: "- Label (nodeId): summary", ending in "[explained]" when the node has an article (get_node reads it). Use when you need every node and its id, e.g. to pick a node for get_node, research or explain. Don\'t use when you want the map\'s meaning in your context with its cross-links and gaps (get_context is better for that). Returns markdown text. Free: no model call. Next: get_node on a node id.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     input: mapIn(), output: TEXT, scope: 'read', callsModel: false, cli: 'export', ui: { page: PAGE, id: 'export-context' } },
   { name: 'search_map', summary: 'Search the map\'s nodes by keywords',
@@ -221,13 +221,13 @@ export const OPS = [
   { name: 'get_node', summary: 'One node in full: summary, article, sources, children, neighbours',
     http: { method: 'GET', path: `${MAP}/nodes/{nodeId}` },
     mcp: { name: 'get_node', title: 'Read one node',
-      description: 'Read everything a map says about one node: its path, summary, article (or "Not explained yet"), sources, children and cross-links to other nodes. Use when you need the detail behind one line of the outline, or to see what research or explain added. Don\'t use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. Next: explain or research on the node if it is thin.',
+      description: 'Read everything a map says about one node: its path, summary, article (or "Not explained yet", with how much of the map is one line), sources (once each), children, its own cross-links (neighbours) and, for a node with children, the cross-links that leave its branch (branchLinks: a category\'s links usually sit on the nodes under it). Use when you need the detail behind one line of the outline, or to see what research or explain added. Don\'t use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. Next: explain or research on the node if it is thin.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     input: mapIn({ nodeId }, ['nodeId']), output: ANY, scope: 'read', callsModel: false, cli: 'load', ui: { page: PAGE, id: 'explain' } },
   { name: 'get_context', summary: 'The context pack: the map as markdown sized for an agent\'s context',
     http: { method: 'GET', path: `${MAP}/context`, type: 'text/markdown' },
     mcp: { name: 'get_context', title: 'Bring a map into your context',
-      description: 'Read a map as a context pack: markdown with its brief, outline, bridges (cross-links between categories), insights, thin areas and sources, trimmed to a token budget. Use when you want to learn, teach, brainstorm or write from a map: this is the best first read. Don\'t use when you need one node in depth (get_node) or a file for a person (export_map). Returns markdown text; its last line says what was trimmed. Free: no model call. Next: brainstorm or answer from it yourself; get_node for detail.',
+      description: 'Read a map as a context pack: markdown with its brief, outline (each label followed by its node id), the articles of explained nodes, bridges (cross-links between categories), insights, thin areas and sources, trimmed to a token budget. Use when you want to learn, teach, brainstorm or write from a map: this is the best first read. Don\'t use when you need one node in depth (get_node) or a file for a person (export_map). Returns markdown text. When anything was trimmed to fit the budget, the last line says what ("_Trimmed to fit …_"); without that line the whole map is there. When most nodes are one-line summaries, the Brief says so. Free: no model call. Next: brainstorm or answer from it yourself; get_node for detail; explain on the nodes your task depends on when the Brief says the map is mostly one-line summaries.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     input: mapIn({ budget: { type: 'integer', minimum: 300, maximum: 200000, default: 4000, description: 'Estimated tokens at most, 300 to 200000 (default 4000). E.g. 8000 for a big map you want in full' } }),
     output: TEXT, scope: 'read', callsModel: false, cli: 'export', ui: { page: PAGE, id: 'export-context' } },
