@@ -8,6 +8,26 @@ import { packageVersion } from '../banner.js';
 import { resolveHome } from './status.js';
 import { startService } from '../../server/service.js';
 import { createMcpServer, loopbackCaller, remoteCaller } from '../../server/mcp.js';
+import { tokensPath, readTokens } from '../../server/tokens.js';
+import { findConfig } from '../../server/config.js';
+
+/**
+ * Why a home must not be served by the in-process server (which has no sign-in): it has tokens, or a
+ * config (whose identity, policy, store or private sources an open server would bypass). Null when
+ * it is a plain single-user home. An unreadable tokens file or a config named but missing counts too.
+ * @param {string} home @param {NodeJS.ProcessEnv} env @returns {string|null}
+ */
+export function needsSignIn(home, env) {
+  const file = tokensPath(home);
+  if (fs.existsSync(file)) {
+    try { if (readTokens(file).length) return `tokens (${file})`; } catch { return `a tokens file it cannot read (${file})`; }
+  }
+  try {
+    const config = findConfig({ flag: undefined, env, home });
+    if (config) return `a config (${config})`;
+  } catch (/** @type {any} */ err) { return `a config it cannot use (${String(err?.message ?? err)})`; }
+  return null;
+}
 
 /** @param {any} argv */
 export async function handler(argv) {
@@ -35,6 +55,14 @@ export async function handler(argv) {
     where = baseUrl;
   } else {
     const home = path.resolve(resolveHome(argv, deps));
+    // The in-process server is open (no tokens, no config): only for a plain single-user home.
+    const why = needsSignIn(home, deps.env);
+    if (why) {
+      const homeFlag = argv.home !== undefined ? ` --home ${home}` : '';
+      throw new CliError(`Refusing to serve ${home} without sign-in: it has ${why}. `
+        + `Run \`ontologizer serve${homeFlag}\`, then point this at it: `
+        + `\`ontologizer mcp --url http://127.0.0.1:8787 --token-file <file>\` (a file holding a token from \`ontologizer token create${homeFlag}\`).`, 1);
+    }
     fs.mkdirSync(home, { recursive: true });
     try {
       srv = await startService({
