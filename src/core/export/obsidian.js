@@ -20,15 +20,21 @@ const FIELD_MAX = 2000;
 
 // Characters a file name or wikilink target may not hold: path separators and Windows-reserved
 // characters, and Obsidian's link syntax (# heading, ^ block, [ ] link, | alias).
-const BAD_NAME = /[/\\:*?"<>|#^[\]]/g;
+const BAD_NAME = /[/\\:*?"<>|#^[\]%$`]/g; // also % $ ` (comments, math, code in link text)
 // Control, zero-width, bidi-override and line/paragraph separator characters.
 const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
 const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
 
 /** The first `max` characters (whole code points), trimmed. @param {string} s @param {number} max */
+// At most `max` characters and at most 240 UTF-8 bytes (Linux file systems cap a name at 255 bytes;
+// the rest is left for " (Category)", a number and ".md").
+const NAME_BYTES = 200;
+const enc = new TextEncoder();
 const cap = (s, max) => {
-  const cps = [...s];
-  return cps.length > max ? cps.slice(0, max).join('') : s;
+  let cps = [...s];
+  if (cps.length > max) cps = cps.slice(0, max);
+  while (cps.length && enc.encode(cps.join('')).length > NAME_BYTES) cps.pop();
+  return cps.join('');
 };
 
 /**
@@ -50,7 +56,9 @@ export function safeName(text, max = NAME_MAX) {
 }
 
 /** The key two names collide on: file systems and Obsidian links ignore case. @param {string} s */
-const nameKey = (s) => s.normalize('NFC').toLowerCase();
+// Case-insensitive file systems (macOS, Windows) fold more than toLowerCase does (ς/σ, ı/i, ß): fold
+// the same way so two notes can never land on one file.
+const nameKey = (s) => s.normalize('NFKC').toUpperCase().toLowerCase().replace(/ς/g, 'σ').replace(/ı/g, 'i');
 
 /** The text as one line. @param {unknown} s @param {number} [max] */
 function line(s, max = FIELD_MAX) {
@@ -68,7 +76,7 @@ function line(s, max = FIELD_MAX) {
  * @param {unknown} s @param {number} [max]
  */
 export function mdText(s, max = FIELD_MAX) {
-  const t = line(s, max).replace(/[\\`*_[\]<>#^|~=$%]/g, '\\$&');
+  const t = line(s, max).replace(/[\\`*_[\]<>#^|~=$%]/g, '\\$&').replace(/::/g, ':\\:'); // no Dataview inline fields
   return t.replace(/^[-+>]/, '\\$&').replace(/^(\d+)([.)])/, '$1\\$2');
 }
 

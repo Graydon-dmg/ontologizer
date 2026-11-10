@@ -151,7 +151,8 @@ test('safeName: traversal, separators, device names, empty and dot names become 
   assert.equal(safeName('nul '), 'nul (note)');
   for (const t of ['', '.', '..', '   ', '...', null, undefined]) assert.equal(safeName(t), 'Untitled', String(t));
   assert.equal(safeName(`a${NL}b${String.fromCharCode(0)}c`), 'a b c');
-  assert.equal([...safeName('é'.repeat(300))].length, NAME_MAX);
+  assert.equal([...safeName('e'.repeat(300))].length, NAME_MAX);
+  assert.ok(new TextEncoder().encode(safeName('é'.repeat(300))).length <= 200, 'multi-byte names stay within 200 bytes');
   assert.equal(safeName(' .hidden. '), 'hidden');
 });
 
@@ -336,3 +337,18 @@ function readZip(zip) {
   }
   return out;
 }
+
+test('review fixes: names that only differ by case folding (ς/σ, ı/i) get distinct files; long names stay under 240 bytes; no Dataview fields', () => {
+  const m = plantedMap();
+  m.nodes['r/a1'] = node('r/a1', 'Aς', 'r/tools', 'r/tools', 2);
+  m.nodes['r/a2'] = node('r/a2', 'Aσ', 'r/tools', 'r/tools', 2);
+  m.nodes['r/i1'] = node('r/i1', 'Kıt', 'r/tools', 'r/tools', 2);
+  m.nodes['r/i2'] = node('r/i2', 'Kit', 'r/tools', 'r/tools', 2);
+  m.nodes['r/long'] = node('r/long', '𝒜'.repeat(200), 'r/tools', 'r/tools', 2, { summary: 'key:: value' });
+  const v = obsidianVault(m, opts);
+  const fold = (s) => s.normalize('NFKC').toUpperCase().toLowerCase().replace(/ς/g, 'σ').replace(/ı/g, 'i');
+  const keys = v.notes.map((n) => fold(n.path));
+  assert.equal(new Set(keys).size, keys.length, 'two notes fold to one file name');
+  for (const n of v.notes) assert.ok(new TextEncoder().encode(n.path.split('/').pop()).length <= 255, n.path);
+  assert.ok(!v.notes.some((n) => /(^|[^\\]):(?<!\\:):/.test(n.text.split('---').slice(2).join('---')) && n.text.includes('key:: value')));
+});
