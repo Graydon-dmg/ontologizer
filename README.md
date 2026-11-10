@@ -101,7 +101,7 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer load <name>` | Open a saved map (add `--replay` to watch it build again) |
 | `ontologizer save [name]` | Save the current draft |
 | `ontologizer list` | List saved maps |
-| `ontologizer delete <map>` | Move a map to the trash (asks first; `--yes` to skip) |
+| `ontologizer delete <map>` | Move a map to the trash (asks first; `--yes` to skip). While `serve` runs on the home, delete from its page instead |
 | `ontologizer trash` | List deleted maps: each can be restored for 30 days |
 | `ontologizer restore <trash-id> [--as <name>]` | Bring a deleted map back |
 | `ontologizer fuse <a> <b>` | Fuse two maps into a new draft |

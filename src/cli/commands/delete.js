@@ -1,8 +1,10 @@
 // @ts-check
 // `ontologizer delete <map>`: move a map to the trash (<home>/.trash), where `ontologizer restore`
-// can bring it back for 30 days. Asks first in a terminal; without one it needs --yes.
+// can bring it back for 30 days. Asks first in a terminal; without one it needs --yes. Refuses while a
+// one-map session serves the map (sessions.json) or a `serve` runs on the home (serve.json).
 import { CliError } from '../deps.js';
 import { TRASH_DAYS } from '../../core/store.js';
+import { readServer } from './status.js';
 
 /** The actor stamped on a delete or restore made at this computer's command line. */
 export const LOCAL_ACTOR = { id: 'local', kind: 'human' };
@@ -26,6 +28,10 @@ export default {
       throw new CliError(`No map "${want}".${close.length ? ` Did you mean:\n${close.map((r) => `  ${r.id}${r.draft ? '  (draft)' : ''}`).join('\n')}` : ' See ontologizer list --drafts.'}`);
     }
     const label = row.name && row.name !== row.id ? `${row.id} (${row.name})` : row.id;
+    // A running `serve` on this home holds its own view of the maps: open pages there would never be
+    // told, and its engine would write into a map that is gone. Deleting goes through it instead.
+    const server = readServer(store.root);
+    if (server) throw new CliError(`A server is running on this home (pid ${server.pid}, ${server.url}): delete from its page, or stop it first.`);
     const live = store.sessions.get(row.id);
     if (live && live.pid !== process.pid) {
       throw new CliError(`"${row.id}" is open in a running session (port ${live.port}): stop it (Ctrl-C there), then delete it.`);

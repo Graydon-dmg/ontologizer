@@ -12,6 +12,32 @@ import { main } from '../../src/cli/main.js';
 import { complete } from '../../src/cli/complete.js';
 import { openStore, TRASH_ID_RE } from '../../src/core/store.js';
 import { fixtureEvents } from './helpers-service.js';
+import { faultyModule } from './helpers-fault.js';
+import { makeDeps } from '../../src/cli/deps.js';
+
+// Planted faults in the command itself (a broken copy of src/cli/commands/delete.js).
+const FAULTS = {
+  /** Never asks: deletes without a terminal and without --yes. */
+  noQuestion: [['    if (!argv.yes) {\n', '    if (false) {\n']],
+  /** Ignores sessions.json (the store's own guard still stops it, with the store's message). */
+  noSessionCheck: [['    if (live && live.pid !== process.pid) {\n      throw new CliError(', '    if (false) {\n      throw new CliError(']],
+  /** Ignores a running serve on the home. */
+  noServeCheck: [['    if (server) throw new CliError(', '    if (false) throw new CliError(']],
+};
+
+/**
+ * Run a broken copy of the delete command's handler, as main() would run the real one.
+ * @param {Array<[string, string]>} fault @param {string} map @param {string} home @param {{ yes?: boolean }} [o]
+ */
+async function runBroken(fault, map, home, { yes = false } = {}) {
+  const mod = await faultyModule('src/cli/commands/delete.js', fault);
+  const stdout = cap(); const stderr = cap();
+  const deps = makeDeps({ home, stdout, stderr, interactive: false, env: { ...process.env, ONTOLOGIZER_HOME: home }, prompts: /** @type {any} */ (async () => ({ confirm: async () => true })) });
+  try {
+    await mod.default.handler({ deps, map, yes });
+    return { code: 0, stdout: stdout.out, stderr: stderr.out };
+  } catch (/** @type {any} */ e) { return { code: e.code ?? 1, stdout: stdout.out, stderr: `${e.message}\n` }; }
+}
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'onto-trash-cli-'));
 function cap() { return { out: '', write(/** @type {string} */ s) { this.out += s; return true; } }; }
@@ -46,8 +72,10 @@ test('delete without a terminal refuses unless --yes; in a terminal it asks, and
   openStore(home).importEvents('demo', fixtureEvents('demo'));
   const r = await run(['delete', 'demo'], home);
   assert.deepEqual(noTerminalProblems(r, ids(home)), []);
-  // Planted fault: a delete that went ahead without asking.
-  assert.ok(noTerminalProblems({ code: 0, stderr: '' }, []).length === 3);
+  // Planted fault: a delete command that never asks.
+  const broken = tmp();
+  openStore(broken).importEvents('demo', fixtureEvents('demo'));
+  assert.equal(noTerminalProblems(await runBroken(FAULTS.noQuestion, 'demo', broken), ids(broken)).length, 3);
 
   /** @type {string[]} */ const asked = [];
   const no = await run(['delete', 'demo'], home, { interactive: true, confirm: false, asked });
@@ -112,8 +140,10 @@ test('delete refuses a map a running one-map session serves (sessions.json); a s
   s.sessions.set('demo', { port: 4321, pid: process.ppid, startedAt: Date.now() }); // a live process that is not this one
   const r = await run(['delete', 'demo', '--yes'], home);
   assert.deepEqual(servedProblems(r, ids(home)), []);
-  // Planted fault: a delete that ignored sessions.json.
-  assert.equal(servedProblems({ code: 0, stderr: '' }, []).length, 3);
+  // Planted fault: a delete command that ignores sessions.json (the store's own guard still keeps the map;
+  // the check reports the missing command-line message).
+  const broken = await runBroken(FAULTS.noSessionCheck, 'demo', home, { yes: true });
+  assert.deepEqual(servedProblems(broken, ids(home)).map((p) => p.split(':')[0]), ['message']);
   // A session whose process is gone is stale: it is cleaned up and the delete goes ahead.
   s.sessions.set('demo', { port: 4321, pid: 2 ** 22 + 12345, startedAt: Date.now() });
   const ok = await run(['delete', 'demo', '--yes'], home);
@@ -132,4 +162,33 @@ test('completion: the new commands\' flags and map names; the pinned top-level l
     assert.deepEqual(complete(['delete', 'de']), ['demo']);
     assert.ok(!complete(['']).includes('delete'), 'top-level completion is pinned by test/b');
   } finally { if (prev === undefined) delete process.env.ONTOLOGIZER_HOME; else process.env.ONTOLOGIZER_HOME = prev; }
+});
+
+/** A map on a home where `serve` runs is refused, and stays. @param {{ code: number, stderr: string }} r @param {string[]} left @param {number} pid */
+function serveRunningProblems(r, left, pid) {
+  /** @type {string[]} */ const p = [];
+  if (r.code !== 1) p.push(`exit ${r.code}`);
+  const want = `A server is running on this home (pid ${pid}, http://127.0.0.1:8787/): delete from its page, or stop it first.`;
+  if (r.stderr.trim() !== want) p.push(`message: ${r.stderr.trim()}`);
+  if (!left.includes('demo')) p.push('the map was deleted under a running server');
+  return p;
+}
+
+test('delete refuses while serve runs on the home (serve.json with a live pid); a stale serve.json does not block it', async () => {
+  const home = tmp();
+  openStore(home).importEvents('demo', fixtureEvents('demo'));
+  const serveFile = path.join(home, 'serve.json');
+  fs.writeFileSync(serveFile, JSON.stringify({ pid: process.ppid, url: 'http://127.0.0.1:8787/', startedAt: new Date().toISOString(), auth: 'open' }));
+  const r = await run(['delete', 'demo', '--yes'], home);
+  assert.deepEqual(serveRunningProblems(r, ids(home), process.ppid), []);
+  // trash and restore still work: they only read, or add a map the server finds on its next request.
+  assert.equal((await run(['trash'], home)).code, 0);
+  // Planted fault: a delete command that ignores serve.json.
+  const broken = await runBroken(FAULTS.noServeCheck, 'demo', home, { yes: true });
+  assert.deepEqual(serveRunningProblems(broken, ids(home), process.ppid), [`exit 0`, `message: `, 'the map was deleted under a running server']);
+  // A serve.json whose process is gone is stale: the delete goes ahead.
+  openStore(home).importEvents('demo', fixtureEvents('demo'));
+  fs.writeFileSync(serveFile, JSON.stringify({ pid: 2 ** 22 + 12345, url: 'http://127.0.0.1:8787/' }));
+  const ok = await run(['delete', 'demo', '--yes'], home);
+  assert.equal(ok.code, 0, ok.stderr);
 });

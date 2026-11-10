@@ -131,7 +131,7 @@ A new map starts as a **draft** with an id like `draft-20261108-120053`. A draft
 
 ### The trash
 
-`ontologizer delete <map>` moves a map, draft or saved, to the trash: it asks first in a terminal (`--yes` skips the question, and is needed when there is no terminal). It takes the map's exact id or name, never a prefix, and refuses a map that is open in a running `new` or `load`. `ontologizer trash` lists what is there, with when each item will be removed for good: 30 days after it was deleted. `ontologizer restore <trash-id>` brings a map back under its own name; if that name has been taken since, add `--as <name>` (a draft restored under a name comes back saved).
+`ontologizer delete <map>` moves a map, draft or saved, to the trash: it asks first in a terminal (`--yes` skips the question, and is needed when there is no terminal). It takes the map's exact id or name, never a prefix, and refuses a map that is open in a running `new` or `load`. While `ontologizer serve` runs on the same home it refuses every delete ("A server is running on this home (pid N, <url>): delete from its page, or stop it first."): delete from the server's page or its API instead, so pages open on the map are told and its engine is let go. `ontologizer trash` lists what is there, with when each item will be removed for good: 30 days after it was deleted. `ontologizer restore <trash-id>` brings a map back under its own name; if that name has been taken since, add `--as <name>` (a draft restored under a name comes back saved).
 
 ### Replay
 
