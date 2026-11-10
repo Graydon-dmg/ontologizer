@@ -5,6 +5,8 @@
 
 Ontologizer is an open-source command-line tool: give it a topic and Claude builds a live, color-coded map of everything inside it, streaming into a local web page as it goes.
 
+**For AI agents:** to use Ontologizer as a tool (MCP for Claude Code and the Agent SDK, the HTTP API, the JS client), see [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md).
+
 ```text
         manga chess jazz
        *--o     o     o--*
@@ -129,7 +131,7 @@ claude mcp add ontologizer -- npx -y ontologizer mcp                    # this m
 claude mcp add --transport http ontologizer http://127.0.0.1:8787/v1/mcp  # a running ontologizer serve
 ```
 
-Apps use the HTTP API (described at `/v1/openapi.json`) or the JS client, `import { createClient } from 'ontologizer/client'`. Tools that call the model say so and spend your API credits; `serve --limit-calls` and `--limit-tokens` cap each tenant's model calls and tokens per day (`ontologizer usage` shows them). See the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#12-agents-and-apps).
+Apps use the HTTP API (described at `/v1/openapi.json`) or the JS client, `import { createClient } from 'ontologizer/client'`. Tools that call the model say so and spend your API credits; `serve --limit-calls` and `--limit-tokens` cap each tenant's model calls and tokens per day (`ontologizer usage` shows them). The agent guide, [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md), has the setup, the workflows, costs and errors; the [user guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#12-agents-and-apps) has the server side.
 
 ## Requirements
 

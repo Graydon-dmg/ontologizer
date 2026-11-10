@@ -619,6 +619,8 @@ Each open tenant holds a few database connections. `serve --max-stores <n>` (def
 
 ## 12. Agents and apps
 
+For an agent's point of view (workflows, costs, errors, the full tool catalog), see [MCP.md](MCP.md).
+
 Three ways in, made from one list of operations (`src/ops.js`), all through the same HTTP routes and the same checks: tokens, tenants, scopes, private maps and limits apply to an agent exactly as to the page.
 
 ### MCP for agents
