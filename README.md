@@ -124,7 +124,7 @@ Every command takes `--help`. Full detail is in the [guide](https://github.com/G
 
 ## Service mode
 
-`ontologizer serve` runs one server for every map in your home, without opening a browser. Open `http://127.0.0.1:8787/` for the maps home: your maps, a **New map** button, and a read-only **Server** panel. Agents and scripts use the same server over HTTP (`/v1/...`).
+`ontologizer serve` runs one server for every map in your home, without opening a browser. Open `http://127.0.0.1:8787/` for the maps home: your maps (each with **Rename** and **Delete**), a **New map** button, the **Trash** (restore a deleted map for 30 days), and a read-only **Server** panel. On a map page, **‹ All maps** goes back to the home, and clicking the map's name offers **Rename…** and **Delete…**. Agents and scripts use the same server over HTTP (`/v1/...`).
 
 It listens on `127.0.0.1` only, unless you create a token and pass `--host`:
 

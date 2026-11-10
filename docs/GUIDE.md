@@ -129,6 +129,10 @@ A new map starts as a **draft** with an id like `draft-20261108-120053`. A draft
 - `ontologizer save [name]` promotes the current draft to a saved map. With no name it uses the map's own name.
 - If the draft is open in another terminal, `save` tells you to press Ctrl-C there instead.
 
+### The trash
+
+`ontologizer delete <map>` moves a map, draft or saved, to the trash: it asks first in a terminal (`--yes` skips the question, and is needed when there is no terminal). It takes the map's exact id or name, never a prefix, and refuses a map that is open in a running `new` or `load`. `ontologizer trash` lists what is there, with when each item will be removed for good: 30 days after it was deleted. `ontologizer restore <trash-id>` brings a map back under its own name; if that name has been taken since, add `--as <name>` (a draft restored under a name comes back saved).
+
 ### Replay
 
 `ontologizer load <name> --replay` plays the build back as it originally happened, with `--speed` as a multiplier (`--speed 3` is three times faster). Replay needs no API key and makes no calls; it does not change the saved map.
@@ -152,6 +156,9 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer load <name> [--replay] [--speed N]` | Open a saved map. |
 | `ontologizer save [name]` | Save the current draft. |
 | `ontologizer list [--drafts]` | List saved maps. |
+| `ontologizer delete <map> [--yes]` | Move a map to the trash. See [The trash](#the-trash). |
+| `ontologizer trash [--json]` | List deleted maps and when each is purged. |
+| `ontologizer restore <trash-id> [--as <name>]` | Bring a deleted map back. |
 | `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into a new draft. |
 | `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona. |
 | `ontologizer explain <name> <node>` | Write an article for one node. |
@@ -343,6 +350,7 @@ Everything lives in `~/.ontologizer`. To use another folder, set `ONTOLOGIZER_HO
   index.json          the list of maps, and which one is current
   sessions.json       which maps are open right now (port and process)
   update-check.json   when the daily update check last ran
+  .trash/             deleted maps, each <id>--<UTC time>/ with its files and a trash.json; removed 30 days after deletion
   <id>/
     events.jsonl      one line per thing that happened; append-only
     snapshot.json     the map as it stands now
@@ -442,6 +450,8 @@ ontologizer serve --open               # the same, and opens the maps home in yo
 
 **The maps home** (`/`) lists your maps (name, root, nodes, last update). **New map** asks what you want to explore, runs the same context check as `ontologizer new` (up to three rounds of questions), shows the brief, and builds. The page opens the new map as it draws itself. The **Server** panel shows the tenant, the store, the map count and the tokens by name and scopes. It is read-only: tokens are managed from the command line. On a map page opened from the home, the same panel is behind the **Server** button in the top bar, and the logo at the top bar's left opens a menu with **All maps** and **New map**.
 
+**Rename, delete and the trash.** On the maps home each map has **Rename** (**Save as…** for a draft) and **Delete**; on a map page, **‹ All maps** before the map's name goes back to the home, and clicking the name offers **Rename…** and **Delete…**. Saving a draft gives it a name; renaming a saved map moves it to the new name, and links to the old one stop working. **Delete** asks first, then moves the map to the **Trash**, a section of the home that lists deleted maps with a **Restore** button for 30 days; after that they are removed for good (the server checks when a tenant's store opens and once a day). A draft can be deleted or restored with a `build` token; a saved map needs `admin`. Nothing can be deleted while anything runs on it (its build, a job, a chat answer, a save): the server answers "The map is busy: try again when it is idle." Anyone viewing the map when it is deleted sees "This map was deleted. All maps ›". A private map stays private in the trash: only those who could read it see it there.
+
 **Tokens.** To listen on anything other than loopback (`--host 0.0.0.0`, a LAN address), create a token first; `serve` refuses to start without one.
 
 **Open mode is for this machine only.** With no tokens, the server trusts that nothing but this machine can reach its port. Never expose it through a reverse proxy, a tunnel (`ssh -R`, ngrok) or a port forward: create a token first. The server does refuse requests that carry proxy headers, but that is a safety net, not a lock.
@@ -473,7 +483,10 @@ A token is printed once (`ont_` and 43 characters); `<home>/tokens.json` keeps o
 | `GET /v1/t/<tenant>/maps/<id>/snapshot` | The map as JSON |
 | `GET /v1/t/<tenant>/maps/<id>/events?from=n` | The event stream (server-sent events) |
 | `POST /v1/t/<tenant>/maps/<id>/actions` | A node action, as the page sends it |
-| `POST /v1/t/<tenant>/maps/<id>/save` `{ name }` | Save a draft under a name |
+| `POST /v1/t/<tenant>/maps/<id>/save` `{ name }` | Save a draft under a name, or rename a saved map |
+| `DELETE /v1/t/<tenant>/maps/<id>` | Move the map to the trash: `{ ok, trashId }` (a draft needs `build`, a saved map `admin`) |
+| `GET /v1/t/<tenant>/trash` | The deleted maps you could restore, with `deletedAt` and `purgeAt` |
+| `POST /v1/t/<tenant>/trash/<trashId>/restore` `{ as? }` | Bring one back: `{ ok, id, viewUrl }`; 409 when its name is taken (send `as`) |
 | `GET /v1/t/<tenant>/maps/<id>/view` | The map page |
 | `GET /v1/t/<tenant>/status` | Tenant, store, map count, tokens (names and scopes) |
 | `GET /v1/health/live`, `/v1/health/ready` | Health checks (no token) |

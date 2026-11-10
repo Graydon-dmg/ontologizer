@@ -85,6 +85,7 @@ Every MCP tool has a client method (`c.maps.check`, `build`, `wait`, `list`, `ou
 - **Building is two steps.** `check_context` turns a plain description into a brief (it may ask up to three rounds of questions); `build_map` builds from the brief.
 - **Jobs run in the background.** `build_map`, `research`, `explain`, `sources`, `fuse` and `rosetta` answer at once. Wait with `wait_for_map` on the map (jobs have no id to wait on); call it again while it says `"busy"`.
 - **Ids.** A map id is a saved map's name (`sourdough`) or a draft id (`draft-20261109-153012`). Drafts are kept; `save_map` only names a map, and its old id stops working. A node id is a path (`plastic-modeling/techniques/airbrush-basics`): take it from `get_outline` or `search_map`, never guess it.
+- **No tool deletes a map, on purpose.** Deleting, the trash and restoring are for people: the maps home and map page (**Delete**, the **Trash**), the CLI (`ontologizer delete`, `trash`, `restore`) and the HTTP API (`DELETE /v1/t/<tenant>/maps/<id>`, `GET /v1/t/<tenant>/trash`, `POST .../trash/<trashId>/restore`), never MCP. An agent that wants a map gone should ask its user. If a map you were using disappears (404), it may be in the trash.
 - **MCP prompts** (`learn-a-field`, `brainstorm-from-map`, `map-for-a-doc`, `connect-two-fields`, `deepen-a-node`, `private-map`) are ready-made starting points for these workflows.
 
 ## Workflows
