@@ -232,3 +232,11 @@ test('a build timeout aborts that build\'s model calls, not a call made outside 
     assert.ok(!chat?.signal?.aborted, 'the chat\'s call was not aborted');
   } finally { await srv.close(); }
 });
+
+test('lastBuildError: a failure followed by later work is history, not the map state', async () => {
+  const { lastBuildError } = await import('../../src/server/service.js');
+  const failed = { id: 'b1', kind: 'build', state: 'failed', error: 'Stopped: the server ended' };
+  assert.equal(lastBuildError({ b1: failed }), 'Stopped: the server ended');
+  assert.equal(lastBuildError({ b1: failed, c1: { id: 'c1', kind: 'build', nodeId: 'x', state: 'done' } }), undefined);
+  assert.equal(lastBuildError(undefined), undefined);
+});

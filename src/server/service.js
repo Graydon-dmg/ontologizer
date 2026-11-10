@@ -61,8 +61,13 @@ export const STOPPED = 'Stopped: the server ended';
  * nodeId and is left out: one failed category does not fail the build). @param {Record<string, any>} jobs
  */
 export function lastBuildError(jobs) {
+  // Jobs keep the order they first appeared in. A failure followed by any later job (a later build's
+  // categories, a research) is history, not the map's state: report it only when nothing came after.
   let out;
-  for (const j of Object.values(jobs || {})) if (j && j.kind === 'build' && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
+  for (const j of Object.values(jobs || {})) {
+    if (j && j.kind === 'build' && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
+    else if (j) out = undefined;
+  }
   return out;
 }
 
@@ -489,6 +494,7 @@ export async function startService({
       let timer;
       // This build's own abort, made now: the timer aborts exactly this build's calls.
       const ctl = new AbortController();
+      b.ctl = ctl;
       try {
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
@@ -545,17 +551,20 @@ export async function startService({
       if (b.state !== 'queued' && b.state !== 'running') continue;
       b.state = 'failed';
       b.error = error;
+      try { b.ctl?.abort(); } catch { /* already stopped */ } // so it writes nothing after being marked failed
       const [tenant, id] = key.split('/');
       try {
         const store = storeFor(tenant, true);
         store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error } });
       } catch { /* gone */ }
     }
-    for (const key of new Set([...engines.keys(), ...handlers.keys()])) {
+    // Only maps this process has an engine for (its own jobs): a map merely open for reading may have
+    // a job another process (a CLI on the same home) is running, which is not ours to mark.
+    for (const key of engines.keys()) {
       const [tenant, id] = key.split('/');
       try {
         const store = storeFor(tenant, true);
-        for (const j of Object.values(store.read(id).jobs ?? {})) {
+        for (const j of Object.values(store.read(id)?.jobs ?? {})) {
           const job = /** @type {any} */ (j);
           if (!job || (job.state !== 'queued' && job.state !== 'running')) continue;
           store.append(id, { t: 'job.failed', at: store.now(id), job: { id: job.id, kind: job.kind, ...(job.nodeId ? { nodeId: job.nodeId } : {}), error } });
@@ -1139,7 +1148,7 @@ export async function startService({
           const b = builds.get(key);
           // A build this process never ran (one stopped with an earlier server, or by a restart) says
           // why from the map: its last failed build job.
-          const error = b ? (b.state === 'failed' ? b.error : undefined) : lastBuildError(storeFor(tenant, true).read(id).jobs);
+          const error = b ? (b.state === 'failed' ? b.error : undefined) : lastBuildError(storeFor(tenant, true).read(id)?.jobs);
           return json(res, 200, { state: jobs.length ? 'busy' : 'idle', jobs, ...(error ? { error } : {}) });
         }
         await new Promise((r) => setTimeout(r, Math.min(100, Math.max(1, until - Date.now()))));
