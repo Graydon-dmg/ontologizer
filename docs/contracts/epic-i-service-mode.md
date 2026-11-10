@@ -535,6 +535,7 @@ Built on Part I2 (branch `epic/i3-surfaces`, from I2's head), with Part I4 merge
 - `src/client/index.js` (`ontologizer/client`)
 - `src/cli/commands/mcp.js`, `src/cli/commands/usage.js`
 - `web/shell/ui/connect.js` (the Connect an agent panel), `web/shell/connect.js` (its pure text: the configs)
+- `docs/MCP.md` (the agent guide), `scripts/mcp-catalog.js` (its generated tool catalog)
 - `test/i/` files named `ops*`, `openapi*`, `mcp*`, `client*`, `usage*`, `limits*`, `timeout*`, `connect*`, `features-i3*`, `routes-i3*`
 
 **May touch:**
@@ -543,7 +544,7 @@ Built on Part I2 (branch `epic/i3-surfaces`, from I2's head), with Part I4 merge
 - `src/cli/serve.js` (`engineFor` applies `meter`), `src/cli/commands/serve.js` (`--limit-calls`, `--limit-tokens`, `--build-timeout`, `meter`), `src/cli/main.js` (register `mcp`, `usage`), `src/cli/complete.js`.
 - `web/shell/ui/server.js` and `web/shell/server-panel.js` (usage, the API link, the Connect an agent button), `web/shell/ui/export.js` (one item: Connect an agent), `web/shell/main.js`, `web/home/` (mount the panel).
 - `src/features.js` (I3 rows), `test/i/features.test.js` (the ops check is added beside the existing one; nothing removed).
-- `package.json` (the `./client` export), `README.md`, `docs/GUIDE.md` ("Agents and apps"), `SECURITY.md`.
+- `package.json` (the `./client` export), `README.md` (a "For AI agents" line near the top), `docs/GUIDE.md` ("Agents and apps"), `SECURITY.md`, `AGENTS.md` (a pointer to `docs/MCP.md` at the top), `docs/AGENT-INSTALL.md` (an optional step).
 
 **Must not touch:** `src/core/` (the engine's `outline`, `buildIndex` and `runTool` and I4's `exportMap` are imported, never changed), `web/views/`, `fixtures/`, any existing test except the features test as above.
 
@@ -606,9 +607,24 @@ ontologizer mcp [--url <server>] [--token-file <file>] [--home <dir>]
   - `ask_map` reads the chat's event stream to its end and answers with the full text, the cited nodes and sources (or the error).
   - `get_outline` and `get_context` are cheap, read-only text. `get_context` is I4's context pack.
   - Every tool whose op has `callsModel: true` ends its description with exactly `Calls the model: costs API credits.` No other tool says so.
-  - An HTTP error becomes a tool result with `isError: true` and the server's `error` text (a 404 reads the same as over HTTP: "not found").
+  - An HTTP error becomes a tool result with `isError: true`: the server's `error` text first (a 404 starts "not found", as over HTTP), then what to call next (see W9).
 - **Resource:** `ontologizer://<tenant>/maps/<id>/snapshot` (`application/json`), listed from `list_maps` and read through `GET .../snapshot`; a resource template with the same shape.
 - `@modelcontextprotocol/sdk` 1.32.2 (already a dependency): the low-level `Server` with the tools' JSON Schemas from `src/ops.js`, `StreamableHTTPServerTransport` (stateless: a new server and transport per request) and `StdioServerTransport`.
+
+### Tools that explain themselves (W9)
+
+- **Server `instructions`** (in the initialize result): the model of the world (maps, nodes, categories, cross-links, sources, private maps), the free reads first, the tools that cost credits, and the usual workflows.
+- **Every tool** (its op's `mcp`): a `title`; a description for a model in one shape: what it does, "Use when …", "Don't use when … (use X instead)", "Returns …", "Next: …", and `COST_NOTE` last when `callsModel`; a `description` on every input property with an example ("E.g. …") and its constraints and default; `annotations` set truthfully (`readOnlyHint` on every read, and on `check_context`, which writes nothing; `destructiveHint` true only on `save_map`, whose old id stops working; `idempotentHint` only on reads; `openWorldHint` exactly when the tool calls the model).
+- **`outputSchema` and `structuredContent`** for every tool that answers JSON: the op's output (with extra properties allowed); `list_maps` answers `{ maps }`; `ask_map` answers `{ answer, citedNodes, sources, chatId }`. Text tools (`get_outline`, `get_context`, `export_map`) have none.
+- **`build_map` lists the caller's own sources**: at `tools/list` the router's `GET .../sources` answer for this caller becomes the `sources` items' `enum` and "You hold: wiki (private), docs (public)". A caller never sees a source it does not hold.
+- **Prompts:** `learn-a-field`, `brainstorm-from-map`, `map-for-a-doc`, `connect-two-fields`, `deepen-a-node`, `private-map`.
+- **Errors are tool results** (`isError`), never exceptions, an unknown tool included: the server's own message first, then what to call next, chosen by status and tool only, so a hidden map and a missing one still read the same.
+
+### The agent guide (W8)
+
+- `docs/MCP.md`, "Using Ontologizer from an agent": when to reach for it, setup (Claude Code over stdio and HTTP, the Agent SDK, any MCP client, the JS client), how the tools fit, the workflows as tool sequences with example inputs and outputs, cost, limits and errors (each status and message, what it means, what to do), private maps and sources from an agent's side, and the tool catalog.
+- The catalog is generated from `src/ops.js` (through the MCP tool list and prompts) by `node scripts/mcp-catalog.js`, between two markers; a test fails when the committed catalog differs.
+- Linked from the top of `README.md` ("For AI agents"), the top of `AGENTS.md`, `docs/AGENT-INSTALL.md` and the GUIDE's section 12.
 
 ### The JS client: `ontologizer/client`
 
@@ -663,11 +679,13 @@ ontologizer usage [--home <dir>] [--days 7] [--json]       reads <home>/usage.js
 - **W0 · Bring in I4.** Merge `epic/i4-export`; resolve; regenerate the notices; full suite on Node 22 and 24.
 - **W1 · Contract.** This section.
 - **W2 · Ops, routes, OpenAPI.** `src/ops.js`; the new read routes; `/v1/openapi.json`; the router-consistency test.
-- **W3 · MCP.** `src/server/mcp.js`, `/v1/mcp`, `ontologizer mcp`.
+- **W3 · MCP.** `src/server/mcp.js`, `/v1/mcp`, `ontologizer mcp`, with W9's instructions, titles, annotations, output schemas, prompts and actionable errors.
 - **W4 · Client.** `src/client/index.js`, the export.
 - **W5 · Limits and timeout.** `src/server/usage.js`, the meter, the 429s, `usage` command and route, `--build-timeout`.
 - **W6 · Buttons and commands.** Connect an agent, the Server panel's usage and API link, the features rows.
 - **W7 · Docs.** README (short), GUIDE "Agents and apps" (Claude Code and the Agent SDK, the client, limits), SECURITY (MCP takes the same path; limits are not a spend cap).
+- **W8 · The agent guide.** `docs/MCP.md`, its generated catalog, the links.
+- **W9 · Tools that explain themselves.** Everything under "Tools that explain themselves"; the lint test; a discoverability check by hand: a fresh worker given only the instructions, tools and prompts plans five tasks, and the descriptions are revised until every plan is right.
 
 ## Checks (each with its planted fault)
 
@@ -685,6 +703,11 @@ ontologizer usage [--home <dir>] [--days 7] [--json]       reads <home>/usage.js
 | A build past `--build-timeout` is failed "Timed out after N minutes" and its slot is free for the next build. | A stub that never finishes holding the slot. |
 | Every op names a registered command and an element in its page; Connect an agent never shows a token. | An op whose button is missing. |
 | The top bar wraps at the same widths (1024-1600, 2 px steps, one-map page and service mode) and the Connect an agent panel stays in the window at 320x640, 375x812, 768x1024, 1024x768 and 1280x800 without covering the Server panel or the Export menu (headless Chrome, by hand). | |
+| Every tool has a title, "Use when", "Don't use when", "Returns" and "Next:", the cost line exactly when it calls the model, a described input property with an example, truthful annotations, and an output schema when it answers JSON (`test/i/mcp-docs.test.js`). | One fault per rule: each part removed in turn, a read without readOnlyHint, a write claiming it, openWorldHint wrong both ways, an idempotent write, a destructive read, a missing outputSchema. |
+| The prompts name only real tools and use their arguments; the instructions name every tool. | A prompt calling `make_map`; a prompt that drops its argument. |
+| `docs/MCP.md`'s catalog is the generated one; README, AGENTS.md and AGENT-INSTALL.md link the guide. | A hand edit in the catalog; a file without the link. |
+| `build_map` lists exactly the sources the caller holds; the instructions arrive at initialize; a prompt expands and refuses a missing argument. | (A token without a sources list sees only the public source.) |
+| A fresh agent given only the instructions, tools and prompts plans five tasks right (by hand). | (The plans before W9.) |
 | `test/a` to `test/i` (I1, I2, I4) pass unchanged; `npm audit` is clean; no new dependency. | |
 
 ## Try it
