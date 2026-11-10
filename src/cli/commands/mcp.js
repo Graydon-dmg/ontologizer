@@ -39,7 +39,7 @@ export async function startInProcess({ home, deps, version, buildTimeoutMs }) {
   const token = newToken();
   const row = { name: 'mcp', tenant: 'default', scopes: ['admin'], hash: hashToken(token), created: new Date().toISOString() };
   const srv = await startService({
-    home, host: '127.0.0.1', port: 0, tokensFile: null, tokens: [row], version,
+    home, host: '127.0.0.1', port: 0, tokensFile: null, tokens: [row], version, pageless: true,
     ...(buildTimeoutMs !== undefined ? { buildTimeoutMs } : {}),
     makeEngine: (/** @type {any} */ { store, id, clientFor, meter }) => engineFor({
       deps, store, id, needKey: false, ...(clientFor ? { clientFor } : {}), ...(meter ? { meter } : {}),

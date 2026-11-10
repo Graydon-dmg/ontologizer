@@ -121,7 +121,9 @@ function refusal(message) {
  *   version?: string, webDir?: string, log?: (line: string) => void,
  *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null,
  *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any,
- *   tokens?: import('./tokens.js').TokenRow[]|null }} opts
+ *   tokens?: import('./tokens.js').TokenRow[]|null, pageless?: boolean }} opts
+ *   pageless: no page a person can open (`ontologizer mcp`'s in-memory token): registered as such, so
+ *   `delete` and `restore` say to quit the MCP client instead of pointing at a page.
  *   tokensFile: the tokens to load; null (or no rows) means none: loopback only, open, no --allow-host.
  *   tokens: rows held only in memory, used when there is no tokensFile (`ontologizer mcp`'s own token).
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
@@ -146,6 +148,7 @@ export async function startService({
   maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES, recheckMs = RECHECK_MS,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
   limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null, tokens: memoryTokens = null,
+  pageless = false,
 }) {
   // Model calls and tokens per tenant per UTC day, from the SDK's usage fields (never dollars).
   const usage = givenUsage ?? createUsage({ home, limitCalls, limitTokens, log });
@@ -1151,7 +1154,9 @@ export async function startService({
     const map = mapFor(tenant, id, store);
     if (!await can(p, 'read', { tenant, mapId: id, map })) return notFound();
     const draft = removing ? Boolean(store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === id)?.draft) : undefined;
-    if (action !== 'read' && !await can(p, action, { tenant, mapId: id, map, ...(removing ? { draft } : {}) })) {
+    // A named map's delete needs admin here, whatever the policy says (a policy written before 1.6
+    // may grant delete to build), after the read rule so a hidden map still answers 404.
+    if (action !== 'read' && ((removing && !draft && !has(p, 'admin')) || !await can(p, action, { tenant, mapId: id, map, ...(removing ? { draft } : {}) }))) {
       return fail(res, 403, removing ? needs(draft ? 'build' : 'admin') : needs(action));
     }
     const key = `${tenant}/${id}`;
@@ -1344,7 +1349,7 @@ export async function startService({
       const rows = [];
       for (const t of items) {
         if (!await can(p, 'read', { tenant, mapId: t.id, map: seen(t) })) continue;
-        if (!await can(p, 'restore', { tenant, mapId: t.id, map: seen(t), draft: t.draft })) continue;
+        if ((!t.draft && !has(p, 'admin')) || !await can(p, 'restore', { tenant, mapId: t.id, map: seen(t), draft: t.draft })) continue;
         rows.push({ trashId: t.trashId, id: t.id, name: t.name, root: t.root, nodes: t.nodes, draft: t.draft,
           deletedAt: t.deletedAt, deletedBy: t.deletedBy?.id ?? null, purgeAt: t.deletedAt + TRASH_DAYS * DAY_MS,
           ...(t.visibility === 'private' ? { visibility: 'private' } : srcs ? { visibility: 'public' } : {}) });
@@ -1355,7 +1360,8 @@ export async function startService({
     const item = TRASH_ID_PATH_RE.test(trashId) ? items.find((t) => t.trashId === trashId) : undefined;
     if (!item) return fail(res, 404, NOT_IN_TRASH);
     if (!await can(p, 'read', { tenant, mapId: item.id, map: seen(item) })) return fail(res, 404, NOT_IN_TRASH);
-    if (!await can(p, 'restore', { tenant, mapId: item.id, map: seen(item), draft: item.draft })) {
+    // A named map's restore needs admin here too, whatever the policy says (as delete).
+    if ((!item.draft && !has(p, 'admin')) || !await can(p, 'restore', { tenant, mapId: item.id, map: seen(item), draft: item.draft })) {
       return fail(res, 403, `This token needs the ${item.draft ? 'build' : 'admin'} scope.`);
     }
     const body = await readBody(req, res);
@@ -1490,7 +1496,7 @@ export async function startService({
   if (!config?.store) {
     try {
       const reg = openStore(home).sessions;
-      const key = reg.addServer({ pid: process.pid, port: boundPort, url: `http://${shown}:${boundPort}/`, startedAt: Date.now() });
+      const key = reg.addServer({ pid: process.pid, port: boundPort, url: `http://${shown}:${boundPort}/`, startedAt: Date.now(), ...(pageless ? { pageless: true } : {}) });
       const onExit = () => { try { reg.remove(key); } catch { /* best effort */ } };
       unregister = () => { unregister = null; process.off('exit', onExit); onExit(); };
       process.once('exit', onExit);

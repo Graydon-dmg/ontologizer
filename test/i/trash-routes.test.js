@@ -144,14 +144,11 @@ test('a draft is deleted and restored with build; a named map needs admin', asyn
   try { assert.deepEqual(statusProblems(await permissionRows(x)), []); } finally { await x.srv.close(); }
 });
 
-test('planted fault: a policy that lets build delete a named map is reported', async () => {
-  // The I1 scope ladder alone (delete: build), without the named-map rule.
+test('a policy that lets build delete a named map: the router still requires admin', async () => {
+  // The I1 scope ladder alone (delete: build), without the named-map rule (a policy written before 1.6).
   const loose = { name: 'loose', can: (/** @type {any} */ p, /** @type {string} */ a, /** @type {any} */ ctx) => hasScope(p.scopes, /** @type {any} */ (ACTION_SCOPE)[a]) && canRead(p, ctx?.map ?? null) };
   const x = await start({ policy: loose });
-  try {
-    const problems = statusProblems(await permissionRows(x));
-    assert.ok(problems.some((p) => p.startsWith('builder deletes a named map: 200')), problems.join('\n'));
-  } finally { await x.srv.close(); }
+  try { assert.deepEqual(statusProblems(await permissionRows(x)), []); } finally { await x.srv.close(); }
 });
 
 /**

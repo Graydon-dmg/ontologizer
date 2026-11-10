@@ -6,6 +6,7 @@ import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage, searchFailure, searchFa
 import { labelPath, findByLabelPath } from './ids.js';
 import { chatSystem, outlineBlock } from './prompts-chat.js';
 import { UNTRUSTED } from './run.js';
+import { oneLine } from '../export/context.js';
 
 const MAX_TURNS = 6;           // model calls per question, tool turns included
 const HISTORY_EXCHANGES = 10;  // earlier question/answer pairs sent with each question
@@ -264,7 +265,8 @@ export function webSearchItem(answer, cited, index, question, nodes) {
   const nodeId = cited.find((c) => nodes[c]) ?? (question ? index.search(question, 1)[0]?.id : undefined);
   const what = searchFailureText(answer.searchFailed);
   const next = nodeId
-    ? `To find and keep web sources for "${nodes[nodeId]?.label ?? nodeId}", run sources on ${nodeId} (or explain); both call the model.`
+    // The label is map text (from the model and the web) going into ask_map's answer: one clean line.
+    ? `To find and keep web sources for "${oneLine(nodes[nodeId]?.label ?? nodeId, 200)}", run sources on ${nodeId} (or explain); both call the model.`
     : 'To find and keep web sources, run sources (or explain) on the node your question is about; both call the model.';
   return { type: 'websearch', used, failed: answer.searchFailed, note: `The ${what}, so this answer may lack web sources. ${next}` };
 }

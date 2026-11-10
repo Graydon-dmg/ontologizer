@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0 (2026-11-10)
+
+- **Manage maps.** Rename a map, or delete it to a 30-day trash and restore it, from the map page, the maps home or the command line (`ontologizer delete`, `trash`, `restore`). An **All maps** link goes back to your list. Thanks to Alex Garden ([#9](https://github.com/Graydon-dmg/ontologizer/pull/9)).
+- **Agents get more from one read.** The context pack and `get_node` carry node ids, articles and branch links; `explain` and `sources` take several nodes in one call; a web search that fails is recorded and `ask_map` says so. Thanks to Alex Garden ([#8](https://github.com/Graydon-dmg/ontologizer/pull/8)).
+
 ## 1.5.0 (2026-11-10)
 
 - **Agents can use your maps (MCP).** `ontologizer mcp` connects Claude Code, Claude Desktop or any MCP client to your maps: list, outline, search, read a node, get a context pack, and (with permission) build, research, explain, ask, fuse and save. **Connect an agent** in the Export menu shows the setup. The tools that spend API credits say so. See [docs/MCP.md](docs/MCP.md) and [FOR-AGENTS.md](FOR-AGENTS.md). Thanks to Alex Garden ([#6](https://github.com/Graydon-dmg/ontologizer/pull/6), [#7](https://github.com/Graydon-dmg/ontologizer/pull/7)).

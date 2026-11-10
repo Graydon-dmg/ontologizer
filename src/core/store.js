@@ -493,6 +493,11 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
     if (sessions.servers().some((s) => s.pid !== process.pid)) throw SKIP;
     purgeTrash();
     const trashed = new Set(listTrash().map((t) => t.id));
+    // A restore that crashed after its row and before its rename: that row too (it may be under `as`).
+    for (const t of listTrash()) {
+      const as = readJson(path.join(trashRoot, t.trashId, 'trash.json'), null)?.restoringAs;
+      if (typeof as === 'string') trashed.add(as);
+    }
     const stale = readIndex().ontologies.filter((r) => trashed.has(r.id) && !fs.existsSync(path.join(root, r.id)));
     if (stale.length) {
       updateIndex((idx) => {
@@ -729,17 +734,24 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       const target = as ?? info.id;
       dir(target);
       if (fs.existsSync(dir(target)) || readIndex().ontologies.some((r) => r.id === target)) throw coded('TAKEN', takenForRestore(target));
-      fs.renameSync(from, dir(target));
-      fs.rmSync(path.join(dir(target), 'trash.json'), { force: true });
-      cache.delete(target);
       const renamed = target !== info.id;
       const draft = Boolean(info.draft) && !renamed;
-      // The row first, from what the events say (its visibility and private sources come back with them).
-      const onto = load(target).onto;
+      // The row first, from what the events say (its visibility and private sources come back with
+      // them), and only then the folder: a crash between leaves a row with no folder whose name the
+      // trash item records (restoringAs), which the tidy on open drops, so the map is still in the
+      // trash. Folder first would leave a map that no list or trash shows.
+      writeJsonAtomic(path.join(from, 'trash.json'), { ...info, restoringAs: target });
+      const onto = foldAll(readEventsFile(path.join(from, 'events.jsonl')));
       updateIndex((idx) => {
         idx.ontologies = idx.ontologies.filter((r) => r.id !== target);
         idx.ontologies.push(rowVisibility({ id: target, name: onto.name || info.name || target, root: onto.root, nodes: Object.keys(onto.nodes).length, updatedAt: Date.now(), draft }, onto));
       });
+      try { fs.renameSync(from, dir(target)); } catch (err) {
+        updateIndex((idx) => { idx.ontologies = idx.ontologies.filter((r) => r.id !== target); });
+        throw err;
+      }
+      fs.rmSync(path.join(dir(target), 'trash.json'), { force: true });
+      cache.delete(target);
       if (renamed) {
         this.append(target, { t: 'ontology.renamed', at: now(target), name: target, ...(actor ? { actor } : {}) });
         flush(target);
