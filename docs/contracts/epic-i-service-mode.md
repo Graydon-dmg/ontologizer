@@ -621,6 +621,7 @@ ontologizer mcp [--url <server>] [--token-file <file>] [--home <dir>]
 - **`outputSchema` and `structuredContent`** for every tool that answers JSON: the op's output (with extra properties allowed); `list_maps` answers `{ maps }`; `ask_map` answers `{ answer, citedNodes, sources, chatId }`. Text tools (`get_outline`, `get_context`, `export_map`) have none.
 - **`build_map` lists the caller's own sources**: at `tools/list` the router's `GET .../sources` answer for this caller becomes the `sources` items' `enum` and "You hold: wiki (private), docs (public)". A caller never sees a source it does not hold.
 - **Prompts:** `learn-a-field`, `brainstorm-from-map`, `map-for-a-doc`, `connect-two-fields`, `deepen-a-node`, `private-map`.
+- **Arguments are checked before anything is sent**, against the tool's input schema (`additionalProperties: false` everywhere): an unknown name (with "Did you mean …?" from a small alias list, a shared prefix or an edit distance of at most 2), a missing required one, a wrong type, enum or range is an error result that lists the names the tool takes. A test fails if a schema uses a keyword the check does not enforce.
 - **Errors are tool results** (`isError`), never exceptions, an unknown tool included: the server's own message first, then what to call next, chosen by status and tool only, so a hidden map and a missing one still read the same.
 
 ### The agent guide (W8)

@@ -198,6 +198,7 @@ Errors come back as tool results with `isError: true`. The text starts with the 
 
 | Status | Message (start) | What it means | What to do |
 |---|---|---|---|
+| (before any request) | ``Unknown argument `query`. Did you mean q? search_map takes: id (required), q (required), limit.``, ``Missing argument `id`. …``, ``Argument `limit` must be a whole number from 1 to 50. …`` | A guessed, missing or out-of-range argument: every call is checked against the tool's input schema, and an unknown name is never ignored | Call again with the names it lists |
 | 400 | `name must be lowercase letters, digits and hyphens.`, `context must be a non-empty string …` | An argument is wrong | Fix it against the tool's input schema |
 | 401 | `Sign in with a token.`, `That token was not accepted.` | No token, or a revoked one | Configure a token (`Authorization` header, or `--token-file`) |
 | 403 | `This token needs the build scope.` | Your token's scope does not allow this | Use the free reads, or ask the operator for a broader token |

@@ -107,6 +107,97 @@ export function outputSchemaOf(op) {
   return undefined;
 }
 
+/** Names an agent is likely to guess, by the property they mean (suggested only when the tool has it). */
+const ALIASES = {
+  id: ['map', 'mapid', 'map_id', 'mapname', 'map_name', 'mapslug'],
+  nodeId: ['node', 'node_id', 'nodeid', 'nodename', 'node_name'],
+  q: ['query', 'search', 'keywords', 'keyword', 'term', 'terms', 'text'],
+  text: ['question', 'prompt', 'message', 'query', 'ask', 'q'],
+  timeout: ['timeoutms', 'timeout_ms', 'wait', 'waitms', 'ms'],
+  context: ['topic', 'description', 'subject', 'prompt'],
+  budget: ['tokens', 'maxtokens', 'max_tokens', 'limit'],
+  with: ['other', 'b', 'second', 'withid', 'with_id'],
+  persona: ['as', 'audience', 'who'],
+};
+
+/** Edit distance, for "did you mean". @param {string} a @param {string} b */
+function distance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+
+/** The property an unknown argument most likely meant, or null. @param {string} given @param {string[]} names */
+export function nearestName(given, names) {
+  const g = given.toLowerCase();
+  for (const n of names) if (n.toLowerCase() === g) return n;
+  for (const n of names) if ((/** @type {Record<string, string[]>} */ (ALIASES))[n]?.includes(g)) return n;
+  const prefix = names.filter((n) => g.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(g));
+  if (prefix.length === 1) return prefix[0];
+  let best = null;
+  let bestD = 3;
+  for (const n of names) { const dd = distance(g, n.toLowerCase()); if (dd < bestD) { bestD = dd; best = n; } }
+  return best;
+}
+
+/** @param {any} v @param {any} schema @returns {string|null} what is wrong with one value */
+function valueProblem(v, schema) {
+  if (!schema || typeof schema !== 'object') return null;
+  if (Array.isArray(schema.enum)) return schema.enum.includes(v) ? null : `must be one of ${schema.enum.map((/** @type {any} */ e) => JSON.stringify(e)).join(', ')}`;
+  const range = (/** @type {string} */ what) => `must be ${what}${schema.minimum !== undefined && schema.maximum !== undefined ? ` from ${schema.minimum} to ${schema.maximum}` : schema.minimum !== undefined ? ` of at least ${schema.minimum}` : ''}`;
+  switch (schema.type) {
+    case 'string': return typeof v === 'string' ? null : 'must be a string';
+    case 'boolean': return typeof v === 'boolean' ? null : 'must be true or false';
+    case 'integer':
+      if (!Number.isInteger(v) || (schema.minimum !== undefined && v < schema.minimum) || (schema.maximum !== undefined && v > schema.maximum)) return range('a whole number');
+      return null;
+    case 'number':
+      if (typeof v !== 'number' || !Number.isFinite(v) || (schema.minimum !== undefined && v < schema.minimum) || (schema.maximum !== undefined && v > schema.maximum)) return range('a number');
+      return null;
+    case 'object': return v && typeof v === 'object' && !Array.isArray(v) ? null : 'must be an object';
+    case 'array': {
+      if (!Array.isArray(v)) return 'must be a list';
+      if (schema.maxItems !== undefined && v.length > schema.maxItems) return `must have at most ${schema.maxItems} items`;
+      for (const [i, item] of v.entries()) {
+        const p = valueProblem(item, schema.items);
+        if (p) return `item ${i + 1} ${p}`;
+      }
+      return null;
+    }
+    default: return null;
+  }
+}
+
+/**
+ * Check a tool call's arguments against the tool's input schema (the subset the ops use: unknown
+ * names, required ones, types, enums, ranges). The router checks values again; this catches a guessed
+ * name, which the router would otherwise ignore. Returns the message for the agent, or null.
+ * @param {{ name: string, inputSchema: any }} tool @param {Record<string, any>} args
+ */
+export function argumentProblems(tool, args) {
+  const props = tool.inputSchema?.properties ?? {};
+  const names = Object.keys(props);
+  const required = /** @type {string[]} */ (tool.inputSchema?.required ?? []);
+  const takes = `${tool.name} takes: ${names.map((n) => `${n}${required.includes(n) ? ' (required)' : ''}`).join(', ') || 'no arguments'}.`;
+  /** @type {string[]} */
+  const problems = [];
+  for (const k of Object.keys(args)) {
+    if (k in props) continue;
+    const near = nearestName(k, names);
+    problems.push(`Unknown argument \`${k}\`.${near ? ` Did you mean ${near}?` : ''}`);
+  }
+  for (const r of required) if (args[r] === undefined || args[r] === null) problems.push(`Missing argument \`${r}\`.`);
+  for (const [k, v] of Object.entries(args)) {
+    if (!(k in props) || v === undefined || v === null) continue;
+    const p = valueProblem(v, props[k]);
+    if (p) problems.push(`Argument \`${k}\` ${p}.`);
+  }
+  return problems.length ? `${problems.join(' ')} ${takes}` : null;
+}
+
 /** The tools: name, title, description and annotations (from the op), the op's input schema without `tenant`, the output schema. */
 export function toolList() {
   return MCP_OPS.map((op) => {
@@ -247,6 +338,9 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     if (!op) return textResult(`Unknown tool "${name}". The tools: ${MCP_OPS.map((o) => o.mcp?.name).join(', ')}.`, true);
     const args = request.params.arguments ?? {};
     if (typeof args !== 'object' || Array.isArray(args)) return textResult('The arguments must be an object: see this tool\'s input schema.', true);
+    // A guessed or misspelt argument is an error that names the right one, never silently ignored.
+    const bad = argumentProblems(/** @type {any} */ (toolList().find((t) => t.name === name)), /** @type {Record<string, any>} */ (args));
+    if (bad) return textResult(bad, true);
     /** @type {CallResult} */
     let r;
     try {
