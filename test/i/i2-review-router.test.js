@@ -45,6 +45,16 @@ function openStream(url, p, headers) {
 }
 
 /**
+ * Wait until a stream has its answer (its status), at most `ms`: a fixed short sleep failed under heavy
+ * parallel load (two full suites at once), when the answer took longer than the sleep.
+ * @param {{ t: { status: number, ended: boolean } }} s @param {number} [ms]
+ */
+async function opened(s, ms = 3000) {
+  const until = Date.now() + ms;
+  while (s.t.status === 0 && !s.t.ended && Date.now() < until) await sleep(5);
+}
+
+/**
  * A home with map m1, and the one store the server uses for it (a config store port), so a test can
  * append events that open streams send.
  */
@@ -68,7 +78,7 @@ async function revokeProblems(srv, store, revoke) {
   for await (const _ of store.events('m1')) n++;
   const s = openStream(srv.url, `/v1/t/default/maps/m1/events?from=${n}`, { 'x-user': 'ann' });
   try {
-    await sleep(60);
+    await opened(s);
     if (s.t.status !== 200) return [`stream did not open (${s.t.status})`];
     poke(store);
     await sleep(80);
@@ -136,7 +146,7 @@ test('custom policy with tokens: a revoked read ends a bearer stream too', async
   const srv = await start({ home, ...FAST, tokensFile: tokensPath(home), config: { policy } });
   try {
     const s = openStream(srv.url, '/v1/t/default/maps/m1/events?from=99999', { authorization: `Bearer ${secret}` });
-    await sleep(60);
+    await opened(s);
     assert.equal(s.t.status, 200);
     allow = false;
     await sleep(250);
@@ -174,7 +184,7 @@ test('--max-stores: when every slot is busy (an open stream), a new tenant gets 
   try {
     // default is open from the start; ta takes the second slot and keeps a stream on it.
     const s = openStream(srv.url, '/v1/t/ta/maps/m1/events?from=99999', {});
-    await sleep(60);
+    await opened(s);
     assert.equal(s.t.status, 200);
     // default is idle: swept, its slot is free for tb.
     await sleep(40); srv.sweep();
