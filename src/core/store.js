@@ -37,6 +37,30 @@ function hookExit() {
   });
 }
 
+/** Write a whole file so a crash leaves either nothing or all of it: temp file in the same
+ *  directory, fsync, rename, then fsync the directory (best effort; not every platform allows it).
+ *  @param {string} file @param {string} text */
+function writeFileDurable(file, text) {
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, text);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  try {
+    const dfd = fs.openSync(path.dirname(file), 'r');
+    try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); }
+  } catch { /* directory fsync is unsupported on some platforms (Windows) */ }
+}
+
 /** @param {string} file @param {any} data */
 function writeJsonAtomic(file, data) {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -453,6 +477,11 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
     now,
     flush,
 
+    /** Write what is pending and forget this store (service mode closes idle tenants' stores). */
+    close() {
+      try { flushDirty(); } finally { liveStores.delete(self); }
+    },
+
     /**
      * @param {any} brief @param {string} [suggestedName]
      * @param {{ events?: OntoEvent[] }} [opts] events written with the draft, in the same single file write
@@ -465,7 +494,8 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       for (let n = 2; fs.existsSync(dir(id)); n++) id = `${base}-${n}`;
       fs.mkdirSync(dir(id), { recursive: true });
       fs.writeFileSync(path.join(dir(id), 'brief.json'), JSON.stringify(brief ?? {}));
-      fs.writeFileSync(path.join(dir(id), 'events.jsonl'), events.map((x) => JSON.stringify(x) + '\n').join(''));
+      // Durable before the index row names it: a crash can never keep the row but lose the raise.
+      writeFileDurable(path.join(dir(id), 'events.jsonl'), events.map((x) => JSON.stringify(x) + '\n').join(''));
       const onto = events.length ? foldAll(events) : null;
       updateIndex((idx) => {
         const row = { id, name: (onto && onto.name) || suggestedName || id, root: onto ? onto.root : '', nodes: onto ? Object.keys(onto.nodes).length : 0, updatedAt: Date.now(), draft: true };

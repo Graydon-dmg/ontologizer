@@ -5,6 +5,9 @@
 import { hasScope } from './tokens.js';
 
 /** @typedef {'read'|'build'|'ask'|'job'|'save'|'export'|'admin'|'delete'|'restore'} Action */
+// 'admin' is asked for status's admin-only fields. 'export' is reserved and never asked: the server has
+// no export route (exports are made in the page or the CLI from a map already read, so read allows them).
+// 'delete' and 'restore' (I5) are asked with `draft` in the context once the map is known.
 /** @typedef {{ actor: { id: string, kind: string, via?: string }, tenant: string, scopes: string[], sources: string[] }} Principal */
 
 export const ACTIONS = /** @type {const} */ (['read', 'build', 'ask', 'job', 'save', 'export', 'admin', 'delete', 'restore']);

@@ -1,6 +1,17 @@
 # Changelog
 
+## 1.5.0 (2026-11-10)
+
+- **Agents can use your maps (MCP).** `ontologizer mcp` connects Claude Code, Claude Desktop or any MCP client to your maps: list, outline, search, read a node, get a context pack, and (with permission) build, research, explain, ask, fuse and save. **Connect an agent** in the Export menu shows the setup. The tools that spend API credits say so. See [docs/MCP.md](docs/MCP.md) and [FOR-AGENTS.md](FOR-AGENTS.md). Thanks to Alex Garden ([#6](https://github.com/Graydon-dmg/ontologizer/pull/6), [#7](https://github.com/Graydon-dmg/ontologizer/pull/7)).
+- **HTTP API and JS client.** `serve` describes every route at `/v1/openapi.json`, adds cheap reads (outline, search, node, context, export), and `ontologizer/client` wraps them for Node and browsers.
+- **Usage and limits.** `ontologizer usage` shows model calls and tokens per day. `serve --limit-calls / --limit-tokens` caps them per tenant (not a money cap), and `--build-timeout` stops runaway builds.
+- **Private sources and ports.** An `ontologizer.config.js` can plug in your own sign-in, permission rules, storage (files or Postgres via `ontologizer/store-postgres`) and model client, and add private MCP sources that builds can search. A map that uses a private source becomes private: it is hidden from anyone who can't read that source, never mixed with web search, and marked Private everywhere, exports included. Thanks to Alex Garden ([#4](https://github.com/Graydon-dmg/ontologizer/pull/4), [#5](https://github.com/Graydon-dmg/ontologizer/pull/5)).
+- **Hardened after review.** Revoked users lose open streams and chats; idle tenants free their slot; a chat on a private map can't link out to addresses its sources never returned; admin-only maps stay admin only; a config file other users can change is refused; drafts are written crash-safe; the local agent server needs a secret only it knows; builds stopped by a session ending say so; the usage counter never blocks the server or resets on a damaged file.
+- **Laptop use is unchanged.** With no config, `new`, `load`, the page, research, explain, fuse, Rosetta and Ask the map send exactly what they did in 1.4.0. `ontologizer list` only adds a visibility column when a map is private.
+
 ## 1.4.0 (2026-11-09)
+
+Tagged but never published to npm: everything below ships in 1.5.0.
 
 - **Export.** `ontologizer export <map> --format html | embed | json | context`, and an **Export** menu on the page. `html` is one page that shows the map offline (pan, zoom, click, collapse, search; `--3d` adds the 3D view). `embed` is a fragment to paste into any page; several can share a page, 2D and 3D mixed. `json` is the map itself. Thanks to Alex Garden ([#3](https://github.com/Graydon-dmg/ontologizer/pull/3)).
 - **Copy for an agent.** `--format context` (or **Copy for an agent** in the menu) gives a short markdown brief of the map to hand to an AI agent, kept within `--budget` tokens. Map text is cleaned so it can't pose as instructions.

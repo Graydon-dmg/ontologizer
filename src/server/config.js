@@ -74,6 +74,7 @@ export function validateConfig(obj) {
           p.push(`${at}: allowTools must be a non-empty array of tool names`);
         }
         if (s.headers !== undefined && typeof s.headers !== 'function') p.push(`${at}: headers must be a function`);
+        else if (s.headers !== undefined && hasCmd) p.push(`${at}: headers only apply to url (a command source sends no headers)`);
       });
     }
   }
@@ -81,11 +82,34 @@ export function validateConfig(obj) {
 }
 
 /**
+ * Why a config file is unsafe to run, or null. It runs code, so it must be the current user's own
+ * (or root's), not writable by group or others, in a folder others cannot write to (a world-writable
+ * folder is fine only with the sticky bit, like /tmp). Symlinks are followed. Skipped on Windows.
+ * @param {string} file @param {{ uid?: number, platform?: string }} [o]
+ * @returns {string|null}
+ */
+export function configFileProblem(file, { uid = process.getuid?.(), platform = process.platform } = {}) {
+  if (platform === 'win32' || typeof uid !== 'number') return null;
+  let real;
+  try { real = fs.realpathSync(file); } catch { return null; } // a missing file fails at import, with its own message
+  const st = fs.statSync(real);
+  if (st.uid !== uid && st.uid !== 0) return `${real} is owned by another user (uid ${st.uid}); it runs code, so it must be yours: chown it to yourself`;
+  if (st.mode & 0o022) return `${real} can be changed by other users (mode ${(st.mode & 0o777).toString(8)}); it runs code: chmod go-w ${real}`;
+  const dir = path.dirname(real);
+  const ds = fs.statSync(dir);
+  if ((ds.mode & 0o002) && !(ds.mode & 0o1000)) return `its folder ${dir} can be written by anyone, so the file could be swapped; move the config to a folder only you can write to (or chmod o-w ${dir})`;
+  return null;
+}
+
+/**
  * Import the file (it runs the operator's code), take its default export, validate it.
+ * It is refused first when other users could have changed it (see configFileProblem).
  * @param {string} file @returns {Promise<any>}
  */
 export async function loadConfig(file) {
   const abs = path.resolve(file);
+  const unsafe = configFileProblem(abs);
+  if (unsafe) throw new ConfigError(`Config ${abs}: refused: ${unsafe}`);
   let mod;
   try {
     const st = fs.statSync(abs);

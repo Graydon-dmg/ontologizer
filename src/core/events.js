@@ -21,6 +21,7 @@
  *  { t: 'visibility.raised', at, to: 'private', reason: 'source'|'fuse', sources: [names] }
  *    The map used a private source (or fused a private map). ontology.visibility becomes 'private' and
  *    ontology.privateSources gains the names. Nothing lowers visibility: there is no event for it.
+ *    A map already private with no names (admin only) stays admin only: later names are not added.
  *
  * Service mode stamps an optional top-level `actor: { id, kind, via? }` on every event a request
  * causes; fold ignores it.
@@ -168,6 +169,9 @@ export function fold(o, e) {
     }
     case 'visibility.raised': {
       if (e.to !== 'private') return o; // only ever raised; anything else is ignored
+      // A private map that names no source is admin only: it stays that way, so a later source can
+      // never widen who may read it.
+      if (o.visibility === 'private' && !(o.privateSources || []).length) return o;
       const names = new Set(Array.isArray(o.privateSources) ? o.privateSources : []);
       for (const n of Array.isArray(e.sources) ? e.sources : []) if (typeof n === 'string' && n) names.add(n);
       return { ...o, visibility: 'private', privateSources: [...names].sort() };

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveVendorPath } from '../core/vendor.js';
 import { openStore, TENANT_RE, tenantsIsMap, TENANTS_MAP_WARNING, TRASH_DAYS } from '../core/store.js';
 import { readTokens, checkToken, hasScope } from './tokens.js';
@@ -43,6 +44,7 @@ const CHECK_KEY = ':check'; // the engine that answers maps/check (it writes not
 const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
 const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
+const RECHECK_MS = 5000;         // how long an open stream or chat trusts a custom identity's or policy's last answer
 const SAVING = 'The map is being saved under a new name: open it by its new name.';
 export const BUSY = 'The map is busy: try again when it is idle.';
 const NOT_IN_TRASH = 'That item is not in the trash.';
@@ -55,6 +57,24 @@ const EXPORT_FORMATS = ['json', 'context', 'html', 'embed'];
 export const isLoopback = (host) => LOOPBACK.includes(String(host).replace(/^\[|\]$/g, ''));
 
 /** @param {string} tenant @param {string} id */
+/** The error a build or job gets when the server stops under it. */
+export const STOPPED = 'Stopped: the server ended';
+
+/**
+ * The last failed whole-build job's error on a folded map's jobs, if any (a category's build job has a
+ * nodeId and is left out: one failed category does not fail the build). @param {Record<string, any>} jobs
+ */
+export function lastBuildError(jobs) {
+  // Jobs keep the order they first appeared in. A failure followed by any later job (a later build's
+  // categories, a research) is history, not the map's state: report it only when nothing came after.
+  let out;
+  for (const j of Object.values(jobs || {})) {
+    if (j && j.kind === 'build' && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
+    else if (j) out = undefined;
+  }
+  return out;
+}
+
 export const mapBase = (tenant, id) => `/v1/t/${tenant}/maps/${id}`;
 
 /**
@@ -96,16 +116,21 @@ function refusal(message) {
 /**
  * @param {{ home: string, host?: string, port?: number, tokensFile?: string|null, watchTokensFile?: string|null,
  *   allowHosts?: string[], maxBuilds?: number, maxQueued?: number, maxChecks?: number, maxStreamsPerToken?: number,
- *   idleMs?: number, pingMs?: number,
+ *   idleMs?: number, pingMs?: number, maxStores?: number, recheckMs?: number,
  *   makeEngine: (o: { store: any, id: string, tenant: string, clientFor?: any }) => Promise<any>,
  *   version?: string, webDir?: string, log?: (line: string) => void,
  *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null,
- *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any }} opts
+ *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any,
+ *   tokens?: import('./tokens.js').TokenRow[]|null }} opts
  *   tokensFile: the tokens to load; null (or no rows) means none: loopback only, open, no --allow-host.
+ *   tokens: rows held only in memory, used when there is no tokensFile (`ontologizer mcp`'s own token).
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
  *   maxBuilds: builds running at once. maxQueued: builds waiting per tenant (more: 429).
  *   maxChecks: context checks at once (more: 429). maxStreamsPerToken: event streams + waits per token.
- *   idleMs: a map's engine and handler with no streams and no work are dropped after this long.
+ *   idleMs: a map's engine and handler with no streams and no work are dropped after this long; a
+ *   tenant's store with nothing open on it is closed after this long too (so --max-stores frees its slot).
+ *   maxStores: tenants with a store open at once. recheckMs: how long an open stream or chat trusts a
+ *   custom identity's or policy's last answer.
  *   makeEngine: the engine for one map (the CLI passes engineFor with needKey false); clientFor is the
  *   config's model port, when it has one.
  *   config: the loaded ontologizer.config.js (or null: exactly I1). configPath: shown to admins.
@@ -118,17 +143,18 @@ function refusal(message) {
  */
 export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
-  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES,
+  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES, recheckMs = RECHECK_MS,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
-  limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null,
+  limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null, tokens: memoryTokens = null,
 }) {
   // Model calls and tokens per tenant per UTC day, from the SDK's usage fields (never dollars).
   const usage = givenUsage ?? createUsage({ home, limitCalls, limitTokens, log });
   /**
-   * Each engine's abort, by tenant/id: a build timeout aborts every model call of that engine (in flight
-   * and later ones) and drops the engine, so the next request gets a fresh one. @type {Map<string, AbortController>}
+   * The running build's abort signal, carried with the build's own async work: a build timeout aborts
+   * that build's model calls (in flight and later ones), never a chat or a job started from a request,
+   * and never another build's (an engine made again mid-build has its own). @type {AsyncLocalStorage<AbortSignal>}
    */
-  const aborts = new Map();
+  const buildSignal = new AsyncLocalStorage();
   // ---- ports: each one is the config's, or I1's own behaviour ----
   const identity = config?.identity ?? null;
   const policy = config?.policy ?? defaultPolicy;
@@ -145,7 +171,7 @@ export async function startService({
   if (noTenants) log(TENANTS_MAP_WARNING);
 
   // ---- tokens: read at start; re-read when the file changes (a revoke takes effect at once). ----
-  let tokenRows = tokensFile ? readTokens(tokensFile) : [];
+  let tokenRows = tokensFile ? readTokens(tokensFile) : (Array.isArray(memoryTokens) ? [...memoryTokens] : []);
   // Whether auth is required is fixed at start: revoking every token never opens the server.
   // A custom identity port always requires a principal.
   const authRequired = tokenRows.length > 0 || identity !== null;
@@ -218,16 +244,52 @@ export async function startService({
   /** Close a store and forget it (a failed one is never kept). @param {string} tenant @param {any} s */
   function dropStore(tenant, s) {
     if (stores.get(tenant) === s) stores.delete(tenant);
+    storeUsed.delete(tenant);
     try { Promise.resolve(s?.close?.()).catch(() => {}); } catch { /* best effort */ }
+  }
+  /** When each tenant's store was last asked for. @type {Map<string, number>} */
+  const storeUsed = new Map();
+  /** Requests on each tenant's routes right now (streams, chats and waits stay counted until they end). @type {Map<string, number>} */
+  const tenantRequests = new Map();
+  /**
+   * Whether nothing is open on a tenant's store: no request on its routes, no engine or handler, no
+   * build queued or running, no fuse writing, no save. Only such a store is ever closed to free a slot.
+   * @param {string} tenant
+   */
+  function storeIdle(tenant) {
+    if ((tenantRequests.get(tenant) ?? 0) > 0 || waiting(tenant) > 0) return false;
+    const mine = (/** @type {string} */ k) => k.startsWith(`${tenant}/`);
+    if ([...engines.keys(), ...handlers.keys(), ...fusing, ...saving].some(mine)) return false;
+    for (const [k, b] of builds) if (mine(k) && (b.state === 'queued' || b.state === 'running')) return false;
+    return true;
+  }
+  /**
+   * Whether a store may be closed now: unused for idleMs and idle. A failed store is kept: its tenant
+   * answers 503 and /v1/health/ready says not ready until a restart.
+   * @param {string} tenant
+   */
+  const evictable = (tenant) => !stores.get(tenant)?.failed && Date.now() - (storeUsed.get(tenant) ?? 0) >= idleMs && storeIdle(tenant);
+  /** Close an idle store (written out first) to give back its slot. @param {string} tenant */
+  function evictStore(tenant) {
+    const s = stores.get(tenant);
+    if (!s) return;
+    stores.delete(tenant);
+    storeUsed.delete(tenant);
+    (async () => {
+      try { await s.flush?.(); } catch { /* best effort */ }
+      try { await s.close?.(); } catch { /* best effort */ }
+    })().catch(() => {});
+    log(`store for tenant ${tenant} closed (idle)`);
   }
   /**
    * A tenant's store once it is ready (a Postgres store loads first), null when the tenant has no
-   * store, 'down' when it cannot load.
+   * store, 'down' when it cannot load, 'full' when every store slot (--max-stores) is busy.
    * @param {string} tenant @param {boolean} create @returns {Promise<any>}
    */
   async function readyStore(tenant, create) {
     const open = stores.get(tenant);
     if (open) {
+      storeUsed.set(tenant, Date.now());
       if (open.failed) return 'down';                     // a failed store serves nothing (503)
       if (open.ready) { try { await open.ready; } catch { return 'down'; } }
       return open;
@@ -238,10 +300,17 @@ export async function startService({
       try { there = (await config.store.exists(tenant)) === true; } catch { return 'down'; }
       if (!there) return null;
     }
-    // At most maxStores tenants open at once: one more is refused, never opened.
-    if (stores.size >= Math.max(1, maxStores)) { log(`too many tenants open (${maxStores}): ${tenant} refused`); return 'down'; }
+    // At most maxStores tenants open at once. At the cap, the least recently used store that is idle
+    // (unused for idleMs, nothing open on it: what the sweep would close) is closed to make room; when
+    // none is, the new tenant is refused (503 with Retry-After), never opened.
+    if (stores.size >= Math.max(1, maxStores)) {
+      const idle = [...stores.keys()].filter(evictable).sort((a, b) => (storeUsed.get(a) ?? 0) - (storeUsed.get(b) ?? 0));
+      if (!idle.length) { log(`too many tenants open (${maxStores}), none idle: ${tenant} refused`); return 'full'; }
+      evictStore(idle[0]);
+    }
     const s = storeFor(tenant, create);
     if (!s) return s;
+    storeUsed.set(tenant, Date.now());
     if (s.ready) {
       try { await s.ready; } catch (err) {
         // Never keep a store whose ready failed: it would hold its slot (and maybe connections) for nothing.
@@ -314,10 +383,9 @@ export async function startService({
     lastUsed.set(key, Date.now());
     let e = engines.get(key);
     if (!e) {
-      // Every model client this engine gets is metered (usage, limits) and abortable (build timeout).
-      const ctl = new AbortController();
-      aborts.set(key, ctl);
-      const meter = (/** @type {any} */ client) => usage.wrap(client, { tenant, signal: () => ctl.signal });
+      // Every model client this engine gets is metered (usage, limits) and abortable (a build timeout:
+      // the signal of the build whose work makes the call, if any).
+      const meter = (/** @type {any} */ client) => usage.wrap(client, { tenant, signal: () => buildSignal.getStore() ?? null });
       e = makeEngine({ store: storeFor(tenant, true), id, tenant, meter, ...(config?.model ? { clientFor: config.model } : {}) });
       e.catch(() => engines.delete(key));
       engines.set(key, e);
@@ -384,7 +452,6 @@ export async function startService({
     const h = handlers.get(key);
     handlers.delete(key);
     engines.delete(key);
-    aborts.delete(key);
     live.delete(key);
     lastUsed.delete(key);
     if (h) await (await h.catch(() => null))?.close({ deleted });
@@ -433,6 +500,9 @@ export async function startService({
       let expired = false;
       /** @type {ReturnType<typeof setTimeout>|undefined} */
       let timer;
+      // This build's own abort, made now: the timer aborts exactly this build's calls.
+      const ctl = new AbortController();
+      b.ctl = ctl;
       try {
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
@@ -443,13 +513,13 @@ export async function startService({
         const timedOut = new Promise((_, reject) => {
           timer = setTimeout(() => {
             expired = true;
-            aborts.get(key)?.abort();
+            ctl.abort();
             reject(new Error(`Timed out after ${Number.isInteger(minutes) ? minutes : minutes.toFixed(2)} ${minutes === 1 ? 'minute' : 'minutes'}`));
           }, Math.max(1, buildTimeoutMs));
           timer.unref?.();
         });
         // picked: the sources chosen in New map (the build is told to search them for every category).
-        const run = engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
+        const run = buildSignal.run(ctl.signal, () => engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) }));
         Promise.resolve(run).catch(() => {}); // after a timeout its rejection is expected, never unhandled
         await Promise.race([run, timedOut]);
         b.state = 'done';
@@ -460,8 +530,16 @@ export async function startService({
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
         try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error }, actor: p.actor }); } catch { /* gone */ }
-        // A timed-out engine is dropped: whatever it still does is no longer this map's build.
-        if (expired) drop(key).catch(() => {});
+        // A timed-out engine is dropped: whatever it still does is no longer this map's build. A chat
+        // answer being written on the map is left to finish first (its calls never had the build's signal).
+        if (expired) {
+          const dropWhenQuiet = () => {
+            if (closing) return;
+            if (live.get(key)?.chatting()) { setTimeout(dropWhenQuiet, 250).unref?.(); return; }
+            drop(key).catch(() => {});
+          };
+          dropWhenQuiet();
+        }
       } finally {
         clearTimeout(timer);
         lastUsed.set(key, Date.now());
@@ -469,6 +547,38 @@ export async function startService({
         try { Promise.resolve(storeFor(tenant, true).flush(id)).catch(() => {}); } catch { /* renamed or gone */ }
       }
     })();
+  }
+
+  /**
+   * The server is stopping: every build and job still queued or running ends here, so it is marked
+   * failed on its map (wait_for_map and the jobs tray say so) instead of vanishing.
+   */
+  function markStopped() {
+    const error = STOPPED;
+    for (const [key, b] of builds) {
+      if (b.state !== 'queued' && b.state !== 'running') continue;
+      b.state = 'failed';
+      b.error = error;
+      try { b.ctl?.abort(); } catch { /* already stopped */ } // so it writes nothing after being marked failed
+      const [tenant, id] = key.split('/');
+      try {
+        const store = storeFor(tenant, true);
+        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error } });
+      } catch { /* gone */ }
+    }
+    // Only maps this process has an engine for (its own jobs): a map merely open for reading may have
+    // a job another process (a CLI on the same home) is running, which is not ours to mark.
+    for (const key of engines.keys()) {
+      const [tenant, id] = key.split('/');
+      try {
+        const store = storeFor(tenant, true);
+        for (const j of Object.values(store.read(id)?.jobs ?? {})) {
+          const job = /** @type {any} */ (j);
+          if (!job || (job.state !== 'queued' && job.state !== 'running')) continue;
+          store.append(id, { t: 'job.failed', at: store.now(id), job: { id: job.id, kind: job.kind, ...(job.nodeId ? { nodeId: job.nodeId } : {}), error } });
+        }
+      } catch { /* renamed or gone */ }
+    }
   }
 
   /** @param {string} tenant @param {string} id */
@@ -496,6 +606,8 @@ export async function startService({
       }
       drop(key).catch(() => {});
     }
+    // A store nothing has used for idleMs, with nothing open on it, is closed (its slot freed).
+    for (const tenant of [...stores.keys()]) if (evictable(tenant)) evictStore(tenant);
   }
   const sweeper = setInterval(sweep, Math.max(10, Math.min(idleMs, 60000)));
   sweeper.unref?.();
@@ -612,6 +724,10 @@ export async function startService({
       log(`identity port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
       return 'bad';
     }
+    return identityPrincipal(got);
+  }
+  /** An identity port's answer, checked (see fromIdentity). @param {any} got @returns {Principal|null|'bad'} */
+  function identityPrincipal(got) {
     if (got === null || got === undefined) return null;
     const a = got?.actor;
     const ok = a && typeof a.id === 'string' && a.id && ['human', 'agent', 'service'].includes(a.kind)
@@ -638,7 +754,8 @@ export async function startService({
   }
   /**
    * The principal as it stands now: its token row re-read (a revoke, or sources rewritten in
-   * tokens.json, take effect here), or null when it no longer stands.
+   * tokens.json, take effect here), or null when it no longer stands. Tokens and sessions only; an
+   * identity principal is re-checked by recheckIdentity.
    * @param {Principal} p @returns {Principal|null}
    */
   function currentPrincipal(p) {
@@ -648,34 +765,88 @@ export async function startService({
     return row ? { ...p, ...tokenPrincipal(row) } : null;
   }
   /**
+   * An identity principal as it stands now: the port's optional stillValid(principal) (true keeps it,
+   * a principal replaces it, anything else ends it), or else its authenticate run again on the request
+   * that opened the stream or chat. The answer must be the same actor in the same tenant; its scopes
+   * and sources may change. A throw ends it.
+   * @param {Principal} p @param {http.IncomingMessage} req @returns {Promise<Principal|null>}
+   */
+  async function recheckIdentity(p, req) {
+    if (closing) return null;
+    const port = /** @type {any} */ (identity);
+    let got;
+    try {
+      if (typeof port.stillValid === 'function') {
+        const r = await port.stillValid(publicPrincipal(p));
+        if (r === true) return p;
+        if (!r || typeof r !== 'object') return null;
+        got = r;
+      } else {
+        got = await port.authenticate(req);
+      }
+    } catch (err) {
+      log(`identity port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+      return null;
+    }
+    const cur = identityPrincipal(got);
+    if (!cur || cur === 'bad' || cur.actor.id !== p.actor.id || cur.tenant !== p.tenant) return null;
+    return cur;
+  }
+  /**
    * Whether a stream (or a chat) may go on: called on every ping, before every event a stream sends and
-   * before every chunk a chat sends. It re-checks the principal (its token row as it is now) and the
-   * read rule against the map as it is now. The answer is remembered until either changes (the
-   * principal's scopes or sources, the map's visibility or private sources), so the common case costs
-   * a file stat and a comparison. A policy that answers with a Promise gets a Promise back: the stream
-   * waits for it, in order (map.js), and only a true lets the event out.
+   * before every chunk a chat sends. It re-checks the principal and the read rule on the map as it is now:
+   * - tokens and sessions: the token row as it is now (a file stat). The default policy's answer is
+   *   remembered until the principal's scopes or sources, or the map's visibility or private sources,
+   *   change (it depends on nothing else).
+   * - a custom identity port: asked again (stillValid, or authenticate on the original request) once
+   *   its last answer is recheckMs (5 s) old, so a removed user's stream ends at the first check after that.
+   * - a custom policy: asked again once its last answer is recheckMs old, even when nothing it is shown
+   *   changed (it may read state of its own).
+   * An async answer gets a Promise back: the stream waits for it, in order (map.js), and only a true
+   * lets the event out. Once it says no, the stream or chat ends.
    * @param {Principal} p @param {string} tenant @param {string} id @param {any} store
+   * @param {http.IncomingMessage} req the request that opened the stream or chat
    * @returns {(ev?: any) => boolean|Promise<boolean>}
    */
-  function streamValid(p, tenant, id, store) {
+  function streamValid(p, tenant, id, store, req) {
+    const customPolicy = policy !== defaultPolicy;
     /** @type {string|null} */ let memoKey = null;
     let memo = false;
-    return (_ev) => {
+    let memoAt = 0;
+    // The identity principal as last checked (null: it no longer stands), and when.
+    /** @type {Principal|null} */ let idCur = p;
+    let idAt = Date.now();
+    /** @type {Promise<Principal|null>|null} */ let idPending = null;
+    /** @param {Principal} cur @returns {boolean|Promise<boolean>} */
+    const decide = (cur) => {
       if (store.failed) return false;
-      const cur = currentPrincipal(p);
-      if (!cur) return false;
       let map;
       try { map = mapFor(tenant, id, store); } catch { return false; }
       const key = JSON.stringify([cur.scopes, cur.sources, map?.visibility ?? 'public', map?.privateSources ?? []]);
-      if (key === memoKey) return memo;
+      if (key === memoKey && (!customPolicy || Date.now() - memoAt < recheckMs)) return memo;
       let r;
       try { r = policy.can(publicPrincipal(cur, tenant), 'read', { tenant, mapId: id, map }); } catch { return false; }
       if (r && typeof (/** @type {any} */ (r)).then === 'function') {
-        return Promise.resolve(r).then((v) => { memoKey = key; memo = v === true; return memo; }, () => false);
+        return Promise.resolve(r).then((v) => { memoKey = key; memo = v === true; memoAt = Date.now(); return memo; }, () => false);
       }
       memoKey = key;
       memo = r === true;
+      memoAt = Date.now();
       return memo;
+    };
+    return (_ev) => {
+      if (store.failed || closing) return false;
+      if (p.via === 'identity') {
+        if (!idCur) return false; // once ended, it stays ended
+        if (Date.now() - idAt < recheckMs) return decide(idCur);
+        if (!idPending) {
+          idPending = recheckIdentity(p, req).then((cur) => { idCur = cur; idAt = Date.now(); idPending = null; return cur; });
+        }
+        return idPending.then((cur) => (cur ? decide(cur) : false));
+      }
+      const cur = currentPrincipal(p);
+      if (!cur) return false;
+      return decide(cur);
     };
   }
   /** Reachability of sources for status, remembered for 30 s per source. @type {Map<string, { at: number, reachable: boolean }>} */
@@ -727,6 +898,10 @@ export async function startService({
   // ---- routes ----
   /** @param {http.ServerResponse} res @param {number} code @param {string} error @param {Record<string, string>} [headers] */
   const fail = (res, code, error, headers) => json(res, code, { ok: false, error }, headers);
+  /** 503 for a store that is down, or (with Retry-After) one that has no free slot. @param {http.ServerResponse} res @param {any} store */
+  const storeFail = (res, store) => (store === 'full'
+    ? fail(res, 503, 'Too many tenants are busy right now: try again shortly.', { 'Retry-After': '30' })
+    : fail(res, 503, 'the store is not available'));
 
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res @param {string} method */
   async function session(req, res, method) {
@@ -794,17 +969,26 @@ export async function startService({
     const rest = parts.slice(4);
     if (!TENANT_RE.test(tenant)) return fail(res, 404, 'not found');
     if (tenant !== 'default' && noTenants) return fail(res, 404, 'not found');
-    const admin = has(p, 'admin');
+    // Counted until the response ends, so a store is never closed under a request (or a stream) using it.
+    tenantRequests.set(tenant, (tenantRequests.get(tenant) ?? 0) + 1);
+    res.once('close', () => {
+      const n = (tenantRequests.get(tenant) ?? 1) - 1;
+      if (n > 0) tenantRequests.set(tenant, n); else tenantRequests.delete(tenant);
+      if (stores.has(tenant)) storeUsed.set(tenant, Date.now());
+    });
     // Status: your own tenant with read; any tenant only with an admin token of tenant default.
     if (rest.length === 1 && rest[0] === 'status') {
-      if (!ownsTenant(p, tenant) && !(admin && p.tenant === 'default')) return fail(res, 404, 'not found');
+      // The admin-only parts (paths, every source, other tokens' sources) are the policy's 'admin'
+      // answer. Reaching another tenant also needs the admin scope itself: no policy widens the tenant rule.
+      const admin = await can(p, 'admin', { tenant });
+      if (!ownsTenant(p, tenant) && !(admin && has(p, 'admin') && p.tenant === 'default')) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
       // Another tenant's status (an admin's) never opens its store or takes its lock: only an open
       // store, or for files the tenant's index on disk, is read.
       const own = (p.tenant ?? 'default') === tenant;
       const store = own ? await readyStore(tenant, false) : peekStore(tenant);
-      if (store === 'down') return fail(res, 503, 'the store is not available');
+      if (store === 'down' || store === 'full') return storeFail(res, store);
       const note = checkOpenNote();
       // Sources: every configured one for an admin, the ones it holds for anyone else. Names only.
       const shown = srcs ? (admin ? srcs.names() : p.sources) : [];
@@ -823,8 +1007,10 @@ export async function startService({
         auth: identity ? 'identity' : authRequired ? 'tokens' : 'open',
         ...(note ? { note } : {}),
         maps: store ? count : (config?.store && !own ? null : 0),
+        // A token's sources (they may name private sources) only to an admin, or on the caller's own row.
         tokens: currentTokens().filter((r) => r.tenant === tenant)
-          .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], ...(r.sources ? { sources: [...r.sources] } : {}) })),
+          .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes],
+            ...(r.sources && (admin || ((p.via === 'bearer' || p.via === 'cookie') && r.name === p.name && r.hash === p.hash)) ? { sources: [...r.sources] } : {}) })),
         server: { version, startedAt },
         ...(config ? { ports } : {}),
         ...(sourceRows ? { sources: sourceRows } : {}),
@@ -832,6 +1018,7 @@ export async function startService({
     }
     // Usage: the same rule as status (your own tenant; any tenant only for an admin of tenant default).
     if (rest.length === 1 && rest[0] === 'usage') {
+      const admin = has(p, 'admin') && await can(p, 'admin', { tenant });
       if (!ownsTenant(p, tenant) && !(admin && p.tenant === 'default')) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
@@ -862,7 +1049,7 @@ export async function startService({
       if (method === 'GET' || method === 'HEAD') {
         if (!await can(p, 'read', { tenant })) return fail(res, 403, needs('read'));
         const store = await readyStore(tenant, false);
-        if (store === 'down') return fail(res, 503, 'the store is not available');
+        if (store === 'down' || store === 'full') return storeFail(res, store);
         /** @type {any[]} */
         const rows = [];
         for (const m of store ? store.list({ drafts: true }) : []) {
@@ -894,7 +1081,7 @@ export async function startService({
           return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
         }
         const store = await readyStore(tenant, true);
-        if (store === 'down' || !store) return fail(res, 503, 'the store is not available');
+        if (store === 'down' || store === 'full' || !store) return storeFail(res, store);
         // When private sources were picked, the draft is written with its ontology.created and their
         // raise, in one write (one transaction on Postgres), stored before the 202: a queued private
         // build is private from the start, and stays so across a crash or a restart. (Other builds
@@ -955,7 +1142,7 @@ export async function startService({
     const action = removing ? 'delete' : actionFor(sub);
     if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));
     const store = await readyStore(tenant, false);
-    if (store === 'down') return fail(res, 503, 'the store is not available');
+    if (store === 'down' || store === 'full') return storeFail(res, store);
     // A browser opening a map it cannot see gets a small page, never JSON; the same 404 either way.
     const notFound = () => (sub === 'view' && (method === 'GET' || method === 'HEAD') && String(req.headers.accept ?? '').includes('text/html')
       ? sendNotFoundPage(res) : fail(res, 404, 'not found'));
@@ -1008,7 +1195,10 @@ export async function startService({
         const jobs = busy(tenant, id);
         if (!jobs.length || Date.now() >= until || gone || closing) {
           const b = builds.get(key);
-          return json(res, 200, { state: jobs.length ? 'busy' : 'idle', jobs, ...(b?.state === 'failed' ? { error: b.error } : {}) });
+          // A build this process never ran (one stopped with an earlier server, or by a restart) says
+          // why from the map: its last failed build job.
+          const error = b ? (b.state === 'failed' ? b.error : undefined) : lastBuildError(storeFor(tenant, true).read(id)?.jobs);
+          return json(res, 200, { state: jobs.length ? 'busy' : 'idle', jobs, ...(error ? { error } : {}) });
         }
         await new Promise((r) => setTimeout(r, Math.min(100, Math.max(1, until - Date.now()))));
       }
@@ -1098,9 +1288,10 @@ export async function startService({
       }
       const principal = publicPrincipal(p, tenant);
       const handled = await h.handleApi(req, res, apiPath, query, {
-        // Re-checked on every ping and before every event sent: the token (or session), its current
-        // sources, and the read rule on the map as it is now (a raise ends the stream before it is sent).
-        valid: streamValid(p, tenant, id, store),
+        // Re-checked on every ping and before every event sent: the token (or session) or the identity
+        // port, its current sources, and the read rule on the map as it is now (a raise ends the stream
+        // before it is sent). A custom identity or policy is asked again once its answer is recheckMs old.
+        valid: streamValid(p, tenant, id, store, req),
         sync: () => durable(store),
         actor: p.actor,
         principal,
@@ -1141,7 +1332,7 @@ export async function startService({
     if (restoring && method !== 'POST') return fail(res, 405, 'method not allowed');
     if (!await can(p, 'restore', { tenant })) return fail(res, 403, 'This token needs the build scope.');
     const store = await readyStore(tenant, false);
-    if (store === 'down') return fail(res, 503, 'the store is not available');
+    if (store === 'down' || store === 'full') return storeFail(res, store);
     /** @type {any[]} */
     const items = store && typeof store.listTrash === 'function' ? store.listTrash() : [];
     /** What the read rule sees of an item: the visibility it had (kept in the trash). @param {any} t */
@@ -1308,6 +1499,7 @@ export async function startService({
       closing = true;
       clearInterval(sweeper);
       clearInterval(purger);
+      markStopped();
       const done = new Promise((r) => server.close(() => r(undefined)));
       for (const h of handlers.values()) {
         try { await (await h).close(); } catch { /* never built */ }

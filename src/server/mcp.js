@@ -15,6 +15,7 @@ import {
   McpError, ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import { OPS, opByName, requestFor, COST_NOTE } from '../ops.js';
+import { agentMap } from './reads.js';
 
 /**
  * @typedef {{ status: number, type: string, text: string, headers: Record<string, string> }} CallResult
@@ -380,13 +381,13 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     const rows = tryJson(r.text);
     return { resources: (Array.isArray(rows) ? rows : []).map((m) => ({
       uri: uriFor(t, String(m.id)), name: String(m.name ?? m.id), mimeType: 'application/json',
-      description: `The whole map as JSON (${m.nodes ?? 0} nodes${m.draft ? ', draft' : ''})`,
+      description: `The map as JSON, as the read tools see it (${m.nodes ?? 0} nodes${m.draft ? ', draft' : ''})`,
     })) };
   });
 
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
     resourceTemplates: [{ uriTemplate: 'ontologizer://{tenant}/maps/{id}/snapshot', name: 'Map snapshot', mimeType: 'application/json',
-      description: 'The whole map as JSON: the folded event log' }],
+      description: 'The map as JSON, as the read tools see it: nodes, categories, cross-links, lenses and sources, escaped, with no chat or jobs' }],
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
@@ -395,9 +396,13 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     if (!m) throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
     let id;
     try { id = decodeURIComponent(m[2]); } catch { throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`); }
-    const r = await call(/** @type {any} */ (opByName('get_snapshot')), { tenant: m[1], id });
+    // The export's json (no chat), then the read tools' own allow-list and escaping (agentMap): never
+    // the raw snapshot, whose jobs, private source names and unescaped web text no read tool shows.
+    const r = await call(/** @type {any} */ (opByName('export_map')), { tenant: m[1], id, format: 'json' });
     if (r.status < 200 || r.status >= 300) throw new McpError(ErrorCode.InvalidParams, errorText(r));
-    return { contents: [{ uri, mimeType: 'application/json', text: r.text }] };
+    const folded = tryJson(r.text);
+    if (!folded || typeof folded !== 'object') throw new McpError(ErrorCode.InternalError, 'The server did not answer with a map.');
+    return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(agentMap(folded)) }] };
   });
 
   return server;

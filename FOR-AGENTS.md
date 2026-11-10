@@ -40,6 +40,8 @@ claude mcp add ontologizer -- ontologizer mcp --url https://maps.example.com --t
 
 If `ontologizer mcp` refuses to start, the person's home has sign-in (tokens or a config). Use the `--url … --token-file …` form against their running `serve`.
 
+**On this machine, jobs end with your session.** The stdio server runs only while your MCP session does: keep it open until `wait_for_map` says idle. A build or job cut off by the session ending is marked failed (`Stopped: the server ended`); build it again.
+
 ## What you can do
 
 | Goal | Tools, in order | Cost |

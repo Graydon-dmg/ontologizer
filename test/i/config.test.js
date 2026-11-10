@@ -15,7 +15,7 @@ test('valid configs pass', () => {
   assert.deepEqual(validateConfig({
     identity: { name: 'sso', authenticate() { return null; } }, policy: { can() { return true; } },
     store() {}, model() {},
-    sources: [src(), src({ name: 'docs', url: undefined, command: 'node', args: ['x.js'], visibility: 'private', headers: () => ({}) })],
+    sources: [src(), src({ name: 'docs', url: undefined, command: 'node', args: ['x.js'], visibility: 'private' }), src({ name: 'hr', headers: () => ({}) })],
   }), []);
 });
 

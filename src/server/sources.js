@@ -198,7 +198,13 @@ export function createSources(entries, { connect = defaultConnect, log = () => {
     let rec = clients.get(key);
     if (!rec) {
       /** @type {Rec} */
-      const fresh = { key, promise: withTimeout(connect(entry, headers), timeoutMs, 'connect'), refs: 0, used: 0, forgotten: false, closed: false };
+      const connecting = connect(entry, headers);
+      const fresh = { key, promise: withTimeout(connecting, timeoutMs, 'connect'), refs: 0, used: 0, forgotten: false, closed: false };
+      // A connect that succeeds after its timeout would leak its client (a stdio child, an HTTP
+      // session): once the timed promise has failed, close whatever the original one brings.
+      fresh.promise.catch(() => {
+        Promise.resolve(connecting).then((c) => { try { void Promise.resolve(c?.close?.()).catch(() => {}); } catch { /* gone */ } }, () => {});
+      });
       rec = fresh;
       clients.set(key, fresh);
       live.add(fresh);

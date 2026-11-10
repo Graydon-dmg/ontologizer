@@ -93,6 +93,13 @@ async function run(cctx, q, out) {
   /** @type {Map<string, { kind: 'research', nodeId: string, mode: 'context'|'general', label: string }>} */
   const suggestions = new Map();
   /** @type {Map<string, string>} */ const searchTitles = new Map();   // url -> title, from search results
+  /** Every url a tool result gave this run (a source ref, a web result). @type {Set<string>} */
+  const toolUrls = new Set();
+  let priv = false;                                       // visibility only rises: cache the yes
+  const isPrivate = () => priv || (priv = store.read(id)?.visibility === 'private');
+  // On a private map a link may only point where a tool result pointed: a hidden instruction in a
+  // private document cannot have the answer link (and leak) private text to a url of its choosing.
+  const links = createLinkFilter((url) => toolUrls.has(url));
 
   /** @param {ChatItem} item */
   const send = (item) => out.push(item);
@@ -121,8 +128,10 @@ async function run(cctx, q, out) {
     return `[[${s}]]`;
   });
 
-  /** @param {string} t */
-  const emitText = (t) => {
+  /** @param {string} t @param {boolean} [filtered] */
+  const emitText = (t, filtered = false) => {
+    // Visibility only rises: once private, every later piece of text goes through the link filter.
+    if (!filtered && isPrivate()) t = links.push(t, answer.text);
     if (!t) return;
     answer.text += t;
     send({ type: 'delta', text: t });
@@ -131,6 +140,7 @@ async function run(cctx, q, out) {
   /** @param {string} url @param {string} [title] */
   const addSource = (url, title) => {
     if (!/^https?:\/\//i.test(url) || sources.has(url)) return;
+    if (isPrivate() && !toolUrls.has(url)) return;       // a private map's sources come from tools only
     const s = { title: String(searchTitles.get(url) ?? title ?? url).slice(0, 200), url };
     sources.set(url, s);
     send({ type: 'source', title: s.title, url });
@@ -189,6 +199,9 @@ async function run(cctx, q, out) {
       }
       const final = await stream.finalMessage();
       if (final.stop_reason === 'refusal') throw new RefusalError(final.stop_details?.category ?? undefined);
+      for (const b of final.content ?? []) {
+        if (b?.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (typeof r?.url === 'string') toolUrls.add(r.url);
+      }
       readSearchBlocks(final.content, searchTitles, addSource);
 
       if (final.stop_reason === 'pause_turn') {
@@ -204,7 +217,10 @@ async function run(cctx, q, out) {
         if (srcNames.has(u.name) && params.tools.some((/** @type {any} */ d) => d.name === u.name)) {
           // A source tool (read-only). A private source's first answer raises the map first.
           const r = await /** @type {any} */ (srcTools).call(u.name, u.input);
-          for (const ref of r.refs ?? []) if (ref.url && ref.title) searchTitles.set(ref.url, String(ref.title));
+          for (const ref of r.refs ?? []) {
+            if (typeof ref?.url === 'string' && ref.url) toolUrls.add(ref.url);
+            if (ref.url && ref.title) searchTitles.set(ref.url, String(ref.title));
+          }
           results.push({ type: 'tool_result', tool_use_id: u.id, content: r.text || '(no result)', ...(r.isError ? { is_error: true } : {}) });
           continue;
         }
@@ -214,6 +230,7 @@ async function run(cctx, q, out) {
       messages.push({ role: 'user', content: results });
     }
     emitText(filter.flush());
+    if (isPrivate()) emitText(links.flush(), true);
 
     const finalText = answer.text.trim();
     emit('chat.answered', {
@@ -277,6 +294,54 @@ export function createTokenFilter(resolve) {
 
 // ---------------------------------------------------------------------------------------------
 // Links and web sources
+
+/**
+ * A streaming filter that unlinks markdown links whose target is not kept: `[x](url)` becomes `[x]`
+ * (plain text in the chat renderer). It looks only at the `](target)` part, which never spans a
+ * line, so a link text that starts on an earlier line is caught too. After a removal the scan goes on
+ * from the `]`, so `[x](a)(b)` cannot reassemble into a link to b. Bare urls are left as text (the
+ * renderer never makes them clickable). The tail that might still become `](target)` is held back.
+ * @param {(url: string) => boolean} keep
+ */
+export function createLinkFilter(keep) {
+  let buf = '';
+  let cut = false;   // the last text out was the "]" of an unlinked link: a "(" next must not glue on
+  let started = false;
+  /** @param {boolean} final */
+  function drain(final) {
+    let out = '';
+    for (;;) {
+      if (cut && buf) { if (buf[0] === '(') out += ' '; cut = false; }
+      const i = buf.indexOf(']');
+      if (i < 0) { out += buf; buf = ''; break; }
+      out += buf.slice(0, i);
+      buf = buf.slice(i);
+      if (buf.length < 2 && !final) break;                 // "]" alone: a "(" may follow
+      if (buf[1] !== '(') { out += ']'; buf = buf.slice(1); continue; }
+      const m = /** @type {RegExpExecArray} */ (/^\]\(([^)\s]*)(\))?/.exec(buf));
+      if (!m[2]) {
+        if (m[0].length === buf.length && !final) break;   // the target may still grow: wait
+        out += ']'; buf = buf.slice(1); continue;          // ended by a space or newline: not a link
+      }
+      out += ']';
+      buf = buf.slice(m[0].length);
+      if (keep(m[1])) out += m[0].slice(1); else cut = true;
+    }
+    return out;
+  }
+  return {
+    /**
+     * @param {string} chunk
+     * @param {string} [before] the text already out before the filter's first chunk (a "]" there counts)
+     */
+    push(chunk, before = '') {
+      if (!started) { started = true; if (before.endsWith(']')) cut = true; }
+      buf += chunk;
+      return drain(false);
+    },
+    flush() { return drain(true); },
+  };
+}
 
 /** Markdown links and bare URLs in text. @param {string} text */
 export function linksIn(text) {

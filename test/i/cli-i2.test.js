@@ -97,8 +97,9 @@ test('list: public for a fixture map, private after visibility.raised', async ()
   const r = await run(['list'], home);
   assert.equal(r.code, 0, r.stderr);
   const row = (/** @type {string} */ id) => r.stdout.split('\n').find((l) => l.startsWith(id)) ?? '';
-  assert.match(row('open-map'), / nodes {2}public {2}\d{4}-/);
-  assert.match(row('secret-map'), / nodes {2}private {2}\d{4}-/);
+  // Visibility is the last column, so the earlier columns keep their places.
+  assert.match(row('open-map'), / nodes {2}\d{4}-\S+ {2}public$/);
+  assert.match(row('secret-map'), / nodes {2}\d{4}-\S+ {2}private$/);
   assert.equal(/private/.test(row('open-map')), false);
 });
 

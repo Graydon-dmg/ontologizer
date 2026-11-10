@@ -18,7 +18,9 @@ Don't use it for a single fact you can look up directly, or for live data: a map
 
 ### Claude Code
 
-On this machine, over stdio (an in-process server on your own maps in `~/.ontologizer`, loopback only, no token). A home with tokens or a config is refused: it has sign-in, so use a running `serve` with `--url` and `--token-file` instead (below).
+On this machine, over stdio (an in-process server on your own maps in `~/.ontologizer`, loopback only; it signs itself in with a token it makes at start and keeps in memory, so you configure none). A home with tokens or a config is refused: it has sign-in, so use a running `serve` with `--url` and `--token-file` instead (below). `--build-timeout <minutes>` sets how long a build may run (default 15).
+
+The in-process server lives only as long as the agent's MCP session. **Builds and jobs end with it**: keep the session open until `wait_for_map` says idle. One that was still running when the session ended is marked failed, and `wait_for_map` later says `"error": "Stopped: the server ended"`; build the map again. Its `viewUrl` needs that session's token, so to watch a map, open it with `ontologizer load <id>`; that is a second process on the same home, and a page open in either one does not show the other's changes until it is reloaded.
 
 ```bash
 claude mcp add ontologizer -- npx -y ontologizer mcp
@@ -33,7 +35,7 @@ claude mcp add --transport http ontologizer https://maps.example.com/v1/mcp \
   --header "Authorization: Bearer <YOUR_TOKEN>"                                # a server with tokens
 ```
 
-Or forward stdio to a remote server, with the token in a file (never on the command line):
+Or forward stdio to a remote server, with the token in a file (never on the command line; `chmod 600` it, or `ontologizer mcp` warns). An `http://` address that is not this machine is refused, since the token would cross the network in clear: use `https://`, or `--allow-http` on a network you trust.
 
 ```bash
 claude mcp add ontologizer -- npx -y ontologizer mcp --url https://maps.example.com --token-file ~/.ontologizer-token
@@ -214,7 +216,7 @@ Errors come back as tool results with `isError: true`. The text starts with the 
 | 502 | `Your Anthropic API key was rejected …`, or the model's error | A `check_context` model call failed | Try later; tell the operator if it repeats |
 | 503 | `the store is not available`, `The embed bundle is missing: run npm run build …` | The server cannot serve this right now | Try again shortly; tell the operator if it repeats |
 
-A job that fails later shows in `wait_for_map`'s `error` (for a build) or as a failed job in its `jobs`: for example `Timed out after 15 minutes` (the server's build timeout), `No Anthropic API key` (the server has no key), or `Interrupted by a restart`.
+A job that fails later shows in `wait_for_map`'s `error` (for a build) or as a failed job in its `jobs`: for example `Timed out after 15 minutes` (the server's build timeout), `No Anthropic API key` (the server has no key), `Interrupted by a restart`, or `Stopped: the server ended` (the server, or the in-process `ontologizer mcp` session, stopped while it ran).
 
 ## Private maps and sources, for an agent
 
@@ -244,7 +246,7 @@ No inputs.
 
 Turn a plain description of a topic into a brief that build_map can use. Use when you want a new map: it is always the first step of building. Don't use when a map of the topic already exists (list_maps, then read it). Returns { ready: true, brief, name } when the topic is clear, or { ready: false, questions: [{ id, text, options }] }: ask your user (or answer from what you know), then call again with the same context and all answers so far, at most three rounds (if it still asks, add detail to the context and start again). Your context goes to the model as plain text; it never uses configured sources and writes nothing. Next: build_map with the brief. Calls the model: costs API credits.
 
-**calls the model** · read-only · token scope: `build` · HTTP: `POST /v1/t/{tenant}/maps/check`
+**calls the model** · writes to the map · token scope: `build` · HTTP: `POST /v1/t/{tenant}/maps/check`
 
 | Input | Type | Required | Description |
 |---|---|---|---|

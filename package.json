@@ -1,6 +1,6 @@
 {
   "name": "ontologizer",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Give it a topic and watch the whole field draw itself: a live, color-coded map of any topic, built by an LLM.",
   "keywords": [
     "ontology",
@@ -86,7 +86,7 @@
     "three": "^0.187.0"
   },
   "peerDependencies": {
-    "pg": "8.23.1"
+    "pg": "^8.13.0"
   },
   "peerDependenciesMeta": {
     "pg": {

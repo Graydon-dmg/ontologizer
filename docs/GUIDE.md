@@ -618,7 +618,13 @@ identity: {
 
 A custom identity replaces tokens: the server then requires a principal on every map route and may listen beyond loopback. Make sure only your proxy can reach it, or anyone could send the header themselves. A principal without a valid actor, tenant or scopes is refused.
 
-**Policy** decides what a principal may do. `can(principal, action, { tenant, mapId, map })` returns true or false; `action` is `read`, `build`, `ask`, `job` (node actions), `save`, `export` or `admin`. The default is the scope ladder of section 10 plus the private-map rule above. A policy that throws denies. No policy can let a principal into another tenant.
+An open event stream or chat answer is re-checked while it runs: once the last answer is 5 seconds old, the server asks your identity again. Add an optional `stillValid(principal)` to answer that cheaply (return `true` to keep the principal, an updated principal, or anything else to end the stream); without it, `authenticate` runs again on the request that opened the stream and must return the same actor and tenant.
+
+**Policy** decides what a principal may do. `can(principal, action, { tenant, mapId, map })` returns true (sync or a Promise) or anything else for no; `action` is `read`, `build`, `ask`, `job` (node actions), `save`, `delete`, `restore` or `admin`; for `delete` and `restore` the context also has `draft` (whether the map is a draft). The default is the scope ladder of section 10 plus the private-map rule above, and for `delete` and `restore`: `build` for a draft, `admin` for a saved map. A policy that throws denies. No policy can let a principal into another tenant.
+
+- `admin` decides the admin-only parts of the status (the server's paths, the config file, every source, other tokens' sources). Another tenant's status also needs the `admin` scope itself.
+- `export` is reserved and never asked: the server has no export route. Exports are made in the page or by the CLI from a map the caller already read, so whoever may `read` a map may export it.
+- An open stream or chat asks a custom policy about `read` again once its last answer is 5 seconds old, so a policy that reads its own state (a group change) ends it within seconds.
 
 ### Who did what
 
@@ -626,9 +632,9 @@ In service mode every change a request makes to a map is stamped with who made i
 
 ### The Postgres store
 
-`ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8.23.1`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order. Every change the server confirms is stored first, so a crash loses nothing it acknowledged. If a write ever fails, the store stops taking changes (the server answers 503) rather than leaving a gap, until you restart it. **One server per tenant**: a second server opening the same tenant is refused ("Another process already has the Postgres store for tenant … open"). If the store loses its database connection (a database restart, an administrator ending it), that tenant answers 503 and `/v1/health/ready` reports not ready until you restart the server; the server itself keeps running.
+`ontologizer/store-postgres` keeps maps in Postgres instead of files: `openPostgresStore({ url, tenant })`. Install its driver yourself (`npm install pg@8`); it is an optional dependency. It creates two tables (`ontologizer_events`, `ontologizer_maps`), every row tagged with its tenant. It loads a tenant into memory when it opens and writes changes in order. Every change the server confirms is stored first, so a crash loses nothing it acknowledged. If a write ever fails, the store stops taking changes (the server answers 503) rather than leaving a gap, until you restart it. **One server per tenant**: a second server opening the same tenant is refused ("Another process already has the Postgres store for tenant … open"). If the store loses its database connection (a database restart, an administrator ending it), that tenant answers 503 and `/v1/health/ready` reports not ready until you restart the server; the server itself keeps running.
 
-Each open tenant holds a few database connections. `serve --max-stores <n>` (default 16) caps how many tenants have a store open at once: keep it well below your database's `max_connections`. A store function you write yourself can carry `exists(tenant)` (sync or async) so the server never opens a store for a tenant that does not exist; `postgresStorePort` sets it for you. Chat images stay on local disk (`<home>/pg/<tenant>/`).
+Each open tenant holds a few database connections. `serve --max-stores <n>` (default 16) caps how many tenants have a store open at once (files or Postgres): keep it well below your database's `max_connections`. A tenant's store with nothing open on it for 10 minutes is closed and its slot freed; when every slot is busy, a new tenant gets 503 with `Retry-After`. A store function you write yourself can carry `exists(tenant)` (sync or async) so the server never opens a store for a tenant that does not exist; `postgresStorePort` sets it for you. Chat images stay on local disk (`<home>/pg/<tenant>/`).
 
 ## 12. Agents and apps
 
@@ -709,6 +715,10 @@ ontologizer usage --days 31 --json
 ```
 
 Over a limit, everything that calls the model answers 429 with `Retry-After` until 00:00 UTC, and a build already running stops at its next model call. Reads, waits, exports and view changes keep working. The Server panel shows today's counts and the limits.
+
+**The limits are soft.** They are checked before each model call, not during one: calls already running when a tenant reaches its limit finish and are counted, so the day's total can end a little over, and a single large call can take a tenant past `--limit-tokens` on its own. Set the limits with that headroom in mind.
+
+If `usage.json` is ever unreadable (a damaged disk, a hand edit gone wrong), `serve` moves it aside to `usage.json.corrupt-<time>`, says so in its log, and carries on with the counts it already knows; it never writes over a file it could not read.
 
 **This is not a spend cap.** Ontologizer counts calls and tokens, not money: prices differ by model and change. To cap what you spend, set a limit with your API provider as well.
 

@@ -270,10 +270,9 @@ test('N2 (Postgres): terminating the lock backend fails the tenant (503) without
     const h = { accept: 'application/json' };
     assert.equal((await req(url, `/v1/t/${ta}/maps`, { headers: h })).status, 200);
     assert.equal((await req(url, `/v1/t/${tb}/maps`, { headers: h })).status, 200);
-    // The lock key is hashtext(...) widened to bigint: a negative hash sets the high 32 bits (classid),
-    // so match only the low 32 bits (objid).
+    // Two-key lock: classid is the namespace (0x4f4e544f), objid the tenant hash read as unsigned 32 bits.
     const lock = await admin.query(
-      "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 1 AND objid::bigint = (hashtext('ontologizer:' || $1)::bigint & 4294967295)", [ta]);
+      "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid::bigint = 1330533455 AND objid::bigint = (hashtext('ontologizer:' || $1)::bigint & 4294967295)", [ta]);
     assert.equal(lock.rows.length, 1, 'found the lock backend');
     await admin.query('SELECT pg_terminate_backend($1)', [lock.rows[0].pid]);
     let st = 0;
