@@ -64,7 +64,7 @@ Lines between ideas come in kinds, and the legend's **Lines** key shows the ones
 | purple long dashes, wide arc | bridge | a concrete link between distant areas (in a fused map: across the seam) |
 | teal short dashes, arc | analog | A is like B |
 
-Click a line's end node to read why the link is there.
+Each link's reason is kept with the map (and appears in exports, such as the Obsidian notes).
 
 ### Cross-links
 
