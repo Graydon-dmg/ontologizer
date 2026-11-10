@@ -1,6 +1,7 @@
 // @ts-check
-import { panelRows, tokenLines, sourceLines, portsLine, NO_TOKENS, HELP, failureText, noteText } from '../server-panel.js';
+import { panelRows, tokenLines, sourceLines, portsLine, NO_TOKENS, HELP, failureText, noteText, usageLines, NO_USAGE } from '../server-panel.js';
 import { keepFitted } from './fit.js';
+import { openConnectPanel } from './connect.js';
 
 const STYLE_ID = 'server-panel-style';
 const CSS = `
@@ -67,7 +68,7 @@ function ensureStyle() {
 /**
  * Read-only server status panel.
  * @param {HTMLElement} el the #server-panel element
- * @param {{ tenant: string, fetch?: typeof fetch, popover?: boolean }} opts
+ * @param {{ tenant: string, fetch?: typeof fetch, popover?: boolean, service?: boolean }} opts
  */
 export function mountServerPanel(el, opts) {
   ensureStyle();
@@ -107,12 +108,43 @@ export function mountServerPanel(el, opts) {
   ports.id = 'server-ports';
   ports.className = 'server-msg';
   ports.hidden = true;
-  body.append(msg, dl, note, ports, srcHead, srcList, tokHead, list, help);
+  const useHead = document.createElement('h3');
+  useHead.textContent = 'Usage';
+  const usage = document.createElement('div');
+  usage.id = 'server-usage';
+  const api = document.createElement('p');
+  const apiLink = document.createElement('a');
+  apiLink.id = 'server-api';
+  apiLink.href = '/v1/openapi.json';
+  apiLink.target = '_blank';
+  apiLink.rel = 'noopener';
+  apiLink.textContent = 'API (OpenAPI)';
+  api.append(apiLink);
+  const connectBtn = document.createElement('button');
+  connectBtn.type = 'button';
+  connectBtn.id = 'server-connect-agent';
+  connectBtn.className = 'server-btn';
+  connectBtn.textContent = 'Connect an agent';
+  connectBtn.style.alignSelf = 'flex-start';
+  body.append(msg, dl, note, ports, srcHead, srcList, useHead, usage, tokHead, list, help, api, connectBtn);
+
+  async function loadUsage() {
+    usage.replaceChildren();
+    /** @type {string[]} */
+    let lines = [];
+    try {
+      const r = await f(`/v1/t/${encodeURIComponent(opts.tenant)}/usage`, { credentials: 'same-origin' });
+      if (r.ok) lines = usageLines(await r.json());
+    } catch { lines = []; }
+    if (!lines.length) { const p = document.createElement('p'); p.className = 'server-msg'; p.textContent = NO_USAGE; usage.append(p); return; }
+    for (const l of lines) { const p = document.createElement('p'); p.textContent = l; usage.append(p); }
+  }
 
   /** @param {string} text */
   const fail = (text) => { msg.textContent = text; msg.hidden = false; dl.replaceChildren(); list.replaceChildren(); tokHead.hidden = true; note.hidden = true; ports.hidden = true; srcHead.hidden = true; srcList.hidden = true; };
 
   async function load() {
+    loadUsage();
     msg.hidden = false;
     msg.textContent = 'Loading…';
     try {
@@ -158,6 +190,7 @@ export function mountServerPanel(el, opts) {
   }
 
   if (!popover) {
+    connectBtn.addEventListener('click', () => openConnectPanel(connectBtn, { service: opts.service ?? true, opener: connectBtn }));
     el.append(body);
     load();
     return;
@@ -186,6 +219,8 @@ export function mountServerPanel(el, opts) {
   // Fixed beside the button, always inside the window (re-placed on resize and when it fills in).
   const place = keepFitted(pop, btn);
   const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  // The popover closes first, so the two never overlap; the panel opens under the Server button.
+  connectBtn.addEventListener('click', () => { close(); openConnectPanel(btn, { service: opts.service ?? true, opener: btn }); });
   btn.addEventListener('click', () => {
     if (!pop.hidden) { close(); return; }
     pop.hidden = false;

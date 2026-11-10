@@ -15,4 +15,8 @@ export const FEATURES = [
   { id: 'sources-status', epic: 'I2', cli: 'status',  ui: { page: 'web/home/index.html', id: 'server-sources' } },
   { id: 'export', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export' } },
   { id: 'export-context', epic: 'I4', cli: 'export', ui: { page: 'web/index.html', id: 'export-context' } },
+  { id: 'mcp', epic: 'I3', cli: 'mcp', ui: { page: 'web/index.html', id: 'connect-agent' } },
+  { id: 'mcp-home', epic: 'I3', cli: 'mcp', ui: { page: 'web/home/index.html', id: 'server-connect-agent' } },
+  { id: 'api', epic: 'I3', cli: 'serve', ui: { page: 'web/home/index.html', id: 'server-api' } },
+  { id: 'usage', epic: 'I3', cli: 'usage', ui: { page: 'web/home/index.html', id: 'server-usage' } },
 ];

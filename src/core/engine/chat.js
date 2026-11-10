@@ -458,13 +458,18 @@ export function outline(o, lens = null) {
     seen.add(n.id);
     const summary = n.summary && !(big && d > 2) ? `: ${clip(n.summary, 110)}` : '';
     const analog = analogs[n.id]?.label ? `  ≈ ${clip(analogs[n.id].label, 60)}` : '';
-    lines.push(`${'  '.repeat(d)}- ${n.label} (${n.id})${summary}${analog}`);
+    lines.push(`${'  '.repeat(d)}- ${flat(n.label)} (${safeId(n.id)})${summary}${analog}`);
     for (const c of kids.get(n.id) ?? []) walk(c, d + 1);
   };
   if (nodes[o.root]) walk(nodes[o.root], 0);
   for (const n of Object.values(nodes)) if (!seen.has(n.id)) walk(n, Math.max(0, n.depth ?? 0));   // orphans
   return lines.join('\n');
 }
+
+/** One line: a value from an imported map can never start a line of its own (a heading, a quote). @param {unknown} s */
+const flat = (s) => String(s ?? '').replace(/[\s\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
+/** A node id as the outline shows it: as is when it is a plain slug path, else on one line. @param {unknown} id */
+const safeId = (id) => (/^[A-Za-z0-9][\w.:/-]{0,299}$/.test(String(id)) ? String(id) : flat(id));
 
 const STOP = new Set('a an and are as at be by for from has have how in is it its of on or that the this to was what when where which who why with your you my me i'.split(' '));
 

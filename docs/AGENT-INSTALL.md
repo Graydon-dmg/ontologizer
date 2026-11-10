@@ -61,6 +61,13 @@ Follow these steps in order. Do not skip ahead.
 
    If you want to confirm the demo starts, run it in the background for a few seconds, check that it prints `Serving … at http://127.0.0.1:<port>/`, then stop it.
 
+7. **Optional: give yourself (or the human's other agents) the map tools over MCP.** To read a map's outline or context pack, search it, put it into a document, or build and extend one:
+   - Claude Code: run `claude mcp add ontologizer -- ontologizer mcp`, start a new session, and check that `claude mcp list` (or `/mcp`) shows `ontologizer` as connected. A first `list_maps` call should answer, with an empty list on a fresh install.
+   - Claude Desktop or another MCP client: `{ "mcpServers": { "ontologizer": { "command": "ontologizer", "args": ["mcp"] } } }` in its MCP config, then restart it. Use the full path from `which ontologizer` if the client can't find it.
+   - A team server with tokens: ask the human for a token *file* and use `ontologizer mcp --url <server> --token-file <file>`.
+
+   [FOR-AGENTS.md](../FOR-AGENTS.md) shows what the tools can do and how to start; [MCP.md](MCP.md) has the workflows, costs and errors. Tools that call the model say so in their description: ask the human before using them, as for the chat.
+
 ## Optional: shell completion
 
 Doctor's fix line for zsh is `eval "$(ontologizer completion zsh)"` (added to `~/.zshrc`). For bash or fish use `ontologizer completion bash` or `ontologizer completion fish`. Only edit an rc file if the human agrees.

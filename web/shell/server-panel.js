@@ -58,3 +58,20 @@ export function failureText(status, error) {
   if (status === 403) return 'This token cannot read the server status (it needs the read scope).';
   return error || 'The server status is not available.';
 }
+
+const n = (/** @type {any} */ v) => Number(v).toLocaleString('en-US');
+
+/** The Usage section's lines from GET .../usage; [] when it is not a usage object.
+ * @param {any} u @returns {string[]} */
+export function usageLines(u) {
+  if (!u || typeof u !== 'object' || !Number.isFinite(u.calls)) return [];
+  const tokens = (Number(u.inputTokens) || 0) + (Number(u.outputTokens) || 0);
+  const out = [`Today (UTC): ${n(u.calls)} model calls, ${n(tokens)} tokens`];
+  const lim = [];
+  if (Number.isFinite(u.limits?.calls)) lim.push(`${n(u.limits.calls)} calls`);
+  if (Number.isFinite(u.limits?.tokens)) lim.push(`${n(u.limits.tokens)} tokens`);
+  if (lim.length) out.push(`Limits: ${lim.join(', ')} a day`);
+  return out;
+}
+
+export const NO_USAGE = 'Usage not available';

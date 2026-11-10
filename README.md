@@ -5,6 +5,8 @@
 
 Ontologizer is an open-source command-line tool: give it a topic and Claude builds a live, color-coded map of everything inside it, streaming into a local web page as it goes.
 
+**For AI agents:** start at [FOR-AGENTS.md](https://github.com/Graydon-dmg/ontologizer/blob/main/FOR-AGENTS.md). To use Ontologizer as a tool (MCP for Claude Code and the Agent SDK, the HTTP API, the JS client), see [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md).
+
 ```text
         manga chess jazz
        *--o     o     o--*
@@ -52,6 +54,26 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
    ontologizer doctor
    ```
 
+4. **Optional: give your AI agent the map tools (MCP).** Your agent can then list, read, build and ask your maps itself. It uses the API key you set in step 2.
+
+   - **Claude Code:**
+
+     ```bash
+     claude mcp add ontologizer -- ontologizer mcp
+     ```
+
+     Start a new Claude Code session, then check it with `claude mcp list` (or `/mcp` inside a session): `ontologizer` should show as connected. Try asking: *"use ontologizer to list my maps"*.
+   - **Claude Desktop, or any other MCP client:** add this to the client's MCP config. For Claude Desktop that's `claude_desktop_config.json`, opened from Settings → Developer → Edit Config. Then restart the client:
+
+     ```json
+     { "mcpServers": { "ontologizer": { "command": "ontologizer", "args": ["mcp"] } } }
+     ```
+
+     If the client can't find `ontologizer`, use the full path that `which ontologizer` prints.
+   - **A shared server** (`ontologizer serve` with tokens): see [For AI agents](https://github.com/Graydon-dmg/ontologizer/blob/main/FOR-AGENTS.md#install-the-map-tools-mcp).
+
+   Tools that call the model spend your API credits and say so; the others only read your maps.
+
 ## Your first map in 30 seconds
 
 ```bash
@@ -91,6 +113,9 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer serve` | Service mode: serve every map, build new ones from the browser |
 | `ontologizer status` | Show the home, tenants, tokens and the running server |
 | `ontologizer token create / list / revoke` | Manage access tokens for service mode |
+| `ontologizer sources list / test` | List the configured sources, or test one: which of its tools are offered, and why the others are not |
+| `ontologizer mcp` | MCP over stdio: the map tools for an agent |
+| `ontologizer usage` | Model calls and tokens per tenant per day (service mode) |
 
 Every command takes `--help`. Full detail is in the [guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md).
 
@@ -117,6 +142,17 @@ The server speaks plain HTTP: beyond this machine, put it behind an HTTPS revers
 ontologizer export demo --format html --out demo.html
 ontologizer export demo --format context --budget 1500
 ```
+
+## Agents and apps
+
+Agents use your maps through MCP: `ontologizer mcp` (stdio) or `/v1/mcp` on `ontologizer serve`. The tools build a map, wait for it, read its outline, search it, open a node, run research or explain, ask it a question, and export it or its context pack. **Connect an agent** (in the Export menu, and in the Server panel) shows the setup to copy:
+
+```bash
+claude mcp add ontologizer -- npx -y ontologizer mcp                    # this machine, your own maps
+claude mcp add --transport http ontologizer http://127.0.0.1:8787/v1/mcp  # a running ontologizer serve
+```
+
+Apps use the HTTP API (described at `/v1/openapi.json`) or the JS client, `import { createClient } from 'ontologizer/client'`. Tools that call the model say so and spend your API credits; `serve --limit-calls` and `--limit-tokens` cap each tenant's model calls and tokens per day (`ontologizer usage` shows them). The agent guide, [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md), has the setup, the workflows, costs and errors; the [user guide](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/GUIDE.md#12-agents-and-apps) has the server side.
 
 ## Requirements
 

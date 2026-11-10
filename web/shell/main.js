@@ -173,7 +173,7 @@ for (const [id, fn] of mounts) {
 }
 // Service mode only: the read-only Server panel (the one-map server leaves it hidden).
 if (TENANT) {
-  try { mountServerPanel($('server-panel'), { tenant: TENANT, popover: true }); }
+  try { mountServerPanel($('server-panel'), { tenant: TENANT, popover: true, service: true }); }
   catch (err) { console.error('[shell] mount "server-panel" failed', err); }
   // The brand mark becomes a button: All maps, New map (the one-map page keeps it decorative).
   try { mountBrandMenu(/** @type {HTMLElement} */ (document.querySelector('#topbar .brand-mark'))); }

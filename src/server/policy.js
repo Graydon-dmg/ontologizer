@@ -52,5 +52,6 @@ export function actionFor(sub) {
   if (sub === 'actions' || sub === 'api/action') return 'job';
   if (sub === 'chat' || sub === 'api/chat') return 'ask';
   if (sub === 'save') return 'save';
+  if (sub === 'export' || sub === 'context') return 'export'; // I3: the map in another format (read scope by default)
   return 'read';
 }
