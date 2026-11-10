@@ -531,7 +531,7 @@ Built on Part I2 (branch `epic/i3-surfaces`, from I2's head), with Part I4 merge
 ## You own
 
 - `src/ops.js` (the operation list, `requestFor`, `openApi`)
-- `src/server/mcp.js` (the MCP server, the HTTP handler, the callers), `src/server/usage.js` (counters, limits, the client wrapper)
+- `src/server/mcp.js` (the MCP server, the HTTP handler, the callers), `src/server/usage.js` (counters, limits, the client wrapper), `src/server/reads.js` (the map as agents read it)
 - `src/client/index.js` (`ontologizer/client`)
 - `src/cli/commands/mcp.js`, `src/cli/commands/usage.js`
 - `web/shell/ui/connect.js` (the Connect an agent panel), `web/shell/connect.js` (its pure text: the configs)
@@ -546,7 +546,9 @@ Built on Part I2 (branch `epic/i3-surfaces`, from I2's head), with Part I4 merge
 - `src/features.js` (I3 rows), `test/i/features.test.js` (the ops check is added beside the existing one; nothing removed).
 - `package.json` (the `./client` export), `README.md` (a "For AI agents" line near the top), `docs/GUIDE.md` ("Agents and apps"), `SECURITY.md`, `AGENTS.md` (a pointer to `docs/MCP.md` at the top), `docs/AGENT-INSTALL.md` (an optional step).
 
-**Must not touch:** `src/core/` (the engine's `outline`, `buildIndex` and `runTool` and I4's `exportMap` are imported, never changed), `web/views/`, `fixtures/`, any existing test except the features test as above.
+- `src/core/export/context.js`: the word `export` on `PREAMBLE`, `oneLine` and `cleanMap`, so the agent reads use the context pack's own escaping. Nothing else in it changes.
+
+**Must not touch:** the rest of `src/core/` (the engine's `outline`, `buildIndex` and `runTool` and I4's `exportMap` and `exportSnapshot` are imported, never changed), `web/views/`, `fixtures/`, any existing test except the features test as above.
 
 ## Interface
 
@@ -575,7 +577,7 @@ GET  /v1/openapi.json                     the API, from src/ops.js (no auth)
 POST /v1/mcp                              MCP, streamable HTTP, stateless (GET and DELETE: 405)
 GET  /v1/t/:tenant/usage                  { tenant, day, calls, inputTokens, outputTokens, limits: { calls, tokens }, resetsAt }
                                           read scope; the same tenant rule as status
-GET  /v1/t/:tenant/maps/:id/outline       text/markdown: "# <name>" and one line per node, "- Label (id): summary"
+GET  /v1/t/:tenant/maps/:id/outline       text/markdown: the context pack's preamble, "# <name>", one line per node, "- Label (id): summary"
 GET  /v1/t/:tenant/maps/:id/search?q=&limit=   { results: [{ id, label, path, snippet }] }  (limit 1-50, default 8)
 GET  /v1/t/:tenant/maps/:id/nodes/:nodeId { id, label, path, parent, summary, hook, article, sources, children, neighbours }
                                           404 { ok: false, error, didYouMean } for an unknown node
@@ -585,7 +587,7 @@ GET  /v1/t/:tenant/maps/:id/export?format=json|context|html|embed[&budget=][&thr
 ```
 
 - The new map routes are reads: they pass the same checks, in the same order, as the snapshot (401, Origin 403, tenant 404, scope 403, missing map 404, read rule 404). `context` and `export` are the policy's reserved `export` action (read scope by default); the others are `read`. They answer 409 while the map is being saved.
-- Outline, search and node detail are the chat's own read-only tools (`outline`, `buildIndex().search`, `runTool('get_node')` in `src/core/engine/chat.js`), imported, not copied.
+- Outline, search and node detail are the chat's own read-only tools (`outline`, `buildIndex().search`, `runTool('get_node')` in `src/core/engine/chat.js`), imported, not copied, run over `agentMap(map)` (`src/server/reads.js`): the export's allow-list (`exportSnapshot`: no chat, jobs or insights; sources as title, url, source, ref) then the context pack's escaping (`cleanMap`, and `oneLine` on the article's other text and the lenses), never over the raw map. `context` and `export` are `exportMap`'s own output. A test feeds a label and a source title written as markdown links and a failed job's error, and checks every MCP read keeps them inert or out.
 
 ### MCP
 

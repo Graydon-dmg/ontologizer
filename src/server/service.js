@@ -17,7 +17,8 @@ import { createSources, heldSources } from './sources.js';
 import { portNames } from './config.js';
 import { slug } from '../core/engine/ids.js';
 import { openApi } from '../ops.js';
-import { outline, buildIndex, runTool } from '../core/engine/chat.js';
+import { buildIndex, runTool } from '../core/engine/chat.js';
+import { agentMap, outlineText } from './reads.js';
 import { exportMap } from '../core/export/index.js';
 import { handleMcpHttp, loopbackCaller } from './mcp.js';
 import { createUsage } from './usage.js';
@@ -996,19 +997,21 @@ export async function startService({
     if (sub === 'outline' || sub === 'search' || sub === 'context' || sub === 'export' || rest[2] === 'nodes') {
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
       if (saving.has(key)) return fail(res, 409, SAVING);
-      if (sub === 'outline') return text(res, 'text/markdown', `# ${map.name || id}\n\n${outline(map)}\n`);
+      // Through the export's allow-list and the context pack's escaping (reads.js), never the raw map.
+      if (sub === 'outline') return text(res, 'text/markdown', outlineText(map, id));
       if (sub === 'search') {
         const q = String(query.get('q') ?? '').trim();
         if (!q || q.length > 500) return fail(res, 400, 'q must be non-empty, at most 500 characters');
         const lim = Number.parseInt(query.get('limit') ?? '8', 10);
         const k = Number.isInteger(lim) ? Math.min(50, Math.max(1, lim)) : 8;
-        return json(res, 200, { results: buildIndex(map).search(q, k) });
+        return json(res, 200, { results: buildIndex(agentMap(map)).search(q, k) });
       }
       if (rest[2] === 'nodes') {
         if (rest.length !== 4) return fail(res, 404, 'not found');
         let nid = '';
         try { nid = decodeURIComponent(rest[3]); } catch { return fail(res, 400, 'bad node id'); }
-        const r = runTool('get_node', { id: nid }, map, buildIndex(map), null);
+        const safe = agentMap(map);
+        const r = runTool('get_node', { id: nid }, safe, buildIndex(safe), null);
         return r.error ? json(res, 404, { ok: false, ...r.result }) : json(res, 200, r.result);
       }
       const format = sub === 'context' ? 'context' : String(query.get('format') ?? '');
