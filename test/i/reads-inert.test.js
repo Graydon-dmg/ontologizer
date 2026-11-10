@@ -68,3 +68,29 @@ test('a source title or a label written as a markdown link stays inert through e
     assert.deepEqual(inertProblems(`job: ${SECRET_JOB}`), ['a failed job\'s error text']);
   } finally { await c.close(); await srv.close(); }
 });
+
+/** Lines of an outline that a markdown reader would take for a heading or a quote (besides the map's own title). @param {string} text */
+export const injectedLines = (text) => text.split('\n').filter((l, i, all) => /^\s*(#|>)/.test(l) && !(l.startsWith('# ') && all.indexOf(l) === all.findIndex((x) => x.startsWith('# '))) && !l.startsWith('> Reference data'));
+
+test('a hostile node id cannot start a line in the outline: MCP, HTTP and the chat\'s own (planted fault: the raw id)', async () => {
+  const { home, srv, origin } = await boot();
+  const ID = 'inject/cat/x)\n# PWNED id';
+  const ev = fixtureEvents('plastic-modeling');
+  const root = ev.find((e) => e.t === 'node.added' && e.node.depth === 0).node.id;
+  ev.push({ t: 'node.added', at: 99998, node: { id: ID, label: 'Hostile\n> quote', parent: root, category: '', depth: 1, summary: 'x' } });
+  openStore(home).importEvents('ids', ev);
+  const c = new Client({ name: 't', version: '1' });
+  await c.connect(new StreamableHTTPClientTransport(new URL(`${origin}/v1/mcp`)));
+  try {
+    const viaMcp = String((/** @type {any} */ (await c.callTool({ name: 'get_outline', arguments: { id: 'ids' } }))).content[0].text);
+    const viaHttp = (await (await fetch(`${origin}/v1/t/default/maps/ids/outline`)).text());
+    const chat = outline(openStore(home).read('ids'));
+    for (const [name, text] of Object.entries({ viaMcp, viaHttp, chat })) {
+      assert.deepEqual(injectedLines(text), [], name);
+      assert.ok(text.includes('PWNED'), `${name}: the id is still there, on one line`);
+    }
+    // Planted fault: the outline line as it was (the raw id and label) injects a heading and a quote.
+    const raw = `# The map\n\n- Hostile\n> quote (${ID}): x`;
+    assert.equal(injectedLines(raw).length, 2);
+  } finally { await c.close(); await srv.close(); }
+});
