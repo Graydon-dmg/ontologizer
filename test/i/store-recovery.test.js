@@ -239,7 +239,7 @@ test('postgres lost lock connection: no crash, the store fails, reads and writes
     assert.equal(a.failed, null);
 
     const lock = await k.admin.query(
-      "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 1 AND objid = (hashtext('ontologizer:' || $1)::bigint & 4294967295)::oid",
+      "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 2 AND classid::bigint = 1330533455 AND objid = (hashtext('ontologizer:' || $1)::bigint & 4294967295)::oid",
       [k.tenant]);
     assert.equal(lock.rows.length, 1, 'the advisory lock backend is found');
     await k.admin.query('SELECT pg_terminate_backend($1)', [lock.rows[0].pid]);

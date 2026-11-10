@@ -423,7 +423,7 @@ function txPool(hook) {
   /** @type {string[]} */ const calls = [];
   /** @param {string} who */
   const run = (who) => async (/** @type {string} */ sql, /** @type {any[]} */ params = []) => {
-    calls.push(`${who}: ${sql.replace(/\s+/g, ' ').trim().slice(0, 60)}`);
+    calls.push(`${who}: ${sql.replace(/\s+/g, ' ').trim().slice(0, 90)}`);
     if (hook) hook(sql, params);
     return { rows: /pg_try_advisory_lock/.test(sql) ? [{ ok: true }] : [] };
   };
@@ -459,7 +459,8 @@ test('postgres store: save, createDraft and importEvents run in one transaction;
   const { pool, calls } = txPool();
   const s = openPostgresStore({ pool, tenant: 'acme', root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });
   await s.ready;
-  assert.match(calls[0], /^c1: SELECT pg_try_advisory_lock\(hashtext\('ontologizer:' \|\| \$1\)\)/);
+  // Two-key form: a fixed namespace (0x4f4e544f) plus the tenant hash, for lock and unlock alike.
+  assert.match(calls[0], /^c1: SELECT pg_try_advisory_lock\(1330533455, hashtext\('ontologizer:' \|\| \$1\)\)/);
   const d = s.createDraft({}); s.append(d, created('A')); s.save(d, 'a'); s.importEvents('b', [created('B')]);
   await s.sync();
   const tx = calls.filter((c) => /^c[2-9]/.test(c));
@@ -468,7 +469,7 @@ test('postgres store: save, createDraft and importEvents run in one transaction;
   assert.equal(groups.length, 3, `expected 3 transactions, got ${JSON.stringify(calls)}`);
   assert.ok(groups.every((g) => new Set(g.map((c) => c.split(':')[0])).size === 1 && /COMMIT/.test(g[g.length - 1])), 'one client, committed');
   await s.close();
-  assert.ok(calls.some((c) => /^c1: SELECT pg_advisory_unlock/.test(c)) && calls[calls.length - 1] === 'c1: release');
+  assert.ok(calls.some((c) => /^c1: SELECT pg_advisory_unlock\(1330533455, hashtext\('ontologizer:' \|\| \$1\)\)/.test(c)) && calls[calls.length - 1] === 'c1: release');
   // a failing last statement of save must end in ROLLBACK and never COMMIT
   const bad = txPool((sql) => { if (/draft = false, is_current = true/.test(sql)) throw new Error('nope'); });
   const s2 = openPostgresStore({ pool: bad.pool, root: fs.mkdtempSync(path.join(os.tmpdir(), 'onto-fake-')) });

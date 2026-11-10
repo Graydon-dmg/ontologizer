@@ -119,7 +119,10 @@ export async function fuse(ctx, a, b, opts) {
   emit('ontology.created', { name: root, root, brief, categories: [] });
   // Fuse takes the stricter side: a private input makes the fused map private, for life.
   if (oa.visibility === 'private' || ob.visibility === 'private') {
-    const names = [...new Set([...(oa.privateSources ?? []), ...(ob.privateSources ?? [])])].sort();
+    // A private side naming no source is admin only: so is the draft (an empty list), never the
+    // narrower requirement a union with the other side's names would make.
+    const adminOnly = [oa, ob].some((o) => o.visibility === 'private' && !(Array.isArray(o.privateSources) && o.privateSources.length));
+    const names = adminOnly ? [] : [...new Set([...(oa.privateSources ?? []), ...(ob.privateSources ?? [])])].sort();
     emit('visibility.raised', { to: 'private', reason: 'fuse', sources: names });
   }
   let nextIndex = 0;

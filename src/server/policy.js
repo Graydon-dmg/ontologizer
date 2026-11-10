@@ -5,6 +5,8 @@
 import { hasScope } from './tokens.js';
 
 /** @typedef {'read'|'build'|'ask'|'job'|'save'|'export'|'admin'} Action */
+// 'admin' is asked for status's admin-only fields. 'export' is reserved and never asked: the server has
+// no export route (exports are made in the page or the CLI from a map already read, so read allows them).
 /** @typedef {{ actor: { id: string, kind: string, via?: string }, tenant: string, scopes: string[], sources: string[] }} Principal */
 
 export const ACTIONS = /** @type {const} */ (['read', 'build', 'ask', 'job', 'save', 'export', 'admin']);

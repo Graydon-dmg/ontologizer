@@ -85,7 +85,7 @@
     "three": "^0.187.0"
   },
   "peerDependencies": {
-    "pg": "8.23.1"
+    "pg": "^8.13.0"
   },
   "peerDependenciesMeta": {
     "pg": {

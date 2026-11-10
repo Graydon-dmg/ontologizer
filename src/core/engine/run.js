@@ -27,21 +27,39 @@ export const NOT_ON_PRIVATE = 'That tool is not available on a private map.';
 export function createRun({ tools = null, emit, read, durable = async () => {} }) {
   /** Every ref a tool returned in this run, by source and ref. @type {Map<string, SourceRef>} */
   const returned = new Map();
-  /** Private sources this run already raised the map for. @type {Set<string>} */
-  const raised = new Set();
+  /**
+   * Private sources this run raised the map for, each with the promise that its raise is stored.
+   * Every call to that source awaits the same promise, so a parallel call cannot pass its result on
+   * before the raise is durable. A failed write is retried by the next call (the event is not re-sent).
+   * @type {Map<string, Promise<void>>}
+   */
+  const raised = new Map();
+  /** Sources whose raise this run appended (or found already on the map). @type {Set<string>} */
+  const emitted = new Set();
   const key = (/** @type {string} */ source, /** @type {string} */ ref) => `${source}\u0000${ref}`;
   const isPrivate = () => read()?.visibility === 'private';
   /** @param {string} name */
   const infoOf = (name) => tools?.info?.[name] ?? null;
 
-  /** @param {string} name @returns {boolean} whether this call appended the raise */
+  /** @param {string} name @returns {Promise<void>} resolves once the map's raise for this source is stored */
   function raise(name) {
-    if (raised.has(name)) return false;
-    raised.add(name);
-    const o = read();
-    if (Array.isArray(o?.privateSources) && o.privateSources.includes(name)) return false;
-    emit('visibility.raised', { to: 'private', reason: 'source', sources: [name] });
-    return true;
+    let p = raised.get(name);
+    if (!p) {
+      if (emitted.has(name)) p = durable();              // the last write failed: try it again
+      else {
+        // Already on the map (maybe raised by another run, maybe not stored yet): wait for the store too.
+        const o = read();
+        if (!(Array.isArray(o?.privateSources) && o.privateSources.includes(name))) {
+          emit('visibility.raised', { to: 'private', reason: 'source', sources: [name] });
+        }
+        emitted.add(name);
+        p = durable();
+      }
+      const mine = p;
+      raised.set(name, mine);
+      mine.catch(() => { if (raised.get(name) === mine) raised.delete(name); });
+    }
+    return p;
   }
 
   const has = Boolean(tools && Array.isArray(tools.defs) && tools.defs.length);
@@ -80,7 +98,7 @@ export function createRun({ tools = null, emit, read, durable = async () => {} }
         const priv = r.visibility === 'private' || info?.visibility === 'private';
         const source = r.source || info?.source || '';
         if (priv && source) {
-          if (raise(source)) await durable();   // a failed write throws: the result never reaches the model
+          await raise(source);   // every call waits for the stored raise; a failed write throws: the result never reaches the model
           if (r.isError) return { ...r, text: privateError(source), refs: [] };
         }
         if (!r.isError) for (const ref of r.refs ?? []) if (ref && ref.source && ref.ref) returned.set(key(ref.source, ref.ref), ref);

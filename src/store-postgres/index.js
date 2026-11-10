@@ -28,6 +28,10 @@ import { RESERVED_NAMES, TENANT_RE } from '../core/store.js';
  *             subs: Set<(e: OntoEvent, i: number) => void> }} Entry */
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+// The tenant lock uses the two-key advisory lock form: (this fixed namespace, hashtext of the tenant),
+// so ontologizer's locks never share a key space with another app's single-key bigint locks on the
+// same database. 0x4f4e544f is "ONTO"; it fits a signed 32-bit int.
+const PG_LOCK_NAMESPACE = 0x4f4e544f;
 
 /** @param {Date} d */
 function stamp(d) {
@@ -168,10 +172,10 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       try {
         pg = await import('pg');
       } catch {
-        throw new Error('openPostgresStore needs the pg package: npm install pg@8.23.1');
+        throw new Error('openPostgresStore needs the pg package: npm install pg@8');
       }
       const Pool = pg.Pool ?? pg.default?.Pool;
-      pool = new Pool({ connectionString: url, max: 4 });
+      pool = new Pool({ connectionString: url, max: 4, keepAlive: true });
       ownPool = true;
       // An idle pooled connection that dies emits 'error' on the pool: never let it crash the host.
       pool.on('error', (/** @type {any} */ err) => { if (log) log(`postgres pool connection lost: ${err?.code ?? err?.name ?? 'error'}`); });
@@ -182,7 +186,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       const client = await pool.connect();
       let granted = false;
       try {
-        const r = await client.query("SELECT pg_try_advisory_lock(hashtext('ontologizer:' || $1)) AS ok", [tenant]);
+        const r = await client.query(`SELECT pg_try_advisory_lock(${PG_LOCK_NAMESPACE}, hashtext('ontologizer:' || $1)) AS ok`, [tenant]);
         granted = !!(r.rows[0] && r.rows[0].ok);
       } catch (err) {
         client.release();
@@ -289,7 +293,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
         try {
           if (lockClient) {
             const c = lockClient; lockClient = null;
-            try { await c.query("SELECT pg_advisory_unlock(hashtext('ontologizer:' || $1))", [tenant]); } finally { c.release(); }
+            try { await c.query(`SELECT pg_advisory_unlock(${PG_LOCK_NAMESPACE}, hashtext('ontologizer:' || $1))`, [tenant]); } finally { c.release(); }
           }
         } finally {
           if (pool && ownPool && !closed) { closed = true; await pool.end(); }

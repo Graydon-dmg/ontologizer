@@ -37,6 +37,7 @@ const CHECK_KEY = ':check'; // the engine that answers maps/check (it writes not
 const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
 const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
+const RECHECK_MS = 5000;         // how long an open stream or chat trusts a custom identity's or policy's last answer
 const SAVING = 'The map is being saved under a new name: open it by its new name.';
 
 /** A --host that is loopback. @param {string} host */
@@ -84,7 +85,7 @@ function refusal(message) {
 /**
  * @param {{ home: string, host?: string, port?: number, tokensFile?: string|null, watchTokensFile?: string|null,
  *   allowHosts?: string[], maxBuilds?: number, maxQueued?: number, maxChecks?: number, maxStreamsPerToken?: number,
- *   idleMs?: number, pingMs?: number,
+ *   idleMs?: number, pingMs?: number, maxStores?: number, recheckMs?: number,
  *   makeEngine: (o: { store: any, id: string, tenant: string, clientFor?: any }) => Promise<any>,
  *   version?: string, webDir?: string, log?: (line: string) => void,
  *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null }} opts
@@ -92,7 +93,10 @@ function refusal(message) {
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
  *   maxBuilds: builds running at once. maxQueued: builds waiting per tenant (more: 429).
  *   maxChecks: context checks at once (more: 429). maxStreamsPerToken: event streams + waits per token.
- *   idleMs: a map's engine and handler with no streams and no work are dropped after this long.
+ *   idleMs: a map's engine and handler with no streams and no work are dropped after this long; a
+ *   tenant's store with nothing open on it is closed after this long too (so --max-stores frees its slot).
+ *   maxStores: tenants with a store open at once. recheckMs: how long an open stream or chat trusts a
+ *   custom identity's or policy's last answer.
  *   makeEngine: the engine for one map (the CLI passes engineFor with needKey false); clientFor is the
  *   config's model port, when it has one.
  *   config: the loaded ontologizer.config.js (or null: exactly I1). configPath: shown to admins.
@@ -100,7 +104,7 @@ function refusal(message) {
  */
 export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
-  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES,
+  maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES, recheckMs = RECHECK_MS,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
 }) {
   // ---- ports: each one is the config's, or I1's own behaviour ----
@@ -192,16 +196,52 @@ export async function startService({
   /** Close a store and forget it (a failed one is never kept). @param {string} tenant @param {any} s */
   function dropStore(tenant, s) {
     if (stores.get(tenant) === s) stores.delete(tenant);
+    storeUsed.delete(tenant);
     try { Promise.resolve(s?.close?.()).catch(() => {}); } catch { /* best effort */ }
+  }
+  /** When each tenant's store was last asked for. @type {Map<string, number>} */
+  const storeUsed = new Map();
+  /** Requests on each tenant's routes right now (streams, chats and waits stay counted until they end). @type {Map<string, number>} */
+  const tenantRequests = new Map();
+  /**
+   * Whether nothing is open on a tenant's store: no request on its routes, no engine or handler, no
+   * build queued or running, no fuse writing, no save. Only such a store is ever closed to free a slot.
+   * @param {string} tenant
+   */
+  function storeIdle(tenant) {
+    if ((tenantRequests.get(tenant) ?? 0) > 0 || waiting(tenant) > 0) return false;
+    const mine = (/** @type {string} */ k) => k.startsWith(`${tenant}/`);
+    if ([...engines.keys(), ...handlers.keys(), ...fusing, ...saving].some(mine)) return false;
+    for (const [k, b] of builds) if (mine(k) && (b.state === 'queued' || b.state === 'running')) return false;
+    return true;
+  }
+  /**
+   * Whether a store may be closed now: unused for idleMs and idle. A failed store is kept: its tenant
+   * answers 503 and /v1/health/ready says not ready until a restart.
+   * @param {string} tenant
+   */
+  const evictable = (tenant) => !stores.get(tenant)?.failed && Date.now() - (storeUsed.get(tenant) ?? 0) >= idleMs && storeIdle(tenant);
+  /** Close an idle store (written out first) to give back its slot. @param {string} tenant */
+  function evictStore(tenant) {
+    const s = stores.get(tenant);
+    if (!s) return;
+    stores.delete(tenant);
+    storeUsed.delete(tenant);
+    (async () => {
+      try { await s.flush?.(); } catch { /* best effort */ }
+      try { await s.close?.(); } catch { /* best effort */ }
+    })().catch(() => {});
+    log(`store for tenant ${tenant} closed (idle)`);
   }
   /**
    * A tenant's store once it is ready (a Postgres store loads first), null when the tenant has no
-   * store, 'down' when it cannot load.
+   * store, 'down' when it cannot load, 'full' when every store slot (--max-stores) is busy.
    * @param {string} tenant @param {boolean} create @returns {Promise<any>}
    */
   async function readyStore(tenant, create) {
     const open = stores.get(tenant);
     if (open) {
+      storeUsed.set(tenant, Date.now());
       if (open.failed) return 'down';                     // a failed store serves nothing (503)
       if (open.ready) { try { await open.ready; } catch { return 'down'; } }
       return open;
@@ -212,10 +252,17 @@ export async function startService({
       try { there = (await config.store.exists(tenant)) === true; } catch { return 'down'; }
       if (!there) return null;
     }
-    // At most maxStores tenants open at once: one more is refused, never opened.
-    if (stores.size >= Math.max(1, maxStores)) { log(`too many tenants open (${maxStores}): ${tenant} refused`); return 'down'; }
+    // At most maxStores tenants open at once. At the cap, the least recently used store that is idle
+    // (unused for idleMs, nothing open on it: what the sweep would close) is closed to make room; when
+    // none is, the new tenant is refused (503 with Retry-After), never opened.
+    if (stores.size >= Math.max(1, maxStores)) {
+      const idle = [...stores.keys()].filter(evictable).sort((a, b) => (storeUsed.get(a) ?? 0) - (storeUsed.get(b) ?? 0));
+      if (!idle.length) { log(`too many tenants open (${maxStores}), none idle: ${tenant} refused`); return 'full'; }
+      evictStore(idle[0]);
+    }
     const s = storeFor(tenant, create);
     if (!s) return s;
+    storeUsed.set(tenant, Date.now());
     if (s.ready) {
       try { await s.ready; } catch (err) {
         // Never keep a store whose ready failed: it would hold its slot (and maybe connections) for nothing.
@@ -442,6 +489,8 @@ export async function startService({
       }
       drop(key).catch(() => {});
     }
+    // A store nothing has used for idleMs, with nothing open on it, is closed (its slot freed).
+    for (const tenant of [...stores.keys()]) if (evictable(tenant)) evictStore(tenant);
   }
   const sweeper = setInterval(sweep, Math.max(10, Math.min(idleMs, 60000)));
   sweeper.unref?.();
@@ -546,6 +595,10 @@ export async function startService({
       log(`identity port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
       return 'bad';
     }
+    return identityPrincipal(got);
+  }
+  /** An identity port's answer, checked (see fromIdentity). @param {any} got @returns {Principal|null|'bad'} */
+  function identityPrincipal(got) {
     if (got === null || got === undefined) return null;
     const a = got?.actor;
     const ok = a && typeof a.id === 'string' && a.id && ['human', 'agent', 'service'].includes(a.kind)
@@ -572,7 +625,8 @@ export async function startService({
   }
   /**
    * The principal as it stands now: its token row re-read (a revoke, or sources rewritten in
-   * tokens.json, take effect here), or null when it no longer stands.
+   * tokens.json, take effect here), or null when it no longer stands. Tokens and sessions only; an
+   * identity principal is re-checked by recheckIdentity.
    * @param {Principal} p @returns {Principal|null}
    */
   function currentPrincipal(p) {
@@ -582,34 +636,88 @@ export async function startService({
     return row ? { ...p, ...tokenPrincipal(row) } : null;
   }
   /**
+   * An identity principal as it stands now: the port's optional stillValid(principal) (true keeps it,
+   * a principal replaces it, anything else ends it), or else its authenticate run again on the request
+   * that opened the stream or chat. The answer must be the same actor in the same tenant; its scopes
+   * and sources may change. A throw ends it.
+   * @param {Principal} p @param {http.IncomingMessage} req @returns {Promise<Principal|null>}
+   */
+  async function recheckIdentity(p, req) {
+    if (closing) return null;
+    const port = /** @type {any} */ (identity);
+    let got;
+    try {
+      if (typeof port.stillValid === 'function') {
+        const r = await port.stillValid(publicPrincipal(p));
+        if (r === true) return p;
+        if (!r || typeof r !== 'object') return null;
+        got = r;
+      } else {
+        got = await port.authenticate(req);
+      }
+    } catch (err) {
+      log(`identity port failed: ${String(/** @type {any} */ (err)?.message ?? err).split('\n')[0]}`);
+      return null;
+    }
+    const cur = identityPrincipal(got);
+    if (!cur || cur === 'bad' || cur.actor.id !== p.actor.id || cur.tenant !== p.tenant) return null;
+    return cur;
+  }
+  /**
    * Whether a stream (or a chat) may go on: called on every ping, before every event a stream sends and
-   * before every chunk a chat sends. It re-checks the principal (its token row as it is now) and the
-   * read rule against the map as it is now. The answer is remembered until either changes (the
-   * principal's scopes or sources, the map's visibility or private sources), so the common case costs
-   * a file stat and a comparison. A policy that answers with a Promise gets a Promise back: the stream
-   * waits for it, in order (map.js), and only a true lets the event out.
+   * before every chunk a chat sends. It re-checks the principal and the read rule on the map as it is now:
+   * - tokens and sessions: the token row as it is now (a file stat). The default policy's answer is
+   *   remembered until the principal's scopes or sources, or the map's visibility or private sources,
+   *   change (it depends on nothing else).
+   * - a custom identity port: asked again (stillValid, or authenticate on the original request) once
+   *   its last answer is recheckMs (5 s) old, so a removed user's stream ends at the first check after that.
+   * - a custom policy: asked again once its last answer is recheckMs old, even when nothing it is shown
+   *   changed (it may read state of its own).
+   * An async answer gets a Promise back: the stream waits for it, in order (map.js), and only a true
+   * lets the event out. Once it says no, the stream or chat ends.
    * @param {Principal} p @param {string} tenant @param {string} id @param {any} store
+   * @param {http.IncomingMessage} req the request that opened the stream or chat
    * @returns {(ev?: any) => boolean|Promise<boolean>}
    */
-  function streamValid(p, tenant, id, store) {
+  function streamValid(p, tenant, id, store, req) {
+    const customPolicy = policy !== defaultPolicy;
     /** @type {string|null} */ let memoKey = null;
     let memo = false;
-    return (_ev) => {
+    let memoAt = 0;
+    // The identity principal as last checked (null: it no longer stands), and when.
+    /** @type {Principal|null} */ let idCur = p;
+    let idAt = Date.now();
+    /** @type {Promise<Principal|null>|null} */ let idPending = null;
+    /** @param {Principal} cur @returns {boolean|Promise<boolean>} */
+    const decide = (cur) => {
       if (store.failed) return false;
-      const cur = currentPrincipal(p);
-      if (!cur) return false;
       let map;
       try { map = mapFor(tenant, id, store); } catch { return false; }
       const key = JSON.stringify([cur.scopes, cur.sources, map?.visibility ?? 'public', map?.privateSources ?? []]);
-      if (key === memoKey) return memo;
+      if (key === memoKey && (!customPolicy || Date.now() - memoAt < recheckMs)) return memo;
       let r;
       try { r = policy.can(publicPrincipal(cur, tenant), 'read', { tenant, mapId: id, map }); } catch { return false; }
       if (r && typeof (/** @type {any} */ (r)).then === 'function') {
-        return Promise.resolve(r).then((v) => { memoKey = key; memo = v === true; return memo; }, () => false);
+        return Promise.resolve(r).then((v) => { memoKey = key; memo = v === true; memoAt = Date.now(); return memo; }, () => false);
       }
       memoKey = key;
       memo = r === true;
+      memoAt = Date.now();
       return memo;
+    };
+    return (_ev) => {
+      if (store.failed || closing) return false;
+      if (p.via === 'identity') {
+        if (!idCur) return false; // once ended, it stays ended
+        if (Date.now() - idAt < recheckMs) return decide(idCur);
+        if (!idPending) {
+          idPending = recheckIdentity(p, req).then((cur) => { idCur = cur; idAt = Date.now(); idPending = null; return cur; });
+        }
+        return idPending.then((cur) => (cur ? decide(cur) : false));
+      }
+      const cur = currentPrincipal(p);
+      if (!cur) return false;
+      return decide(cur);
     };
   }
   /** Reachability of sources for status, remembered for 30 s per source. @type {Map<string, { at: number, reachable: boolean }>} */
@@ -661,6 +769,10 @@ export async function startService({
   // ---- routes ----
   /** @param {http.ServerResponse} res @param {number} code @param {string} error @param {Record<string, string>} [headers] */
   const fail = (res, code, error, headers) => json(res, code, { ok: false, error }, headers);
+  /** 503 for a store that is down, or (with Retry-After) one that has no free slot. @param {http.ServerResponse} res @param {any} store */
+  const storeFail = (res, store) => (store === 'full'
+    ? fail(res, 503, 'Too many tenants are busy right now: try again shortly.', { 'Retry-After': '30' })
+    : fail(res, 503, 'the store is not available'));
 
   /** @param {http.IncomingMessage} req @param {http.ServerResponse} res @param {string} method */
   async function session(req, res, method) {
@@ -728,17 +840,26 @@ export async function startService({
     const rest = parts.slice(4);
     if (!TENANT_RE.test(tenant)) return fail(res, 404, 'not found');
     if (tenant !== 'default' && noTenants) return fail(res, 404, 'not found');
-    const admin = has(p, 'admin');
+    // Counted until the response ends, so a store is never closed under a request (or a stream) using it.
+    tenantRequests.set(tenant, (tenantRequests.get(tenant) ?? 0) + 1);
+    res.once('close', () => {
+      const n = (tenantRequests.get(tenant) ?? 1) - 1;
+      if (n > 0) tenantRequests.set(tenant, n); else tenantRequests.delete(tenant);
+      if (stores.has(tenant)) storeUsed.set(tenant, Date.now());
+    });
     // Status: your own tenant with read; any tenant only with an admin token of tenant default.
     if (rest.length === 1 && rest[0] === 'status') {
-      if (!ownsTenant(p, tenant) && !(admin && p.tenant === 'default')) return fail(res, 404, 'not found');
+      // The admin-only parts (paths, every source, other tokens' sources) are the policy's 'admin'
+      // answer. Reaching another tenant also needs the admin scope itself: no policy widens the tenant rule.
+      const admin = await can(p, 'admin', { tenant });
+      if (!ownsTenant(p, tenant) && !(admin && has(p, 'admin') && p.tenant === 'default')) return fail(res, 404, 'not found');
       if (!has(p, 'read')) return fail(res, 403, 'This token needs the read scope.');
       if (method !== 'GET' && method !== 'HEAD') return fail(res, 405, 'method not allowed');
       // Another tenant's status (an admin's) never opens its store or takes its lock: only an open
       // store, or for files the tenant's index on disk, is read.
       const own = (p.tenant ?? 'default') === tenant;
       const store = own ? await readyStore(tenant, false) : peekStore(tenant);
-      if (store === 'down') return fail(res, 503, 'the store is not available');
+      if (store === 'down' || store === 'full') return storeFail(res, store);
       const note = checkOpenNote();
       // Sources: every configured one for an admin, the ones it holds for anyone else. Names only.
       const shown = srcs ? (admin ? srcs.names() : p.sources) : [];
@@ -757,8 +878,10 @@ export async function startService({
         auth: identity ? 'identity' : authRequired ? 'tokens' : 'open',
         ...(note ? { note } : {}),
         maps: store ? count : (config?.store && !own ? null : 0),
+        // A token's sources (they may name private sources) only to an admin, or on the caller's own row.
         tokens: currentTokens().filter((r) => r.tenant === tenant)
-          .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes], ...(r.sources ? { sources: [...r.sources] } : {}) })),
+          .map((r) => ({ name: r.name, tenant: r.tenant, scopes: [...r.scopes],
+            ...(r.sources && (admin || ((p.via === 'bearer' || p.via === 'cookie') && r.name === p.name && r.hash === p.hash)) ? { sources: [...r.sources] } : {}) })),
         server: { version, startedAt },
         ...(config ? { ports } : {}),
         ...(sourceRows ? { sources: sourceRows } : {}),
@@ -781,7 +904,7 @@ export async function startService({
       if (method === 'GET' || method === 'HEAD') {
         if (!await can(p, 'read', { tenant })) return fail(res, 403, needs('read'));
         const store = await readyStore(tenant, false);
-        if (store === 'down') return fail(res, 503, 'the store is not available');
+        if (store === 'down' || store === 'full') return storeFail(res, store);
         /** @type {any[]} */
         const rows = [];
         for (const m of store ? store.list({ drafts: true }) : []) {
@@ -812,7 +935,7 @@ export async function startService({
           return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
         }
         const store = await readyStore(tenant, true);
-        if (store === 'down' || !store) return fail(res, 503, 'the store is not available');
+        if (store === 'down' || store === 'full' || !store) return storeFail(res, store);
         // When private sources were picked, the draft is written with its ontology.created and their
         // raise, in one write (one transaction on Postgres), stored before the 202: a queued private
         // build is private from the start, and stays so across a crash or a restart. (Other builds
@@ -870,7 +993,7 @@ export async function startService({
     const action = actionFor(sub);
     if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));
     const store = await readyStore(tenant, false);
-    if (store === 'down') return fail(res, 503, 'the store is not available');
+    if (store === 'down' || store === 'full') return storeFail(res, store);
     // A browser opening a map it cannot see gets a small page, never JSON; the same 404 either way.
     const notFound = () => (sub === 'view' && (method === 'GET' || method === 'HEAD') && String(req.headers.accept ?? '').includes('text/html')
       ? sendNotFoundPage(res) : fail(res, 404, 'not found'));
@@ -946,9 +1069,10 @@ export async function startService({
       }
       const principal = publicPrincipal(p, tenant);
       const handled = await h.handleApi(req, res, apiPath, query, {
-        // Re-checked on every ping and before every event sent: the token (or session), its current
-        // sources, and the read rule on the map as it is now (a raise ends the stream before it is sent).
-        valid: streamValid(p, tenant, id, store),
+        // Re-checked on every ping and before every event sent: the token (or session) or the identity
+        // port, its current sources, and the read rule on the map as it is now (a raise ends the stream
+        // before it is sent). A custom identity or policy is asked again once its answer is recheckMs old.
+        valid: streamValid(p, tenant, id, store, req),
         sync: () => durable(store),
         actor: p.actor,
         principal,
