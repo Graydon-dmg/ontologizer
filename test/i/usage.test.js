@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createUsage, UsageLimitError, usagePath, secondsToNextUtcDay } from '../../src/server/usage.js';
+import { createUsage, UsageLimitError, usagePath, secondsToNextUtcDay, readUsageFile } from '../../src/server/usage.js';
 import { main } from '../../src/cli/main.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'onto-usage-'));
@@ -99,13 +99,13 @@ test('usage command: missing file, text, --json, --days; no prices', async () =>
   const empty = await run(['usage', '--home', home], home);
   assert.equal(empty.code, 0, empty.stderr);
   assert.equal(empty.stdout, `No model usage recorded in ${home} yet.\n`);
-  const u = createUsage({ home, now: () => Date.now() });
+  const u = createUsage({ home, now: () => T0 });
   u.record('acme', { calls: 3, inputTokens: 120, outputTokens: 45 });
   fs.writeFileSync(usagePath(home), JSON.stringify({ version: 1, tenants: {
     ...JSON.parse(fs.readFileSync(usagePath(home), 'utf8')).tenants,
     old: { '2026-01-01': { calls: 1, inputTokens: 1, outputTokens: 1 }, '2026-01-02': { calls: 2, inputTokens: 2, outputTokens: 2 } },
   } }));
-  const day = new Date().toISOString().slice(0, 10);
+  const day = '2026-03-10'; // T0's UTC day
   const r = await run(['usage', '--home', home, '--days', '1'], home);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, new RegExp(`${day}  3 calls  120 in  45 out tokens`));
@@ -118,4 +118,18 @@ test('usage command: missing file, text, --json, --days; no prices', async () =>
   assert.deepEqual(Object.keys(j.tenants.old), ['2026-01-02']);
   // planted fault: the money scan catches a line with a price
   assert.ok('2026-03-10  3 calls  $0.02'.split('\n').some((l) => /\$|dollar|price|cost/i.test(l)));
+});
+
+test('one tenth of a second before midnight UTC: Retry-After is 1, and the next record counts on the new day', () => {
+  const home = tmp();
+  let t = Date.UTC(2026, 10, 9, 23, 59, 59, 900);
+  const u = createUsage({ home, limitCalls: 1, now: () => t });
+  u.record('a', { calls: 1 });
+  assert.deepEqual(u.over('a')?.retryAfter, 1);
+  assert.equal(u.today('a').day, '2026-11-09');
+  t += 200;
+  assert.equal(u.over('a'), null);
+  assert.deepEqual([u.today('a').day, u.today('a').calls], ['2026-11-10', 0]);
+  u.record('a', { calls: 1 });
+  assert.deepEqual(Object.keys(readUsageFile(home).tenants.a).sort(), ['2026-11-09', '2026-11-10']);
 });

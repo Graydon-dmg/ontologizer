@@ -21,7 +21,7 @@ import { buildIndex, runTool } from '../core/engine/chat.js';
 import { agentMap, outlineText } from './reads.js';
 import { exportMap } from '../core/export/index.js';
 import { handleMcpHttp, loopbackCaller } from './mcp.js';
-import { createUsage } from './usage.js';
+import { createUsage, EXIT_WAIT_MS } from './usage.js';
 
 export const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 export const COOKIE = 'ontologizer_session';
@@ -1205,7 +1205,8 @@ export async function startService({
         try { await s.close?.(); } catch { /* best effort */ }
       }
       try { await srcs?.close(); } catch { /* best effort */ }
-      try { usage.flush(); } catch { /* best effort */ }
+      // Counts held because the lock was busy are written now: this waits out a busy (or crashed) lock.
+      try { usage.flush({ waitMs: EXIT_WAIT_MS }); } catch { /* best effort */ }
       server.closeAllConnections?.();
       await done;
     },

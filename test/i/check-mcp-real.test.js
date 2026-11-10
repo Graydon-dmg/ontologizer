@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startService } from '../../src/server/service.js';
 import { createEngine } from '../../src/core/engine/index.js';
+import { createUsage } from '../../src/server/usage.js';
 import { createFakeClient } from '../c/fake.js';
 import { tempHome } from './helpers-service.js';
 
@@ -17,7 +18,7 @@ test('MCP check_context on the real engine returns the model\'s brief, metered',
   const home = tempHome();
   /** @type {any[]} */ const calls = [];
   const srv = await startService({
-    home, host: '127.0.0.1', port: 0, version: 'test',
+    home, host: '127.0.0.1', port: 0, version: 'test', usage: createUsage({ home, now: () => Date.UTC(2026, 10, 9, 12) }),
     makeEngine: async (/** @type {any} */ { store, id, meter }) => createEngine({
       store, id, client: meter(createFakeClient({ respond: (p) => { calls.push(p); return { text: `${JSON.stringify(READY)}\n` }; } })),
     }),

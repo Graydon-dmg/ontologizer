@@ -41,19 +41,24 @@ function stamp(file) {
   try { const st = fs.statSync(file); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return 'missing'; }
 }
 
-const LOCK_STALE_MS = 10_000;
-const LOCK_TRIES = 200;
+export const LOCK_STALE_MS = 10_000;
+/** How long a write waits for the lock (a busy lock keeps the counts in memory for the next write). */
+export const LOCK_WAIT_MS = 1_000;
+/** How long the last write, at exit, waits: past LOCK_STALE_MS, so even a crashed holder's lock is taken over. */
+export const EXIT_WAIT_MS = LOCK_STALE_MS + 2_000;
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * Take <file>.lock (created with O_EXCL); a lock older than LOCK_STALE_MS is a crashed writer's and
- * is removed. Retries for about a second. Returns the release function, or null.
- * @param {string} file @returns {(() => void) | null}
+ * is removed. Retries for up to `waitMs` (wall time: a lock's age is wall time too). Returns the
+ * release function, or null.
+ * @param {string} file @param {number} [waitMs] @returns {(() => void) | null}
  */
-export function lock(file) {
+export function lock(file, waitMs = LOCK_WAIT_MS) {
   const lockFile = `${file}.lock`;
   try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* reported by the write */ }
-  for (let i = 0; i < LOCK_TRIES; i++) {
+  const until = Date.now() + Math.max(0, waitMs);
+  for (let first = true; first || Date.now() < until; first = false) {
     try {
       const fd = fs.openSync(lockFile, 'wx', 0o600);
       fs.writeSync(fd, String(process.pid));
@@ -195,10 +200,12 @@ export function meterStream(s, params, add) {
 }
 
 /**
- * @param {{ home: string, limitCalls?: number|null, limitTokens?: number|null, now?: () => number, log?: (line: string) => void }} o
+ * @param {{ home: string, limitCalls?: number|null, limitTokens?: number|null, now?: () => number, log?: (line: string) => void, lockWaitMs?: number }} o
  *   limitCalls, limitTokens: per tenant per UTC day; null (or 0 and below) means no limit.
+ *   now: the clock (ms) that decides the UTC day, the Retry-After and what is pruned; tests fix it.
+ *   lockWaitMs: how long a write waits for the lock before keeping its counts for the next write.
  */
-export function createUsage({ home, limitCalls = null, limitTokens = null, now = () => Date.now(), log = () => {} }) {
+export function createUsage({ home, limitCalls = null, limitTokens = null, now = () => Date.now(), log = () => {}, lockWaitMs = LOCK_WAIT_MS }) {
   const file = usagePath(home);
   const limits = {
     calls: Number.isInteger(limitCalls) && /** @type {number} */ (limitCalls) > 0 ? /** @type {number} */ (limitCalls) : null,
@@ -226,14 +233,18 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
     data = readUsageFile(home);
   }
 
-  /** Add `pending` to the file's counts, under the lock, atomically; keep the last KEEP_DAYS days. */
-  function save() {
-    if (!Object.keys(pending).length) return;
-    const release = lock(file);
+  /**
+   * Add `pending` to the file's counts, under the lock, atomically; keep the last KEEP_DAYS days.
+   * Counts kept because the lock was busy go out with the next write, or at the latest with flush().
+   * @param {number} [waitMs] @returns {boolean} whether nothing is left pending
+   */
+  function save(waitMs = lockWaitMs) {
+    if (!Object.keys(pending).length) return true;
+    const release = lock(file, waitMs);
     if (!release) {
       if (!warned) log(`could not lock ${file}: another process holds it; the counts are kept and written next time`);
       warned = true;
-      return;
+      return false;
     }
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
@@ -255,10 +266,12 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
       pending = {};
       seen = stamp(file);
       warned = false;
+      return true;
     } catch (err) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing to remove */ }
       if (!warned) log(`could not write ${file}: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`);
       warned = true;
+      return false;
     } finally {
       release();
     }
@@ -372,5 +385,15 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
     });
   }
 
-  return { file, limits, record, today, over, wrap, flush: save };
+  return {
+    file, limits, record, today, over, wrap,
+    /**
+     * Write every count still held in memory. At exit (serve's stop, mcp's), pass EXIT_WAIT_MS: it
+     * outwaits a busy lock, and a lock left by a crashed writer goes stale and is taken over.
+     * @param {{ waitMs?: number }} [o] @returns {boolean} whether nothing is left pending
+     */
+    flush: ({ waitMs = lockWaitMs } = {}) => save(waitMs),
+    /** Counts held in memory, not yet in the file (tests). */
+    pendingCalls: () => Object.values(pending).flatMap((d) => Object.values(d)).reduce((n, c) => n + c.calls, 0),
+  };
 }

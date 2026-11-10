@@ -4,7 +4,7 @@ process.env.ONTOLOGIZER_KEYRING = 'none'; delete process.env.ANTHROPIC_API_KEY; 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startService } from '../../src/server/service.js';
-import { createUsage } from '../../src/server/usage.js';
+import { createUsage, secondsToNextUtcDay, readUsageFile } from '../../src/server/usage.js';
 import { createToken, tokensPath } from '../../src/server/tokens.js';
 import { tempHome, req, seed, stubEngine } from './helpers-service.js';
 
@@ -26,9 +26,14 @@ async function meteredEngine(x) {
   };
 }
 
-/** @param {any} o */
+/** Every test here runs on a fixed clock: the UTC day, Retry-After and the rollover never depend on when it runs. */
+const NOON = Date.UTC(2026, 10, 9, 12);
+
+/** @param {any} o  o.now: the usage clock (default NOON) */
 async function start(o) {
-  return startService({ port: 0, host: '127.0.0.1', allowHosts: [], maxBuilds: 2, version: 'test', makeEngine: meteredEngine, ...o });
+  const { now = () => NOON, ...rest } = o;
+  const usage = rest.usage ?? createUsage({ home: rest.home, limitCalls: rest.limitCalls ?? null, limitTokens: rest.limitTokens ?? null, now });
+  return startService({ port: 0, host: '127.0.0.1', allowHosts: [], maxBuilds: 2, version: 'test', makeEngine: meteredEngine, ...rest, usage });
 }
 const check = (/** @type {string} */ url, /** @type {Record<string, string>} */ headers = {}, tenant = 'default') =>
   req(url, `/v1/t/${tenant}/maps/check`, { method: 'POST', headers, body: { context: 'plastic' } });
@@ -51,7 +56,7 @@ test('500 calls, then 429 with Retry-After on every model route; view actions st
       for (const [name, r] of /** @type {Array<[string, any]>} */ (rows)) {
         const ra = Number(r.headers['retry-after']);
         if (r.status !== 429) problems.push(`${name}: ${r.status}`);
-        else if (!(ra >= 1 && ra <= 86400)) problems.push(`${name}: Retry-After ${r.headers['retry-after']}`);
+        else if (ra !== secondsToNextUtcDay(NOON)) problems.push(`${name}: Retry-After ${r.headers['retry-after']}, not ${secondsToNextUtcDay(NOON)}`);
         else if (!/limit/i.test(r.json().error)) problems.push(`${name}: error does not name the limit`);
       }
       return problems;
@@ -76,7 +81,7 @@ async function isolationProblems(usageFactory) {
   const home = tempHome();
   const tok = (/** @type {string} */ name, /** @type {string} */ tenant, /** @type {string[]} */ scopes) => createToken(tokensPath(home), { name, tenant, scopes }).token;
   const a = tok('a', 'a', ['read', 'build']); const b = tok('b', 'b', ['read', 'build']);
-  const srv = await start({ home, limitCalls: 3, tokensFile: tokensPath(home), usage: usageFactory({ home, limitCalls: 3 }) });
+  const srv = await start({ home, limitCalls: 3, tokensFile: tokensPath(home), usage: usageFactory({ home, limitCalls: 3, now: () => NOON }) });
   const problems = [];
   try {
     for (let i = 0; i < 3; i++) await check(srv.url, { authorization: `Bearer ${a}` }, 'a');
@@ -110,5 +115,28 @@ test('GET /v1/t/:tenant/usage: own tenant only; a read token may read it', async
     const read = await req(srv.url, '/v1/t/a/usage', { headers: { authorization: `Bearer ${ro}` } });
     assert.equal(read.status, 200);
     assert.equal(read.json().calls, 1);
+  } finally { await srv.close(); }
+});
+
+test('the day rolls over at 00:00 UTC: a clock at 23:59:59.900 is limited with Retry-After 1, then served 200 ms later', async () => {
+  const home = tempHome();
+  let t = Date.UTC(2026, 10, 9, 23, 59, 59, 900);
+  const srv = await start({ home, limitCalls: 2, tokensFile: null, now: () => t });
+  try {
+    assert.equal((await check(srv.url)).status, 200);
+    assert.equal((await check(srv.url)).status, 200);
+    const over = await check(srv.url);
+    assert.equal(over.status, 429);
+    assert.equal(over.headers['retry-after'], '1', 'a tenth of a second to midnight is one second');
+    assert.match(over.json().error, /in 0 h 0 min/);
+    const before = (await req(srv.url, '/v1/t/default/usage')).json();
+    assert.deepEqual([before.day, before.calls, before.resetsAt], ['2026-11-09', 2, '2026-11-10T00:00:00.000Z']);
+    t += 200; // 00:00:00.100 on the 10th
+    assert.equal((await check(srv.url)).status, 200, 'a new day, a new count');
+    const after = (await req(srv.url, '/v1/t/default/usage')).json();
+    assert.deepEqual([after.day, after.calls, after.resetsAt], ['2026-11-10', 1, '2026-11-11T00:00:00.000Z']);
+    // Both days are kept in the file: yesterday's count was not rewritten as today's.
+    const days = readUsageFile(home).tenants.default;
+    assert.deepEqual([days['2026-11-09'].calls, days['2026-11-10'].calls], [2, 1]);
   } finally { await srv.close(); }
 });

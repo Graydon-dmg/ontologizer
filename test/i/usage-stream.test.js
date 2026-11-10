@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createUsage, meterStream } from '../../src/server/usage.js';
+
+const NOON = Date.UTC(2026, 10, 9, 12); // the usage clock: the day never depends on when the test runs
 import { startService } from '../../src/server/service.js';
 import { req, stubEngine, tempHome } from './helpers-service.js';
 
@@ -97,6 +99,7 @@ test('a build that times out is counted: its stream\'s message_start reached the
   const home = tempHome();
   const srv = await startService({
     home, host: '127.0.0.1', port: 0, tokensFile: null, version: 'test', maxBuilds: 1, buildTimeoutMs: 150,
+    usage: createUsage({ home, now: () => NOON }),
     makeEngine: async (/** @type {any} */ x) => {
       const client = x.meter({ messages: { stream: (/** @type {any} */ _p, /** @type {any} */ opts) => {
         const signal = opts?.signal;
@@ -117,7 +120,7 @@ test('a build that times out is counted: its stream\'s message_start reached the
     const w = (await req(srv.url, `/v1/t/default/maps/${id}/wait?timeout=3000`)).json();
     assert.match(w.error ?? '', /^Timed out after/);
     await tick();
-    const u = createUsage({ home }).today('default');
+    const u = createUsage({ home, now: () => NOON }).today('default');
     assert.equal(u.calls, 1);
     assert.equal(u.inputTokens, 120);
     assert.equal(u.outputTokens, 10);
