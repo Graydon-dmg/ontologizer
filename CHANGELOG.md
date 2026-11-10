@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **More from one read.** `get_context` (and `export --format context`) puts each node's id after its label (`…/levain` under its parent, to keep it short), so an agent can call `get_node` or `explain` without `get_outline` first. A new **Articles** section carries what `explain` wrote; when the budget is tight, articles outlive the outline's summaries, and ids go before labels.
+- **Says when a map is mostly one line.** When most nodes have no article, the pack's Brief and `get_node` say how many and name the next step: `explain` the nodes your task depends on. Nothing is explained for you; it still costs credits only when you ask.
+- **`get_node` on a category.** Each source is listed once (an explained node showed them twice), and a node with children has `branchLinks`: the cross-links that leave its branch, because a category's own links sit on the nodes under it.
+- **Clearer tool descriptions.** `get_outline` marks explained nodes `[explained]`. `get_context` says its "Trimmed" line appears only when something was cut. `ask_map` says plainly that it adds to the map's chat, which others can see. `list_maps` documents `updatedAt` and that draft ids use the server's clock (usually UTC).
+
 ## 1.5.0 (2026-11-10)
 
 - **Agents can use your maps (MCP).** `ontologizer mcp` connects Claude Code, Claude Desktop or any MCP client to your maps: list, outline, search, read a node, get a context pack, and (with permission) build, research, explain, ask, fuse and save. **Connect an agent** in the Export menu shows the setup. The tools that spend API credits say so. See [docs/MCP.md](docs/MCP.md) and [FOR-AGENTS.md](FOR-AGENTS.md). Thanks to Alex Garden ([#6](https://github.com/Graydon-dmg/ontologizer/pull/6), [#7](https://github.com/Graydon-dmg/ontologizer/pull/7)).
