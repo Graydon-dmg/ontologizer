@@ -28,9 +28,9 @@ const FAULTS = {
   plainEnd: [['await drop(key, { deleted: true });', 'await drop(key);']],
   /** Streams never dropped on delete: they stay open on a map that is gone. */
   leftOpen: [['await drop(key, { deleted: true });', '']],
-  /** The Origin rule for POST only: a cookie DELETE from another site gets through. */
-  originPostOnly: [["if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'",
-    "if (method === 'POST' && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'"]],
+  /** The cookie Origin rule skipping DELETE and restore: both get through from another site. */
+  originSkipsRemoval: [["if ((method === 'POST' || method === 'DELETE') && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'",
+    "if (method === 'POST' && !rawPath.includes('/trash/') && (p.via === 'cookie' ? !originMatches(req)\n      : (p.via === 'open'"]],
   /** The scope check after the missing-map check: a read token learns which maps are missing. */
   scopeAfterMissing: [
     ['    if (!await can(p, action, { tenant, mapId: id })) return fail(res, 403, needs(action));\n', ''],
@@ -320,12 +320,18 @@ async function originRun(x) {
   const cookie = String(login.headers['set-cookie']).split(';')[0];
   /** @type {Record<string, number>} */
   const got = {};
-  got['delete, foreign Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: 'http://evil.example' })).status;
-  got['delete, no Origin'] = (await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie })).status;
-  const d = await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, origin: own });
-  got['delete, own Origin'] = d.status;
-  got['restore, foreign Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: 'http://evil.example' })).status;
-  got['restore, own Origin'] = (await x.call('', 'POST', `${T}/trash/${d.json?.trashId}/restore`, {}, { cookie, origin: own })).status;
+  /** The trash id of whichever delete got through first (a broken router lets the foreign one through). */
+  let trashId = '';
+  const del = async (/** @type {string} */ k, /** @type {Record<string, string>} */ h) => {
+    const r = await x.call('', 'DELETE', `${T}/maps/named`, undefined, { cookie, ...h });
+    got[k] = r.status;
+    if (r.status === 200 && !trashId) trashId = r.json.trashId;
+  };
+  await del('delete, foreign Origin', { origin: 'http://evil.example' });
+  await del('delete, no Origin', {});
+  await del('delete, own Origin', { origin: own });
+  got['restore, foreign Origin'] = (await x.call('', 'POST', `${T}/trash/${trashId}/restore`, {}, { cookie, origin: 'http://evil.example' })).status;
+  got['restore, own Origin'] = (await x.call('', 'POST', `${T}/trash/${trashId}/restore`, {}, { cookie, origin: own })).status;
   return got;
 }
 
@@ -334,11 +340,12 @@ test('a cookie DELETE or restore POST with a foreign Origin (or none) gets 403',
   try { assert.deepEqual(originProblems(await originRun(x)), []); } finally { await x.srv.close(); }
 });
 
-test('planted fault: an Origin rule that covers POST but not DELETE is reported', async () => {
-  const x = await start({ serve: await faultyStartService(FAULTS.originPostOnly) });
+test('planted fault: a cookie Origin check that skips DELETE and restore is reported', async () => {
+  const x = await start({ serve: await faultyStartService(FAULTS.originSkipsRemoval) });
   try {
     const problems = originProblems(await originRun(x));
     assert.ok(problems.includes('delete, foreign Origin: 200, want 403'), problems.join('\n'));
+    assert.ok(problems.includes('restore, foreign Origin: 200, want 403'), problems.join('\n'));
   } finally { await x.srv.close(); }
 });
 
