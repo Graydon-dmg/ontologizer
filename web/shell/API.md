@@ -21,6 +21,7 @@ DOM modules: each exports `mountX(el, shell)` and is called once by main.js.
 | File | Slot id | Owner |
 |---|---|---|
 | ui/views.js mountViewSwitcher | #view-switcher | W2 |
+| ui/height.js mountHeight | #height-switcher (shown only while the view implements setHeight) | 1.8 |
 | ui/legend.js mountLegend | #legend | W2 |
 | ui/menu.js mountMenu | #menu | W3 |
 | ui/explain.js mountExplain | #explain | W3 |
@@ -51,6 +52,7 @@ shell = {
   on(name, fn) -> off,    // shell bus
   emit(name, detail),
   openExplain(nodeId),    // = emit('explain', { nodeId })
+  heightMode(),           // 'off'|'learning'|'coverage'|'connectedness' (set by ui/height.js)
 }
 ```
 
@@ -61,3 +63,4 @@ Bus names:
 - `focus`   { nodeId }             from the view (main.js also sends { type:'focus', nodeId })
 - `view`    { id, view }           after a view is mounted (view null if none registered)
 - `explain` { nodeId }             open the explain panel on that node
+- `height`  { mode }               the 3D Height choice changed (ui/height.js calls view.setHeight first)

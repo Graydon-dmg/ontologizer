@@ -1,5 +1,6 @@
 // @ts-check
 import { legendGroups, isFused, fusedSwatches, lineRows } from '../legend.js';
+import { heightLegendLine, hasHeight } from '../height.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -60,7 +61,8 @@ export function mountLegend(el, shell) {
     const groups = legendGroups(o, shell.tokens);
     const fused = isFused(o);
     const lines = lineRows(o, shell.tokens);
-    const next = JSON.stringify([groups, fused, lines.map((l) => l.type)]);
+    const height = heightLegendLine(shell.heightMode ? shell.heightMode() : 'off', hasHeight(shell.activeView && shell.activeView()));
+    const next = JSON.stringify([groups, fused, lines.map((l) => l.type), height]);
     if (next === sig) return;
     sig = next;
     body.replaceChildren();
@@ -128,10 +130,19 @@ export function mountLegend(el, shell) {
       sec.append(row);
     }
     body.append(sec);
+    // The 3D Height key: one line, only while a height mode is on.
+    if (height) {
+      const hs = document.createElement('div');
+      hs.className = 'legend-lines legend-height';
+      hs.textContent = height;
+      body.append(hs);
+    }
     sync();
   }
 
   sync();
   shell.on('event', render);
+  shell.on('height', render);
+  shell.on('view', render);
   render();
 }

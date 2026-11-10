@@ -27,6 +27,9 @@
 //                                      dim the rest; null clears. It survives incoming events and
 //                                      coexists with highlight() (cite wins visually on its nodes).
 //                                      The shell skips views that do not implement it.
+//   setHeight?(mode: 'off'|'learning'|'coverage'|'connectedness'): void  optional (1.8.0, 3D view).
+//                                      Lift nodes by one measure; 'off' is the flat floor. The shell
+//                                      shows its Height control only for views that implement it.
 //   mountMinimap?(el: HTMLElement): void  optional
 //   unmount(): void
 

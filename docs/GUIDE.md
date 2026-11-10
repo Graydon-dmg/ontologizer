@@ -337,6 +337,7 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | Control | What it does |
 |---|---|
 | **2D / 3D** | Switches between the flat graph and the 3D sky view. Appears when both are available. |
+| **Height** | 3D only. Lifts each idea off the floor by one measure: **Off**, **Learning order**, **Coverage** or **Connectedness**. Remembered in your browser. See [Height in 3D](#height-in-3d). |
 | **Theme** | **System**, **Light** or **Dark**. Remembered in your browser. |
 | **Search** | Type to find nodes by label (matches the start of the label first, then words, then anywhere). Matches highlight on the map and up to 8 are listed; click one to jump to it. |
 | **Depth** | Show nodes down to depth **Any**, 1, 2, 3 or 4. |
@@ -348,6 +349,16 @@ The page is served from your machine at `http://127.0.0.1:<port>/` (the port is 
 | **Minimap** | A small overview; the **−** / **+** button collapses and expands it. |
 | **Jobs tray** | Running and recent jobs (see Concepts). |
 | **Ticker** | Short notices as things are added; click one to focus that node. |
+
+### Height in 3D
+
+In the 3D view every idea sits on the floor where the 2D view puts it. **Height** raises each one by a single measure, so you can read the map as terrain: a thin stem drops from each lifted idea to its place on the floor, links follow the lifted ideas, and the legend names the measure. **Off** is the flat floor. Heights ease into place when you switch, and keep updating while a map builds.
+
+| Height | Low | High |
+|---|---|---|
+| **Learning order** | Ideas to learn first: near the root, and what other ideas *require* | Ideas that need others first: deeper in the tree, at the end of a chain of **requires** links |
+| **Coverage** | Thin or unexplored: no explanation, no sources, few children | Well researched: explained, with sources, and a branch whose ideas are researched too |
+| **Connectedness** | Few cross-links | Many cross-links (bridges count a little more) |
 
 **Keyboard.** There are only a few shortcuts:
 

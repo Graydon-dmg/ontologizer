@@ -6,6 +6,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { registerView } from '../../shared/view.js';
 import { boundsOf, toWorld, treeDistance, arcPoints, truncate, placeLabels, citedSets, centroid, allOffscreen } from './math.js';
 import { descendants, neighborhood, ringsFrom, labelVisible } from './graphmath.js';
+import { heightsFor, easeToward, arcLift, HEIGHT_MODES } from './heights.js';
 
 const WORLD = 600;
 const MIN_RADIUS = 3;
@@ -16,10 +17,18 @@ const RADIUS_REFRESH_MS = 500;
 const ARC_HEIGHT_SCALE = 1;
 const TREE_LINK_Y = 0.3; // parent links lie just above the floor
 const ARC_POINTS = 24; // segments, so 25 points
+const TILT_FROM = (60 / 180) * Math.PI; // turning Height on with the camera less than 60 degrees from straight down lowers it
+const TILT_TO = (68 / 180) * Math.PI; // to 68 degrees from vertical: heights read clearly, the floor still shows
 const DASH_UNIT = 1.5; // tokens' dash lengths are px; world units are about this much bigger
 const CLICK_SLOP = 5;
 const LABEL_EVERY = 6; // frames between label placements
 const GHOST_CHARS = 30; // lens analogs are cut to this many characters until hovered
+// Height modes: the highest node rises this far above the floor (the floor is WORLD across).
+const HEIGHT_MAX = WORLD * 0.3;
+const HEIGHT_RECALC_MS = 250; // at most this often while a build streams in
+const HEIGHT_TAU = 180; // ms, the rise / fall time constant
+const HEIGHT_CAMERA = 0.3; // the orbit target rises this share of HEIGHT_MAX while height is on
+const STEM_OPACITY = 0.35;
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -80,6 +89,16 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.raf = 0;
     this.idleTimer = 0;
     this.mounted = false;
+    /** Height mode (setHeight): 'off' is the flat floor. */
+    this.heightMode = 'off';
+    /** @type {Map<string, number>|null} target heights in [0, 1] for the current mode */
+    this.heightTargets = null;
+    this.heightDirty = true;
+    this.heightAt = 0;
+    this.heightKey = '';
+    /** 0 = flat, 1 = a height mode is fully on (eases between, so Off ends exactly flat). */
+    this.liftMix = 0;
+    this.lastFrame = 0;
   }
 
   /** @param {HTMLElement} el @param {any} ctx */
@@ -149,6 +168,14 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.treeLines = new THREE.LineSegments(this.treeGeo, this.treeMat);
     this.treeLines.frustumCulled = false;
     scene.add(this.treeLines);
+    // Stems: a thin line from each lifted node down to its place on the floor (height modes only).
+    this.stemCap = 0;
+    this.stemGeo = new THREE.BufferGeometry();
+    this.stemMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+    this.stemLines = new THREE.LineSegments(this.stemGeo, this.stemMat);
+    this.stemLines.frustumCulled = false;
+    this.stemLines.visible = false;
+    scene.add(this.stemLines);
 
     // Theme: follow <html data-theme> (the shell's System / Light / Dark toggle), else the OS.
     this.applyTheme();
@@ -242,6 +269,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.grid.position.y = -0.4;
     this.scene.add(this.grid);
     this.treeMat.color.setHex(sc.tree);
+    this.stemMat.color.setHex(sc.tree);
     this.srcMat.color.setHex(sc.src);
     // Labels, ghost labels and badges read these variables, so one write restyles them all.
     const ls = this.labelRenderer.domElement.style;
@@ -474,7 +502,10 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     const label = new CSS2DObject(div);
     label.visible = false;
     mesh.add(label);
-    this.nodes.set(id, { mesh, label, w: null, vis: false, base: 1, lastOp: -1, spawnAt: 0, neutral: !cat });
+    // lift: the drawn height above the floor (eases toward the mode's target); a new node starts at its parent's.
+    const par = node.parent ? this.nodes.get(node.parent) : null;
+    this.nodes.set(id, { mesh, label, w: null, vis: false, base: 1, lastOp: -1, spawnAt: 0, neutral: !cat, lift: par ? par.lift : 0 });
+    this.heightDirty = true;
     this.restyle(id);
     this.radiiAt = 0; // descendants changed
   }
@@ -497,6 +528,22 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     const scale = span > 0 ? WORLD / span : 1;
 
     const now = performance.now();
+    const dt = this.lastFrame ? Math.min(100, now - this.lastFrame) : 16;
+    this.lastFrame = now;
+    // Height targets: recomputed when the mode or the map changed, at most every HEIGHT_RECALC_MS.
+    const hkey = `${this.heightMode}|${this.nodes.size}|${snap.edges.length}`;
+    if ((this.heightDirty || hkey !== this.heightKey) && now - this.heightAt > HEIGHT_RECALC_MS) {
+      this.heightDirty = false;
+      this.heightKey = hkey;
+      this.heightAt = now;
+      this.heightTargets = heightsFor(this.heightMode, snap);
+    }
+    const heightOn = this.heightMode !== 'off';
+    this.liftMix = easeToward(this.liftMix, heightOn ? 1 : 0, dt, HEIGHT_TAU, 0.002);
+    for (const [id, st] of this.nodes) {
+      const want = heightOn && this.heightTargets ? (this.heightTargets.get(id) || 0) * HEIGHT_MAX : 0;
+      if (st.lift !== want) st.lift = easeToward(st.lift || 0, want, dt, HEIGHT_TAU);
+    }
     if (now - this.radiiAt > RADIUS_REFRESH_MS) {
       this.radiiAt = now;
       for (const [id, st] of this.nodes) {
@@ -576,7 +623,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
           z = pw[2] + (z - pw[2]) * e;
         }
       }
-      st.mesh.position.set(x, r, z);
+      st.mesh.position.set(x, r + st.lift, z);
       st.mesh.scale.setScalar(r);
       st.r = r;
       const isCited = !!(this.cited && this.cited.nodes.has(id));
@@ -638,13 +685,37 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const par = n && n.parent ? this.nodes.get(n.parent) : null;
       if (!par || !par.vis) continue;
       const a = par.mesh.position, c = st.mesh.position;
-      tp.setXYZ(seg * 2, a.x, TREE_LINK_Y, a.z);
-      tp.setXYZ(seg * 2 + 1, c.x, TREE_LINK_Y, c.z);
+      // Flat: just above the floor. Lifted: between the sphere centres (liftMix eases between the two).
+      const m = this.liftMix;
+      tp.setXYZ(seg * 2, a.x, TREE_LINK_Y + par.lift + (a.y - par.lift) * m, a.z);
+      tp.setXYZ(seg * 2 + 1, c.x, TREE_LINK_Y + st.lift + (c.y - st.lift) * m, c.z);
       seg++;
     }
     tp.needsUpdate = true;
     this.treeGeo.setDrawRange(0, seg * 2);
     this.treeMat.opacity = this.bright || this.cited ? 0.55 * dim : 0.55;
+
+    // Stems: from each lifted node's foot straight down to its place on the floor.
+    this.stemLines.visible = this.liftMix > 0;
+    if (this.stemLines.visible) {
+      if (!this.stemCap || this.nodes.size > this.stemCap) {
+        this.stemCap = Math.max(64, this.nodes.size * 2);
+        this.stemGeo.setAttribute('position',
+          new THREE.BufferAttribute(new Float32Array(this.stemCap * 6), 3).setUsage(THREE.DynamicDrawUsage));
+      }
+      const sp = this.stemGeo.attributes.position;
+      let ns = 0;
+      for (const st of this.nodes.values()) {
+        if (!st.vis || st.lift < 0.5) continue;
+        const p = st.mesh.position;
+        sp.setXYZ(ns * 2, p.x, 0, p.z);
+        sp.setXYZ(ns * 2 + 1, p.x, st.lift, p.z);
+        ns++;
+      }
+      sp.needsUpdate = true;
+      this.stemGeo.setDrawRange(0, ns * 2);
+      this.stemMat.opacity = STEM_OPACITY * this.liftMix * (this.bright || this.cited ? dim : 1);
+    }
 
     // Arcs: endpoints at sphere centers; rewrite points in place only when an end moved.
     for (const arc of this.arcs.values()) {
@@ -653,9 +724,11 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       arc.line.visible = show;
       if (!show) continue;
       const pa = a.mesh.position, pc = c.mesh.position;
-      if (arc.last[0] !== pa.x || arc.last[1] !== pa.y || arc.last[2] !== pa.z || arc.last[3] !== pc.x || arc.last[4] !== pc.y || arc.last[5] !== pc.z) {
-        arc.last = [pa.x, pa.y, pa.z, pc.x, pc.y, pc.z];
-        const pts = arcPoints([pa.x, pa.y, pa.z], [pc.x, pc.y, pc.z], arc.h, ARC_POINTS);
+      // With height on, an arc between ends at very different heights still crests above both.
+      const ah = this.liftMix > 0 ? arcLift(arc.h, pa.y, pc.y) : arc.h;
+      if (arc.last[0] !== pa.x || arc.last[1] !== pa.y || arc.last[2] !== pa.z || arc.last[3] !== pc.x || arc.last[4] !== pc.y || arc.last[5] !== pc.z || arc.last[6] !== ah) {
+        arc.last = [pa.x, pa.y, pa.z, pc.x, pc.y, pc.z, ah];
+        const pts = arcPoints([pa.x, pa.y, pa.z], [pc.x, pc.y, pc.z], ah, ARC_POINTS);
         const attr = arc.line.geometry.attributes.position;
         for (let i = 0; i < pts.length; i++) attr.setXYZ(i, pts[i][0], pts[i][1], pts[i][2]);
         attr.needsUpdate = true;
@@ -682,7 +755,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const st = this.nodes.get(h.nodeId);
       h.mesh.visible = !!(st && st.vis);
       if (!h.mesh.visible) continue;
-      h.mesh.position.set(st.mesh.position.x, 0.6, st.mesh.position.z);
+      h.mesh.position.set(st.mesh.position.x, 0.6 + st.lift, st.mesh.position.z);
       h.mesh.scale.setScalar(st.r * (1 + 0.3 * pulse));
       h.mesh.material.opacity = 0.25 + 0.5 * (1 - pulse);
     }
@@ -693,7 +766,7 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       const st = this.nodes.get(nid);
       mesh.visible = !!(st && st.vis);
       if (!mesh.visible) continue;
-      mesh.position.set(st.mesh.position.x, 0.7, st.mesh.position.z);
+      mesh.position.set(st.mesh.position.x, 0.7 + st.lift, st.mesh.position.z);
       mesh.scale.setScalar(st.r * (1.15 + 0.1 * breathe));
       mesh.material.opacity = 0.55 + 0.3 * breathe;
     }
@@ -733,6 +806,27 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       }
     }
 
+    if (this.needTilt) {
+      this.needTilt = false;
+      const off = this.camera.position.clone().sub(this.controls.target);
+      const r = off.length();
+      const polar = Math.acos(Math.min(1, Math.max(-1, off.y / (r || 1))));
+      if (r > 0 && polar < TILT_FROM) {
+        const h = Math.hypot(off.x, off.z);
+        const az = h > 1e-6 ? Math.atan2(off.z, off.x) : Math.PI / 2;
+        const to = new THREE.Vector3(Math.cos(az) * Math.sin(TILT_TO), Math.cos(TILT_TO), Math.sin(az) * Math.sin(TILT_TO)).multiplyScalar(r);
+        this.tilt = { from: off, to, start: now };
+      }
+    }
+    // Tilt toward a side view (setHeight), keeping the distance to the target.
+    if (this.tilt) {
+      const k = Math.min(1, (now - this.tilt.start) / tk.MOTION.focusMs);
+      const dir = this.tilt.from.clone().lerp(this.tilt.to, easeInOut(k)).setLength(this.tilt.to.length());
+      this.camera.position.copy(this.controls.target).add(dir);
+      this.camera.lookAt(this.controls.target);
+      if (k >= 1) this.tilt = null;
+    }
+
     // At most one raycast per animation frame for hover.
     if (this.pendingMove) {
       const m = this.pendingMove;
@@ -766,9 +860,11 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
       }
       case 'node.updated':
         this.restyle(e.id);
+        this.heightDirty = true; // an article or sources change coverage
         break;
       case 'edge.added':
         this.ensureArc(e.edge, true);
+        this.heightDirty = true;
         break;
       case 'job.queued':
       case 'job.started':
@@ -809,6 +905,28 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.refreshGhosts();
   }
   setFilter(f) { this.filter = f; }
+  /** Height: lift nodes by one measure ('learning', 'coverage', 'connectedness'); 'off' is the flat floor.
+   * Nodes ease to their new heights; the orbit target rises with them so the lifted map stays framed.
+   * @param {string} mode */
+  setHeight(mode) {
+    const next = /** @type {readonly string[]} */ (HEIGHT_MODES).includes(mode) ? mode : 'off';
+    if (next === this.heightMode) return;
+    const was = this.heightMode !== 'off', on = next !== 'off';
+    this.heightMode = next;
+    this.heightDirty = true;
+    this.heightAt = 0; // recompute on the next frame
+    if (this.mounted && was !== on && !this.glide) {
+      const from = this.controls.target.clone();
+      const point = from.clone();
+      point.y += (on ? 1 : -1) * HEIGHT_MAX * HEIGHT_CAMERA;
+      if (!on) point.y = Math.max(0, point.y);
+      this.glide = { id: null, point, from, start: performance.now() };
+    }
+    // Height reads only from the side: once a mode is on, a camera looking nearly straight down is
+    // tilted (on the next frame, so it also happens when a saved mode is restored as the view mounts).
+    if (on && !was) this.needTilt = true;
+    if (!on) this.needTilt = false;
+  }
   /** @param {string[]} ids */
   /** Chat citations: exactly these nodes and the links between them stay bright, their labels
    * always show, everything else dims. null or [] clears. Independent of highlight() (search).
@@ -871,6 +989,9 @@ class OntoSky extends (globalThis.HTMLElement || Object) {
     this.scene.remove(this.treeLines);
     this.treeGeo.dispose();
     this.treeMat.dispose();
+    this.scene.remove(this.stemLines);
+    this.stemGeo.dispose();
+    this.stemMat.dispose();
     this.controls.removeEventListener('start', this.onStart);
     this.controls.removeEventListener('end', this.onEnd);
     this.controls.dispose();

@@ -7,6 +7,7 @@ export const TIPS = {
   categories: 'Show or hide whole branches of the map',
   depth: 'Hide nodes deeper than this level',
   views: 'Flat graph or 3D floor-and-sky view',
+  height: 'Lift each idea by one measure: learning order, coverage or links',
   rosetta: "See every node through a field you already know, e.g. 'a home chef'",
   theme: 'Colour theme',
   chat: 'Ask questions about this map; add screenshots or photos',
@@ -24,6 +25,7 @@ export function mountTips(shell) {
   after($('#filter .filter-box'), TIPS.categories, 'Categories');
   after($('#filter .depth-dd'), TIPS.depth, 'Depth');
   const views = $('#view-switcher'); if (views) views.append(infoTip(TIPS.views, '2D and 3D'));
+  after($('#height-switcher .dd'), TIPS.height, 'Height');
   after($('#lens-switcher .dd'), TIPS.rosetta, 'Rosetta');
   after($('#fuse .fuse-btn'), TIPS.fuse, 'Fuse');
   after($('#chat-btn .chat-btn'), TIPS.chat, 'Chat');

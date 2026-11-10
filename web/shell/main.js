@@ -8,6 +8,7 @@ import { feedLayout } from './feed.js';
 import { viewStateToApply, applyViewState } from './viewstate.js';
 import { mountViewSwitcher } from './ui/views.js';
 import { mountLegend } from './ui/legend.js';
+import { mountHeight } from './ui/height.js';
 import { mountMenu } from './ui/menu.js';
 import { mountExplain } from './ui/explain.js';
 import { mountJobs } from './ui/jobs.js';
@@ -164,7 +165,7 @@ try { mountSide(shell); } catch (err) { console.error('[shell] side panel failed
 const mounts = [
   ['chat', mountChat], ['chat-btn', mountChatButton],
   ['theme-switcher', mountTheme],
-  ['view-switcher', mountViewSwitcher], ['legend', mountLegend], ['menu', mountMenu],
+  ['view-switcher', mountViewSwitcher], ['height-switcher', mountHeight], ['legend', mountLegend], ['menu', mountMenu],
   ['explain', mountExplain], ['jobs', mountJobs], ['ticker', mountTicker], ['search', mountSearch],
   ['filter', mountFilter], ['lens-switcher', mountLens], ['fuse', mountFuse], ['export', mountExport], ['minimap', mountMinimap],
 ];

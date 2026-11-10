@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.0 (2026-11-10)
+
+- **Height in 3D.** A new **Height** control in the 3D view lifts ideas by one measure at a time: **Learning order** (what you need first sits low, advanced ideas float higher, from the map's "requires" links and depth), **Coverage** (well-researched areas rise like hills, thin ones stay low: where to click Research), or **Connectedness** (hub ideas with many links rise). **Off** is the flat floor as before. Thin stems keep each idea's spot on the floor, the camera lowers so heights show, the legend says what height means, and the choice is remembered.
+
 ## 1.7.0 (2026-11-10)
 
 - **Export to Obsidian.** `ontologizer export <map> --format obsidian` writes the map as an Obsidian folder: one note per idea with `[[links]]` to its parent, branches and cross-links, articles and sources included, tags per category, and graph colours that match the map. On the page: Export → **Download for Obsidian** (a .zip). Open it as a vault or drop it into yours.
