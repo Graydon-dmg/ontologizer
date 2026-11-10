@@ -27,7 +27,7 @@ export function checkContextPack(text, ontology, budget) {
     const node = /** @type {any} */ (n);
     if (node.parent !== ontology.root) continue;
     const prefix = `  - ${node.label}`;
-    const ok = outline.some((l) => l === prefix || l.startsWith(prefix + ':') || l.startsWith(prefix + ' ['));
+    const ok = outline.some((l) => l === prefix || l.startsWith(prefix + ':') || l.startsWith(prefix + ' [') || l.startsWith(prefix + ' ('));
     if (!ok) problems.push(`root child missing from outline: ${node.label}`);
   }
 
@@ -44,7 +44,8 @@ export function checkContextPack(text, ontology, budget) {
 export function missingLabels(text, ontology) {
   const lines = text.split('\n');
   const outline = lines.slice(lines.indexOf('## Outline') + 1, lines.indexOf('## Bridges'));
-  const labels = new Set(outline.map((l) => l.trim().replace(/^- /, '').replace(/ \[explained\]$/, '').split(': ')[0]));
+  // "- Label (id): summary [explained]": the id (after the last " (" before the summary) is not part of the label.
+  const labels = new Set(outline.map((l) => l.trim().replace(/^- /, '').replace(/ \[explained\]$/, '').split(': ')[0].replace(/ \((?:…\/)?[\w.:/-]+\)$/, '')));
   return Object.values(ontology.nodes).map((n) => /** @type {any} */ (n).label).filter((l) => !labels.has(l));
 }
 

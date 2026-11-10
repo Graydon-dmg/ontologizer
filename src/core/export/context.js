@@ -5,13 +5,15 @@
 /** @typedef {import('../schema.js').Ontology} Ontology */
 /** @typedef {import('../schema.js').OntoNode} OntoNode */
 
-export const CONTEXT_HEADINGS = ['Brief', 'Outline', 'Bridges', 'Insights', 'Thin areas', 'Sources'];
+export const CONTEXT_HEADINGS = ['Brief', 'Outline', 'Articles', 'Bridges', 'Insights', 'Thin areas', 'Sources'];
 
 const SUMMARY_MAX = 140;
 const WHY_MAX = 160;
 const THIN_NODE_MAX = 12;
 const BRIEF_CUT = 80;
 const NONE = 'None yet.';
+/** A Brief line: how to read the ids after the outline's labels. */
+const IDS_NOTE = '- Ids: each outline label is followed by its node id in parentheses; "…/x" means the parent line\'s id followed by "/x".';
 
 /** @param {string} text */
 export function estimateTokens(text) {
@@ -104,8 +106,11 @@ function urlKey(url) {
 }
 
 /**
- * @typedef {{ id: string, depth: number, indent: number, label: string, summary: string, explained: boolean }} OutlineRow
+ * @typedef {{ id: string, depth: number, indent: number, label: string, summary: string, explained: boolean, idText: string }} OutlineRow
  */
+
+/** An id as printed: as is when it is a plain slug path, else made safe like any value. @param {string} id */
+const shownId = (id) => (/^[A-Za-z0-9][\w.:/-]{0,299}$/.test(id) ? id : oneLine(id, 300));
 
 /** @param {Ontology} o */
 function buildModel(o) {
@@ -127,20 +132,24 @@ function buildModel(o) {
   /** @type {OutlineRow[]} */
   const rows = [];
   const seen = new Set();
-  /** @param {string} id @param {number} indent */
-  const walk = (id, indent) => {
+  /** @param {string} id @param {number} indent @param {string|null} above the id of the line it sits under */
+  const walk = (id, indent, above) => {
     if (seen.has(id)) return;
     seen.add(id);
     const n = o.nodes[id];
     // The root's summary is usually the brief's scope or context again: say it once, in the Brief.
     const repeats = id === o.root && [o.brief?.scope, o.brief?.context].some((b) => b && oneLine(b, SUMMARY_MAX) === summaryOf(n));
-    rows.push({ id, depth: n.depth ?? indent, indent, label: n.label, summary: repeats ? '' : summaryOf(n), explained: !!n.article });
-    for (const c of kids.get(id) ?? []) walk(c, indent + 1);
+    // Ids are paths: under its parent a node shows only its own part ("…/levain"), which keeps
+    // the outline short. Anything else (an orphan, an id that is not its parent's path) shows in full.
+    const plain = shownId(id) === id;
+    const idText = plain && above && shownId(above) === above && id.startsWith(`${above}/`) ? `…/${id.slice(above.length + 1)}` : shownId(id);
+    rows.push({ id, depth: n.depth ?? indent, indent, label: n.label, summary: repeats ? '' : summaryOf(n), explained: !!n.article, idText });
+    for (const c of kids.get(id) ?? []) walk(c, indent + 1, id);
   };
-  if (rootNode) walk(o.root, 0);
-  for (const id of orphans) walk(id, 1);
+  if (rootNode) walk(o.root, 0, null);
+  for (const id of orphans) walk(id, 1, null);
   // Anything unreachable (a parent cycle) still gets listed at depth 1.
-  for (const id of ids) if (!seen.has(id)) walk(id, 1);
+  for (const id of ids) if (!seen.has(id)) walk(id, 1, null);
 
   /** @type {Map<string, number>} */
   const leafCount = new Map();
@@ -186,6 +195,26 @@ function sectionLines(o, m) {
     ['Context', b.context], ['Subject', b.subject], ['Scope', b.scope], ['Purpose', b.purpose], ['Level', b.level],
   ]).map(([k, v]) => /** @type {[string, string]} */ ([k, oneLine(v, BRIEF_MAX)])).filter(([, v]) => v);
   const sizeLine = `- Size: ${m.ids.length} nodes in ${o.categories.length} categories, ${o.edges.length} cross-links, ${explained} explained`;
+  // Most of a fresh map is one line per node. Say so, and name the next step: explaining stays a
+  // deliberate call (it costs credits), never automatic.
+  const plainCount = m.ids.length - explained;
+  const depthLine = plainCount * 2 > m.ids.length
+    ? `- Depth: ${plainCount} of ${m.ids.length} nodes are one-line summaries; call explain on the nodes your task depends on (it calls the model, so it costs credits).`
+    : '';
+
+  // Articles, in outline order: the deepest text the map has, so they outlive the outline's summaries.
+  /** @type {{ head: string, detail: string[] }[]} */
+  const articles = [];
+  for (const r of m.rows) {
+    const a = /** @type {any} */ (nodes[r.id].article);
+    if (!a) continue;
+    const facts = (Array.isArray(a.keyFacts) ? a.keyFacts : []).map((/** @type {unknown} */ f) => oneLine(f)).filter(Boolean);
+    const why = oneLine(a.whyItMatters);
+    articles.push({
+      head: `- ${r.label} (${shownId(r.id)})${a.summary ? `: ${oneLine(a.summary)}` : ''}`,
+      detail: [...facts.map((/** @type {string} */ f) => `  - ${f}`), ...(why ? [`  - Why it matters: ${why}`] : [])],
+    });
+  }
 
   // A label shared by several nodes is named with its category, so "Panel Lining → Panel Lining"
   // does not read as a loop. When the category is shared too, the parent is added.
@@ -278,7 +307,7 @@ function sectionLines(o, m) {
   // On a fresh map nothing is explained or sourced: one line says so instead of a line per category.
   const covered = m.ids.some((id) => nodes[id].article || hasSources(nodes[id]));
   const coverageLines = covered ? catLines : ['- Nothing explained or sourced yet: every branch is thin.'];
-  return { name, briefFields, sizeLine, bridges, insights, coverageLines, thinNodes, sources };
+  return { name, briefFields, sizeLine, depthLine, articles, bridges, insights, coverageLines, thinNodes, sources };
 }
 
 /**
@@ -314,10 +343,13 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
 
   const st = {
     depthMax: maxDepth, // outline rows deeper than this are dropped
+    idDepth: maxDepth, // outline rows deeper than this lose their node id (the label stays)
     sumOff: 0, // how many levels of SUM_ORDER have lost their summaries
     part: Infinity, // at level SUM_ORDER[sumOff], how many summaries (in outline order) are kept
     bridges: s.bridges.length,
     sources: s.sources.length,
+    facts: s.articles.length, // articles that keep their key facts and why it matters, in order
+    articles: s.articles.length, // articles kept at all (the rest only as "…and N more")
     thin: s.thinNodes.length,
     insights: s.insights.length,
     briefCut: false,
@@ -348,6 +380,8 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
       out.push(`- ${k}: ${st.briefCut && k !== 'Subject' && k !== 'Level' ? oneLine(v, BRIEF_CUT) : v}`);
     }
     if (!st.minimal) out.push(s.sizeLine);
+    if (!st.minimal && s.depthLine) out.push(s.depthLine);
+    if (!st.minimal && st.depthMax >= 1) out.push(IDS_NOTE);
     out.push('', '## Outline');
     let top = 0;
     for (const r of m.rows) {
@@ -359,9 +393,14 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
       const lvl = SUM_ORDER.indexOf(r.depth);
       const sum = lvl > st.sumOff || (lvl === st.sumOff && (rank.get(r.id) ?? 0) < st.part) ? r.summary : '';
       const label = st.minimal ? oneLine(r.label, BRIEF_CUT) : r.label;
-      out.push(`${'  '.repeat(r.indent)}- ${label}${sum ? ': ' + sum : ''}${r.explained && !st.minimal ? ' [explained]' : ''}`);
+      const idText = !st.minimal && st.depthMax >= 1 && r.depth <= st.idDepth ? ` (${r.idText})` : '';
+      out.push(`${'  '.repeat(r.indent)}- ${label}${idText}${sum ? ': ' + sum : ''}${r.explained && !st.minimal ? ' [explained]' : ''}`);
     }
     if (top > st.top) out.push(`  - …and ${top - st.top} more categories`);
+    out.push('', '## Articles');
+    if (!s.articles.length) out.push(NONE);
+    s.articles.slice(0, st.articles).forEach((a, i) => out.push(a.head, ...(i < st.facts ? a.detail : [])));
+    if (st.articles < s.articles.length) out.push(`- …and ${s.articles.length - st.articles} more (get_node reads them)`);
     out.push('', '## Bridges', ...section(s.bridges, st.bridges), '');
     out.push('## Insights', ...section(s.insights, st.insights), '');
     out.push('## Thin areas');
@@ -376,6 +415,11 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
   const trimmedWhat = () => {
     /** @type {string[]} */
     const w = [];
+    if (st.idDepth < Math.min(st.depthMax, maxDepth) && st.depthMax >= 1 && !st.minimal) {
+      const ds = [];
+      for (let d = Math.min(st.depthMax, maxDepth); d > st.idDepth; d--) ds.push(d);
+      w.push(`node ids at depth${ds.length === 1 ? '' : 's'} ${ds.length === 1 ? ds[0] : `${ds.slice(0, -1).join(', ')} and ${ds[ds.length - 1]}`} (get_outline lists them)`);
+    }
     if (Math.max(st.depthMax, 1) < maxDepth) {
       const ds = [];
       let nodes = 0;
@@ -397,6 +441,9 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
         w.push(`summaries at ${parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`}`);
       }
     }
+    const keptFacts = Math.min(st.facts, st.articles);
+    if (st.articles < s.articles.length) w.push(`${s.articles.length - st.articles} of ${s.articles.length} articles`);
+    if (keptFacts < st.articles) w.push(`the key facts of ${st.articles - keptFacts} of ${s.articles.length} articles`);
     if (st.bridges < s.bridges.length) w.push(`${s.bridges.length - st.bridges} of ${s.bridges.length} bridges`);
     if (st.sources < s.sources.length) w.push(`${s.sources.length - st.sources} of ${s.sources.length} sources`);
     if (st.thin < s.thinNodes.length) w.push(`${s.thinNodes.length - st.thin} of ${s.thinNodes.length} thin-area nodes`);
@@ -411,10 +458,10 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
   const fits = () => estimateTokens(render()) <= budget;
   if (fits()) return render();
 
-  /** Shorten these sections from the end, in order; the largest keep that fits, by binary search. @param {('bridges'|'sources'|'thin'|'insights'|'coverage'|'top')[]} keys */
+  /** Shorten these sections from the end, in order; the largest keep that fits, by binary search. @param {('bridges'|'sources'|'facts'|'articles'|'thin'|'insights'|'coverage'|'top')[]} keys */
   const shrink = (keys) => {
     for (const key of keys) {
-      const total = { bridges: s.bridges.length, sources: s.sources.length, thin: s.thinNodes.length, insights: s.insights.length, coverage: s.coverageLines.length, top: topRows }[key];
+      const total = { bridges: s.bridges.length, sources: s.sources.length, facts: s.articles.length, articles: s.articles.length, thin: s.thinNodes.length, insights: s.insights.length, coverage: s.coverageLines.length, top: topRows }[key];
       if (!total) continue;
       st[key] = 0;
       if (!fits()) continue; // all of it goes, and the next section is cut too
@@ -453,15 +500,25 @@ export function contextPack(ontology, { budget = 4000 } = {}) {
     st.part = Infinity;
     if (fits()) return render();
   }
-  // 2. shorten Bridges, then Sources
-  if (shrink(['bridges', 'sources'])) return render();
-  // 3. only then drop the deepest labels (never depth 1 or the root), keeping as many bridges and
-  //    sources as now fit again
-  while (st.depthMax > 1) {
-    st.depthMax -= 1;
+  // 2. shorten Bridges, then Sources, then the articles' key facts, then whole articles (from the end)
+  const SECTIONS = /** @type {const} */ (['bridges', 'sources', 'facts', 'articles']);
+  if (shrink([...SECTIONS])) return render();
+  // 3. only then drop the deepest node ids, and after them the deepest labels (never depth 1 or the
+  //    root), keeping as many bridges, sources and articles as now fit again after each level
+  const refill = () => {
     st.bridges = s.bridges.length;
     st.sources = s.sources.length;
-    if (fits() || shrink(['bridges', 'sources'])) return render();
+    st.facts = s.articles.length;
+    st.articles = s.articles.length;
+    return fits() || shrink([...SECTIONS]);
+  };
+  while (st.idDepth > 1) {
+    st.idDepth -= 1;
+    if (refill()) return render();
+  }
+  while (st.depthMax > 1) {
+    st.depthMax -= 1;
+    if (refill()) return render();
   }
   // 4. thin-area node lines, then insights
   if (shrink(['thin', 'insights'])) return render();
