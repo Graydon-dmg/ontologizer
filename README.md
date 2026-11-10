@@ -5,7 +5,7 @@
 
 Ontologizer is an open-source command-line tool: give it a topic and Claude builds a live, color-coded map of everything inside it, streaming into a local web page as it goes.
 
-**For AI agents:** to use Ontologizer as a tool (MCP for Claude Code and the Agent SDK, the HTTP API, the JS client), see [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md).
+**For AI agents:** start at [FOR-AGENTS.md](https://github.com/Graydon-dmg/ontologizer/blob/main/FOR-AGENTS.md). To use Ontologizer as a tool (MCP for Claude Code and the Agent SDK, the HTTP API, the JS client), see [docs/MCP.md](https://github.com/Graydon-dmg/ontologizer/blob/main/docs/MCP.md).
 
 ```text
         manga chess jazz
@@ -93,6 +93,7 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer serve` | Service mode: serve every map, build new ones from the browser |
 | `ontologizer status` | Show the home, tenants, tokens and the running server |
 | `ontologizer token create / list / revoke` | Manage access tokens for service mode |
+| `ontologizer sources list / test` | List the configured sources, or test one: which of its tools are offered, and why the others are not |
 | `ontologizer mcp` | MCP over stdio: the map tools for an agent |
 | `ontologizer usage` | Model calls and tokens per tenant per day (service mode) |
 
