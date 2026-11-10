@@ -8,7 +8,7 @@ Proposed and approved in issue #1. Four parts, one pull request each, merged in 
 | I2 · Ports and provenance | `epic/i2-ports` | Opus 5.5 | Sonnet 5.5 | ~1,250 lines with tests |
 | I3 · Surfaces | `epic/i3-surfaces` | Opus 5.5 | Sonnet 5.5 | ~950 lines with tests |
 | I4 · Export and context | `epic/i4-export` | Opus 5.5 | Sonnet 5.5 | ~950 lines with tests |
-| I5 · Manage maps (follow-up) | `epic/i5-manage-maps` | Opus 5.5 | (lead alone) | ~1,900 lines with tests |
+| I5 · Manage maps (follow-up) | `epic/i5-manage-maps` | Opus 5.5 | (lead alone) | ~2,400 lines with tests |
 
 Read `LEAD.md` for how a lead works, with two differences: **each part lands as a pull request** (not a push to `main`), and CI must be green on it.
 
