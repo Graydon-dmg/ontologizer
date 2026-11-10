@@ -2,7 +2,7 @@
 // The chat side panel's brain: engine.ask() answers questions about the whole map.
 // Map first (search_map / get_node over the store, read-only), the web for what the map lacks,
 // every map claim cited as [[node-id]] and every web fact linked. Writes only chat.* events.
-import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage } from './call.js';
+import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage, searchFailure, searchFailureText } from './call.js';
 import { labelPath, findByLabelPath } from './ids.js';
 import { chatSystem, outlineBlock } from './prompts-chat.js';
 import { UNTRUSTED } from './run.js';
@@ -23,7 +23,10 @@ ${UNTRUSTED}`;
  * @typedef {{ type: 'delta', text: string } | { type: 'citation', nodeId: string, label: string }
  *   | { type: 'source', title: string, url: string }
  *   | { type: 'suggestion', kind: 'research', nodeId: string, mode: 'context'|'general', label: string }
- *   | { type: 'status', text: string } | { type: 'done', msgId: string } | { type: 'error', error: string }} ChatItem
+ *   | { type: 'status', text: string } | { type: 'done', msgId: string } | { type: 'error', error: string }
+ *   | { type: 'websearch', used: boolean, failed?: string, note?: string }} ChatItem
+ * websearch comes once, just before done: whether the answer searched the web, the error_code of a
+ * search that failed or ran out, and a plain note naming the next step (the page ignores it).
  * @typedef {{ mime: string, data: string, hash?: string, w?: number, h?: number }} ChatImage
  */
 
@@ -35,7 +38,7 @@ export const TOOLS = [
   },
   {
     name: 'get_node',
-    description: 'Read one node of the map in full: its article (summary, key facts, why it matters), sources, parent, children and cross-linked neighbours.',
+    description: 'Read one node of the map in full: its article (summary, key facts, why it matters), sources, parent, children, cross-linked neighbours and, for a node with children, the cross-links of the nodes under it (branchLinks).',
     input_schema: { type: 'object', properties: { id: { type: 'string', description: 'The node id, exactly as shown in the outline or a search result' } }, required: ['id'] },
   },
 ];
@@ -87,7 +90,7 @@ async function run(cctx, q, out) {
   const srcTools = cctx.run?.hasTools ? cctx.run.tools : null;
   const srcNames = new Set((srcTools?.defs ?? []).map((/** @type {any} */ d) => d.name));
   const { chatId, msgId, answerId, text, images, lens, signal } = q;
-  const answer = { text: '', usedWeb: false };
+  const answer = { text: '', usedWeb: false, /** @type {string|null} */ searchFailed: null };
   /** @type {Map<string, { nodeId: string, label: string }>} */ const citations = new Map();
   /** @type {Map<string, { title: string, url: string }>} */ const sources = new Map();
   /** @type {Map<string, { kind: 'research', nodeId: string, mode: 'context'|'general', label: string }>} */
@@ -203,6 +206,7 @@ async function run(cctx, q, out) {
         if (b?.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (typeof r?.url === 'string') toolUrls.add(r.url);
       }
       readSearchBlocks(final.content, searchTitles, addSource);
+      answer.searchFailed = searchFailure(final.content) ?? answer.searchFailed;
 
       if (final.stop_reason === 'pause_turn') {
         messages.push({ role: 'assistant', content: final.content });
@@ -238,12 +242,31 @@ async function run(cctx, q, out) {
       citations: [...citations.values()], sources: [...sources.values()],
       suggestions: [...suggestions.values()], usedWeb: answer.usedWeb,
     });
+    send(webSearchItem(answer, [...citations.keys()], index, text, store.read(id).nodes ?? {}));
     send({ type: 'done', msgId: answerId });
   } catch (err) {
     const error = signal?.aborted ? STOPPED : jobErrorMessage(err);
     emit('chat.failed', { chatId, replyTo: msgId, error });
     send({ type: 'error', error });
   }
+}
+
+/**
+ * The websearch item: on a failed search, which failure in plain words and the next step for the
+ * node the question is about (the first node the answer cites, else the best match for the question).
+ * @param {{ usedWeb: boolean, searchFailed: string|null }} answer @param {string[]} cited
+ * @param {ReturnType<typeof buildIndex>} index @param {string} question @param {Record<string, any>} nodes
+ * @returns {ChatItem}
+ */
+export function webSearchItem(answer, cited, index, question, nodes) {
+  const used = answer.usedWeb || answer.searchFailed !== null;
+  if (!answer.searchFailed) return { type: 'websearch', used };
+  const nodeId = cited.find((c) => nodes[c]) ?? (question ? index.search(question, 1)[0]?.id : undefined);
+  const what = searchFailureText(answer.searchFailed);
+  const next = nodeId
+    ? `To find and keep web sources for "${nodes[nodeId]?.label ?? nodeId}", run sources on ${nodeId} (or explain); both call the model.`
+    : 'To find and keep web sources, run sources (or explain) on the node your question is about; both call the model.';
+  return { type: 'websearch', used, failed: answer.searchFailed, note: `The ${what}, so this answer may lack web sources. ${next}` };
 }
 
 function abortError() {
@@ -441,8 +464,8 @@ function childrenOf(nodes) {
 }
 
 /**
- * The compact outline: one line per node, indented by depth: "- Label (id): summary  ≈ analog".
- * Big maps drop summaries below depth 2 to keep the prompt small.
+ * The compact outline: one line per node, indented by depth: "- Label (id): summary  ≈ analog [explained]"
+ * ("[explained]" when the node has an article). Big maps drop summaries below depth 2 to keep the prompt small.
  * @param {any} o @param {string|null} lens
  */
 export function outline(o, lens = null) {
@@ -458,7 +481,7 @@ export function outline(o, lens = null) {
     seen.add(n.id);
     const summary = n.summary && !(big && d > 2) ? `: ${clip(n.summary, 110)}` : '';
     const analog = analogs[n.id]?.label ? `  ≈ ${clip(analogs[n.id].label, 60)}` : '';
-    lines.push(`${'  '.repeat(d)}- ${flat(n.label)} (${safeId(n.id)})${summary}${analog}`);
+    lines.push(`${'  '.repeat(d)}- ${flat(n.label)} (${safeId(n.id)})${summary}${analog}${n.article ? ' [explained]' : ''}`);
     for (const c of kids.get(n.id) ?? []) walk(c, d + 1);
   };
   if (nodes[o.root]) walk(nodes[o.root], 0);
@@ -540,6 +563,22 @@ export function buildIndex(o, lens = null) {
   };
 }
 
+const BRANCH_LINKS_MAX = 20;
+
+/** Every node under id (not id itself), following parent links; safe on a parent cycle. @param {Record<string, any>} nodes @param {string} id */
+function descendantsOf(nodes, id) {
+  const kids = childrenOf(nodes);
+  /** @type {Set<string>} */ const out = new Set();
+  const todo = [...(kids.get(id) ?? [])];
+  while (todo.length) {
+    const c = /** @type {any} */ (todo.pop());
+    if (c.id === id || out.has(c.id)) continue;
+    out.add(c.id);
+    todo.push(...(kids.get(c.id) ?? []));
+  }
+  return out;
+}
+
 /**
  * Run one map tool. Read-only: takes a snapshot, returns plain data.
  * @param {string} name @param {any} input @param {any} o @param {ReturnType<typeof buildIndex>} index @param {string|null} lens
@@ -563,6 +602,22 @@ export function runTool(name, input, o, index, lens) {
     const label = (/** @type {string} */ x) => nodes[x]?.label ?? x;
     const a = n.article;
     const analog = lens ? o.lenses?.[lens]?.analogs?.[n.id] : null;
+    // explain merges the article's sources into the node's own, so the two lists overlap: one entry per url.
+    const seenUrl = new Set();
+    const sources = [...(n.sources ?? []), ...(a?.sources ?? [])].filter((s) => {
+      const k = String(s?.url ?? '').trim().replace(/#.*$/, '').replace(/\/+$/, '');
+      if (!k) return true;
+      if (seenUrl.has(k)) return false;
+      seenUrl.add(k);
+      return true;
+    });
+    // Cross-links sit on leaves, so a category's own neighbours are usually empty: the links that
+    // leave its branch (one end under it, the other outside) say how it connects.
+    const under = descendantsOf(nodes, n.id);
+    const branchLinks = (o.edges ?? []).filter((e) => under.has(e.from) !== under.has(e.to) && e.from !== n.id && e.to !== n.id
+      && (under.has(e.from) ? nodes[e.to] : nodes[e.from]))
+      .slice(0, BRANCH_LINKS_MAX)
+      .map((e) => ({ from: { id: e.from, label: label(e.from) }, to: { id: e.to, label: label(e.to) }, type: e.type, why: e.why }));
     return {
       result: {
         id: n.id, label: n.label, path: labelPath(nodes, n.id).join(' > '),
@@ -570,12 +625,13 @@ export function runTool(name, input, o, index, lens) {
         summary: n.summary ?? '', hook: n.hook ?? '',
         article: a ? { summary: a.summary, keyFacts: a.keyFacts, whyItMatters: a.whyItMatters, seeAlso: a.seeAlso }
           : 'Not explained yet: the reader can click Explain on this node.',
-        sources: [...(n.sources ?? []), ...(a?.sources ?? [])].slice(0, 10),
+        sources: sources.slice(0, 10),
         children: kids.map((c) => ({ id: c.id, label: c.label, summary: c.summary ?? '' })),
         neighbours: (o.edges ?? []).filter((e) => e.from === n.id || e.to === n.id).map((e) => {
           const other = e.from === n.id ? e.to : e.from;
           return { id: other, label: label(other), type: e.type, why: e.why, direction: e.from === n.id ? 'out' : 'in' };
         }),
+        ...(kids.length ? { branchLinks } : {}),
         ...(analog ? { analog } : {}),
       },
     };

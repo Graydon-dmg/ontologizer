@@ -395,16 +395,22 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
 
   /**
    * Null while the tenant is under its limits; else why, and the seconds to the next UTC day.
-   * @param {string} tenant @returns {{ error: string, retryAfter: number } | null}
+   * `extra`: model calls this request has already started (a batch of explain or sources jobs
+   * reserves one call per node), so a batch stops at the limit, node by node. `base`: the tenant's
+   * calls when the request began; a started call that has already been counted is not counted twice.
+   * @param {string} tenant @param {number} [extra] @param {number|null} [base] @returns {{ error: string, retryAfter: number } | null}
    */
-  function over(tenant) {
+  function over(tenant, extra = 0, base = null) {
     if (limits.calls === null && limits.tokens === null) return null;
     const u = today(tenant);
     const t = now();
     const retryAfter = secondsToNextUtcDay(t);
     const when = `It resets at 00:00 UTC (in ${Math.floor(retryAfter / 3600)} h ${Math.floor((retryAfter % 3600) / 60)} min).`;
-    if (limits.calls !== null && u.calls >= limits.calls) {
-      return { error: `Daily limit reached: ${u.calls} model calls today for tenant ${tenant} (limit ${limits.calls}). ${when}`, retryAfter };
+    const more = Number.isInteger(extra) && extra > 0 ? extra : 0;
+    const from = Number.isInteger(base) ? Math.min(/** @type {number} */ (base), u.calls) : u.calls;
+    if (limits.calls !== null && Math.max(u.calls, from + more) >= limits.calls) {
+      const started = more ? `, and ${more} more just started by this request` : '';
+      return { error: `Daily limit reached: ${from} model calls today for tenant ${tenant}${started} (limit ${limits.calls}). ${when}`, retryAfter };
     }
     const tokens = u.inputTokens + u.outputTokens;
     if (limits.tokens !== null && tokens >= limits.tokens) {

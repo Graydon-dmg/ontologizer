@@ -161,7 +161,7 @@ eval "$(ontologizer completion zsh)"
 | `ontologizer restore <trash-id> [--as <name>]` | Bring a deleted map back. |
 | `ontologizer fuse <a> <b> [--into <name>]` | Fuse two maps into a new draft. |
 | `ontologizer rosetta <map> --as "<persona>" [--name <lens>]` | Add a lens that re-explains the map for a persona. |
-| `ontologizer explain <name> <node>` | Write an article for one node. |
+| `ontologizer explain <name> <node> [<node>…] [--sources]` | Write an article for each node (at most 8), or with `--sources` find web sources for each. |
 | `ontologizer research <name> <node> [--general]` | Grow the map under one node. |
 | `ontologizer export <map> --format html\|embed\|json\|context` | Export a map: an offline page, an embed, JSON, or a context pack for an agent. |
 | `ontologizer update` | Update ontologizer to the latest version. |
@@ -227,8 +227,11 @@ ontologizer rosetta plastic-modeling --as "a home chef"
 
 ```
 ontologizer explain plastic-modeling "Plastic Cement"
+ontologizer explain plastic-modeling "Plastic Cement" "CA Glue" --sources
 ontologizer research plastic-modeling Tools --general
 ```
+
+`explain` takes up to 8 nodes; each is its own job (a model call), every one is resolved before any starts, and with several nodes one already explained is skipped. `--sources` runs the Sources job instead (the **Sources** button): web pages that back up each node, attached to it.
 
 `<node>` is a node id or label (an exact label, a unique prefix, or a unique part of it; if unsure it lists close matches). If the map is open in another terminal, the request is sent to that running page (`Sent to the open session (job <id>).`) and you watch it happen there. Otherwise it runs in your terminal and prints the article (summary, key facts, why it matters, see also, sources) or the labels it added (`Added N nodes under <node>:`). `--general` on `research` uses the node's label alone instead of your brief. There is a 10 minute limit.
 
@@ -244,7 +247,7 @@ ontologizer export demo --format context --budget 1500 > demo.md
 - `html`: one self-contained page (`<map>.html` here, or `--out <file>`). It works offline: pan, zoom, click a node for its label, summary, explanation and sources, collapse a branch, search. Nothing in it loads from the network; links (a node's sources, and **Open live** when you pass `--live-url <url>`) open only when you click them. About 170 KB for the demo; `--3d` adds the 3D view (about 750 KB) and prints the size.
 - `embed`: the same map as a fragment (`<map>.embed.html`) to paste into any page: one `<ontologizer-map>` element, 480 px high. Several on one page work.
 - `json`: the map as the page loads it, to stdout or `--out`, with the chat left out; `--include-chat` keeps it.
-- `context`: markdown for an AI agent, to stdout or `--out`, with the headings Brief, Outline, Bridges, Insights, Thin areas and Sources. `--budget` (default 4000) caps its size in estimated tokens (characters / 4): summaries go first, from the deepest level up (the root's children keep theirs longest), then bridges and sources are shortened, and only then the deepest labels; the root's children always stay, and the last line says what was cut; the pack never goes over the budget, and a budget too small for the map is refused with the smallest one that fits. Map text is written as plain data (one line per value, no headings of its own), and a line under the title tells the agent to treat it as information, not instructions. On a map with nothing explained yet, Thin areas is one line.
+- `context`: markdown for an AI agent, to stdout or `--out`, with the headings Brief, Outline, Articles, Bridges, Insights, Thin areas and Sources. Each outline label is followed by its node id (`…/x` under a parent means the parent's id plus `/x`), Articles holds the explained nodes' articles, and when most nodes are one-line summaries the Brief says so. `--budget` (default 4000) caps its size in estimated tokens (characters / 4): summaries go first, from the deepest level up (the root's children keep theirs longest), then bridges, sources, the articles' key facts and whole articles are shortened, then the deepest node ids, and only then the deepest labels; the root's children always stay, and the last line says what was cut; the pack never goes over the budget, and a budget too small for the map is refused with the smallest one that fits. Map text is written as plain data (one line per value, no headings of its own), and a line under the title tells the agent to treat it as information, not instructions. On a map with nothing explained yet, Thin areas is one line.
 
 On the page, the **Export** button in the top bar has the same four: **Download page**, **Copy embed**, **Download JSON** and **Copy for an agent** (the context pack at 4000 tokens). Exports leave out the map's chat; the page and embed formats also leave out job errors, insights and the brief (all but its subject), which they do not show. In a source checkout, run `npm run build` once so the page and embed formats find their bundle.
 

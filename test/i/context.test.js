@@ -55,17 +55,20 @@ const outlineOf = (/** @type {string} */ t) => {
 };
 
 test('at a budget that fits labels but not summaries, every node label is still there', () => {
-  const text = contextPack(demo, { budget: 1500 });
+  // 2000, not the menu's 4000: the outline carries node ids, so the demo's labels and ids alone need about 1900.
+  const text = contextPack(demo, { budget: 2000 });
   // Leaf summaries go first; the root's children lose theirs last, from the end, only as many as needed.
-  const m = lastLine(text).match(/^_Trimmed to fit 1500 tokens: summaries at depth 2(?: and (\d+) of 9 at depth 1)?\._$/);
+  const m = lastLine(text).match(/^_Trimmed to fit 2000 tokens: summaries at depth 2(?: and (\d+) of 9 at depth 1)?\._$/);
   assert.ok(m, lastLine(text));
   assert.deepEqual(missingLabels(text, demo), []);
-  assert.deepEqual(checkContextPack(text, demo, 1500), []);
+  assert.deepEqual(checkContextPack(text, demo, 2000), []);
   const children = Object.values(demo.nodes).filter((x) => x.parent === demo.root);
-  const kept = children.filter((n) => text.includes(`  - ${n.label}: `));
+  /** The outline line of a root child with its summary: "  - Label (…/id): summary". @param {any} n */
+  const withSummary = (n) => text.includes(`  - ${n.label} (…/${n.id.slice(demo.root.length + 1)}): `);
+  const kept = children.filter(withSummary);
   assert.equal(kept.length, children.length - Number(m[1] ?? 0));
   assert.ok(kept.length >= 7, `${kept.length} of the root's children keep their summaries`);
-  assert.ok(text.includes(`  - ${children[0].label}: `), 'cut from the end of the outline');
+  assert.ok(withSummary(children[0]), 'cut from the end of the outline');
 });
 
 test('planted fault: the old depth-first trim (leaf labels cut before summaries) is reported', () => {
@@ -199,7 +202,7 @@ test('a label shared by two nodes is named with its category; unique labels stay
   assert.ok(text.includes('- Canopy Glue → Clear Coats (influences): '), 'unique labels unchanged');
   assert.deepEqual(sameNameBridges(text), []);
   // Outline lines stay bare: the tree already shows where each one sits.
-  assert.equal(text.split('\n').filter((l) => l.trim().startsWith('- Panel Lining:')).length, 2);
+  assert.equal(text.split('\n').filter((l) => /^- Panel Lining \(…\/panel-lining\):/.test(l.trim())).length, 2);
   // An insight that points at a shared label is qualified too.
   const pl = 'scale-plastic-modeling/weathering-techniques/panel-lining';
   const withInsight = { ...demo, insights: [...demo.insights, { at: 1, text: 'Lines read better after a gloss coat.', nodeId: pl }] };

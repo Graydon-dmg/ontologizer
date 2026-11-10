@@ -33,5 +33,5 @@ Reader level: ${brief?.level ?? ''}${lensText}`;
 
 /** @param {string} outlineText */
 export function outlineBlock(outlineText) {
-  return `The map's outline. Each line is "- Label (node-id): one-line summary", indented to show the tree:\n${outlineText || '(the map is empty)'}`;
+  return `The map's outline. Each line is "- Label (node-id): one-line summary", indented to show the tree; "[explained]" ends the line of a node with a written article (get_node reads it):\n${outlineText || '(the map is empty)'}`;
 }

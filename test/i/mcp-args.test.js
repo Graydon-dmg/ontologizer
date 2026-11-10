@@ -64,7 +64,7 @@ test('a guessed argument name is an error that names the right one (planted faul
 });
 
 /** Schema keywords the argument check enforces or that carry no constraint. */
-const KNOWN = new Set(['type', 'properties', 'required', 'additionalProperties', 'description', 'enum', 'default', 'minimum', 'maximum', 'maxItems', 'items', 'contentMediaType']);
+const KNOWN = new Set(['type', 'properties', 'required', 'additionalProperties', 'description', 'enum', 'default', 'minimum', 'maximum', 'minItems', 'maxItems', 'uniqueItems', 'items', 'contentMediaType']);
 
 /** Problems in input schemas the argument check would not fully enforce. @param {{ name: string, inputSchema: any }[]} tools */
 function schemaProblems(tools) {

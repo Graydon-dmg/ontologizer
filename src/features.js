@@ -25,4 +25,9 @@ export const FEATURES = [
   { id: 'delete',       epic: 'I5', cli: 'delete',  ui: { page: 'web/index.html',      id: 'map-delete' } },
   { id: 'trash',        epic: 'I5', cli: 'trash',   ui: { page: 'web/home/index.html', id: 'trash-list' } },
   { id: 'restore',      epic: 'I5', cli: 'restore', ui: { page: 'web/home/index.html', id: 'trash-section' } },
+  // Deepening several nodes in one call (explain and sources with nodeIds; `ontologizer explain <map>
+  // <node>… [--sources]`): no new button. The page already has one per node (Explain, Sources), and a
+  // batch is only those clicks in one request, each node still its own job.
+  { id: 'explain-several', epic: 'I3', cli: 'explain', ui: { page: 'web/index.html', id: 'explain' } },
+  { id: 'sources-several', epic: 'I3', cli: 'explain', ui: { page: 'web/index.html', id: 'sources' } },
 ];

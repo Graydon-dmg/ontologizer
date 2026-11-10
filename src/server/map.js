@@ -8,6 +8,8 @@ import { MAX_BODY as MAX_CHAT_BODY, TOO_LARGE, ChatError, readCappedBody, drainC
 const PING_MS = 15000;
 /** The actions that call the model (the daily limits refuse them). */
 const MODEL_ACTIONS = new Set(['research', 'explain', 'sources', 'rosetta', 'fuse']);
+/** At most this many nodes in one explain or sources call (nodeIds). */
+export const BATCH_MAX = 8;
 
 /** @param {number} ms @param {{ timers: Set<any> }} c */
 function sleep(ms, c) {
@@ -29,11 +31,14 @@ function sleep(ms, c) {
  *   event sent; also watched while its chat answer is written);
  * - sync(): resolves when every write so far is stored (a Postgres store); awaited before a write's 2xx;
  * - isPrivate(mapId): whether another map is private (fuse keeps its id out of this map's log).
- * - limit(): null, or { error, retryAfter } when the tenant's daily model limit is reached: a
- *   model-calling action (research, explain, sources, rosetta, fuse) or a chat answers 429.
+ * - limit(extra?, base?): null, or { error, retryAfter } when the tenant's daily model limit is reached:
+ *   a model-calling action (research, explain, sources, rosetta, fuse) or a chat answers 429. `extra`
+ *   counts the calls a batch (explain or sources on nodeIds) already started in this request, `base`
+ *   the tenant's calls() when the batch began.
+ * - calls(): the tenant's model calls today.
  * @typedef {{ valid?: (ev?: any) => boolean|Promise<boolean>, actor?: any, principal?: any, tools?: () => Promise<any>,
  *   canRead?: (mapId: string) => boolean|Promise<boolean>, sync?: () => Promise<void>,
- *   isPrivate?: (mapId: string) => boolean, limit?: () => ({ error: string, retryAfter: number } | null) }} RequestCtx
+ *   isPrivate?: (mapId: string) => boolean, limit?: (extra?: number, base?: number|null) => ({ error: string, retryAfter: number } | null), calls?: () => number }} RequestCtx
  */
 
 /**
@@ -222,9 +227,15 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         }
         viewEvent({ filter: body.value });
         return ok({ ok: true });
-      case 'research':
       case 'explain':
-      case 'sources': {
+      case 'sources':
+        if (body.nodeIds !== undefined) {
+          if (body.nodeId !== undefined) return bad('give nodeId (one node) or nodeIds (several), not both');
+          return batch(body.type, body.nodeIds, ctx, who, ok, bad);
+        }
+        if (!isId(body.nodeId)) return bad('give nodeId (one node) or nodeIds (1 to 8 nodes)');
+      // falls through: one node, as research
+      case 'research': {
         if (!isId(body.nodeId)) return bad('nodeId must be a non-empty string');
         /** @type {Record<string, any>} */
         let job = { kind: body.type, nodeId: body.nodeId };
@@ -276,6 +287,43 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       default:
         return bad(`unknown action type: ${String(body.type)}`);
     }
+  }
+
+  /**
+   * explain or sources on several nodes: one job per node, each under the engine's per-node dedupe,
+   * the concurrency limit and the daily limit, exactly as if each were asked for alone. Every node is
+   * checked before any job starts (a bad list starts nothing). A node already explained (explain) is
+   * skipped; one whose job is already queued or running answers that job's id; once the daily limit
+   * would be crossed, each remaining node is refused with the limit's message, never dropped silently.
+   * @param {'explain'|'sources'} kind @param {unknown} list @param {RequestCtx} ctx
+   * @param {{ actor?: any, principal?: any }} who @param {(reply: any) => any} ok @param {(error: string) => any} bad
+   */
+  async function batch(kind, list, ctx, who, ok, bad) {
+    if (!Array.isArray(list) || list.length < 1 || list.length > BATCH_MAX) return bad(`nodeIds must be a list of 1 to ${BATCH_MAX} node ids`);
+    if (!list.every(isId)) return bad('nodeIds must hold only non-empty strings');
+    const dup = list.find((n, i) => list.indexOf(n) !== i);
+    if (dup !== undefined) return bad(`nodeIds lists "${dup}" twice`);
+    const o = store.read(id);
+    const missing = list.filter((n) => !o.nodes?.[n]);
+    if (missing.length) return bad(`no node ${missing.map((n) => `"${n}"`).join(', ')} in this map; nothing was started. Call search_map or get_outline for node ids`);
+    // The map's rules are the same for every node: its source tools (none for sources) are made once.
+    const tools = ctx.tools && kind !== 'sources' ? await ctx.tools() : null;
+    /** @type {Record<string, any>[]} */
+    const jobs = [];
+    let started = 0;
+    const base = ctx.calls ? ctx.calls() : null; // a job's call may be counted before the next node is checked
+    for (const nodeId of /** @type {string[]} */ (list)) {
+      if (kind === 'explain' && o.nodes[nodeId].article) { jobs.push({ nodeId, skipped: 'already explained' }); continue; }
+      const running = Object.values(store.read(id).jobs ?? {}).find((/** @type {any} */ j) => j.kind === kind && j.nodeId === nodeId && (j.state === 'queued' || j.state === 'running'));
+      if (running) { jobs.push({ nodeId, jobId: /** @type {any} */ (running).id }); continue; }
+      const over = ctx.limit ? ctx.limit(started, base) : null;
+      if (over) { jobs.push({ nodeId, refused: over.error }); continue; }
+      const r = await engine.enqueue({ kind, nodeId }, { priority: 10, ...who, ...(tools ? { tools } : {}) });
+      started++;
+      const jobId = typeof r === 'string' ? r : (r?.jobId ?? r?.id);
+      jobs.push(jobId === undefined ? { nodeId } : { nodeId, jobId });
+    }
+    return ok({ ok: true, jobs });
   }
 
   /**
