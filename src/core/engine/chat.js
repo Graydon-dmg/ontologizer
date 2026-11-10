@@ -2,7 +2,7 @@
 // The chat side panel's brain: engine.ask() answers questions about the whole map.
 // Map first (search_map / get_node over the store, read-only), the web for what the map lacks,
 // every map claim cited as [[node-id]] and every web fact linked. Writes only chat.* events.
-import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage } from './call.js';
+import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage, searchFailure, searchFailureText } from './call.js';
 import { labelPath, findByLabelPath } from './ids.js';
 import { chatSystem, outlineBlock } from './prompts-chat.js';
 import { UNTRUSTED } from './run.js';
@@ -23,7 +23,10 @@ ${UNTRUSTED}`;
  * @typedef {{ type: 'delta', text: string } | { type: 'citation', nodeId: string, label: string }
  *   | { type: 'source', title: string, url: string }
  *   | { type: 'suggestion', kind: 'research', nodeId: string, mode: 'context'|'general', label: string }
- *   | { type: 'status', text: string } | { type: 'done', msgId: string } | { type: 'error', error: string }} ChatItem
+ *   | { type: 'status', text: string } | { type: 'done', msgId: string } | { type: 'error', error: string }
+ *   | { type: 'websearch', used: boolean, failed?: string, note?: string }} ChatItem
+ * websearch comes once, just before done: whether the answer searched the web, the error_code of a
+ * search that failed or ran out, and a plain note naming the next step (the page ignores it).
  * @typedef {{ mime: string, data: string, hash?: string, w?: number, h?: number }} ChatImage
  */
 
@@ -87,7 +90,7 @@ async function run(cctx, q, out) {
   const srcTools = cctx.run?.hasTools ? cctx.run.tools : null;
   const srcNames = new Set((srcTools?.defs ?? []).map((/** @type {any} */ d) => d.name));
   const { chatId, msgId, answerId, text, images, lens, signal } = q;
-  const answer = { text: '', usedWeb: false };
+  const answer = { text: '', usedWeb: false, /** @type {string|null} */ searchFailed: null };
   /** @type {Map<string, { nodeId: string, label: string }>} */ const citations = new Map();
   /** @type {Map<string, { title: string, url: string }>} */ const sources = new Map();
   /** @type {Map<string, { kind: 'research', nodeId: string, mode: 'context'|'general', label: string }>} */
@@ -203,6 +206,7 @@ async function run(cctx, q, out) {
         if (b?.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (typeof r?.url === 'string') toolUrls.add(r.url);
       }
       readSearchBlocks(final.content, searchTitles, addSource);
+      answer.searchFailed = searchFailure(final.content) ?? answer.searchFailed;
 
       if (final.stop_reason === 'pause_turn') {
         messages.push({ role: 'assistant', content: final.content });
@@ -238,12 +242,31 @@ async function run(cctx, q, out) {
       citations: [...citations.values()], sources: [...sources.values()],
       suggestions: [...suggestions.values()], usedWeb: answer.usedWeb,
     });
+    send(webSearchItem(answer, [...citations.keys()], index, text, store.read(id).nodes ?? {}));
     send({ type: 'done', msgId: answerId });
   } catch (err) {
     const error = signal?.aborted ? STOPPED : jobErrorMessage(err);
     emit('chat.failed', { chatId, replyTo: msgId, error });
     send({ type: 'error', error });
   }
+}
+
+/**
+ * The websearch item: on a failed search, which failure in plain words and the next step for the
+ * node the question is about (the first node the answer cites, else the best match for the question).
+ * @param {{ usedWeb: boolean, searchFailed: string|null }} answer @param {string[]} cited
+ * @param {ReturnType<typeof buildIndex>} index @param {string} question @param {Record<string, any>} nodes
+ * @returns {ChatItem}
+ */
+export function webSearchItem(answer, cited, index, question, nodes) {
+  const used = answer.usedWeb || answer.searchFailed !== null;
+  if (!answer.searchFailed) return { type: 'websearch', used };
+  const nodeId = cited.find((c) => nodes[c]) ?? (question ? index.search(question, 1)[0]?.id : undefined);
+  const what = searchFailureText(answer.searchFailed);
+  const next = nodeId
+    ? `To find and keep web sources for "${nodes[nodeId]?.label ?? nodeId}", run sources on ${nodeId} (or explain); both call the model.`
+    : 'To find and keep web sources, run sources (or explain) on the node your question is about; both call the model.';
+  return { type: 'websearch', used, failed: answer.searchFailed, note: `The ${what}, so this answer may lack web sources. ${next}` };
 }
 
 function abortError() {

@@ -4,6 +4,7 @@
 import { researchContextPrompt, researchGeneralPrompt, explainPrompt, sourcesPrompt } from './prompts.js';
 import { childId, labelPath } from './ids.js';
 import { sourcesNote } from './run.js';
+import { searchFailureText } from './call.js';
 
 const MAX_NEW = 10;
 const MAX_LABEL = 80;
@@ -163,6 +164,6 @@ export async function sources(ectx, nodeId) {
   const chosen = cleanSources(picks.filter((p) => found.has(p.url))
     .map((p) => ({ title: typeof p.title === 'string' ? p.title : p.url, url: p.url })), sites);
   if (chosen.length < 3) chosen.push(...cleanSources(result.sources, sites).slice(0, 5 - chosen.length));
-  if (!chosen.length) throw new Error('sources: no sources found');
+  if (!chosen.length) throw new Error(`sources: no sources found${result.searchFailed ? ` (${searchFailureText(result.searchFailed)})` : ''}`);
   ectx.emit('node.updated', { id: nodeId, patch: { sources: mergeSources(node.sources, chosen) } });
 }

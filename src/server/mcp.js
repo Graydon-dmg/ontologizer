@@ -100,6 +100,8 @@ const ASK_OUTPUT = { type: 'object', properties: {
   answer: { type: 'string' }, chatId: { type: 'string' },
   citedNodes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } } } },
   sources: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, url: { type: 'string' } } } },
+  webSearch: { type: 'object', description: 'Whether the answer searched the web, and the error_code of a search that failed or ran out',
+    properties: { used: { type: 'boolean' }, failed: { enum: ['max_uses_exceeded', 'too_many_requests', 'unavailable', 'query_too_long', 'invalid_input'] } }, required: ['used'] },
 }, required: ['answer', 'citedNodes', 'sources'] };
 
 /** The tool's output schema: the op's JSON object output (a list is wrapped as { maps }); none for text. @param {import('../ops.js').Op} op */
@@ -267,6 +269,9 @@ export function collectChat(body) {
   const sources = [];
   /** @type {string|null} */
   let error = null;
+  /** @type {{ used: boolean, failed?: string } | null} */
+  let webSearch = null;
+  let webNote = '';
   for (const block of body.split('\n\n')) {
     const line = block.split('\n').find((l) => l.startsWith('data:'));
     if (!line) continue;
@@ -276,12 +281,17 @@ export function collectChat(body) {
     else if (item.type === 'citation' && !cited.some((c) => c.id === item.nodeId)) cited.push({ label: String(item.label ?? item.nodeId), id: String(item.nodeId) });
     else if (item.type === 'source' && !sources.some((s) => s.url === item.url)) sources.push({ title: String(item.title ?? item.url), url: String(item.url) });
     else if (item.type === 'error') error = String(item.error ?? 'error');
+    else if (item.type === 'websearch') {
+      webSearch = { used: item.used === true, ...(typeof item.failed === 'string' && item.failed ? { failed: item.failed } : {}) };
+      webNote = typeof item.note === 'string' ? item.note : '';
+    }
   }
   let out = answer.trim();
   if (cited.length) out += `${out ? '\n\n' : ''}Cited nodes:\n${cited.map((c) => `- ${c.label} (${c.id})`).join('\n')}`;
   if (sources.length) out += `${out ? '\n\n' : ''}Sources:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`;
+  if (webNote) out += `${out ? '\n\n' : ''}Web search: ${webNote}`;
   if (error) out += `${out ? '\n\n' : ''}Error: ${error}`;
-  return { text: out, isError: error !== null && !answer.trim(), error, answer: answer.trim(), cited, sources };
+  return { text: out, isError: error !== null && !answer.trim(), error, answer: answer.trim(), cited, sources, webSearch };
 }
 
 /**
@@ -356,7 +366,7 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     if (op.name === 'ask_map') {
       const c = collectChat(r.text);
       if (c.isError || !c.text) return textResult(c.error ? `${c.error} Try again, or read the map with get_context.` : 'The map gave no answer. Try again, or read the map with get_context.', true);
-      const structured = { answer: c.answer, chatId: String(/** @type {any} */ (args).chatId ?? 'main'), citedNodes: c.cited, sources: c.sources };
+      const structured = { answer: c.answer, chatId: String(/** @type {any} */ (args).chatId ?? 'main'), citedNodes: c.cited, sources: c.sources, ...(c.webSearch ? { webSearch: c.webSearch } : {}) };
       return { content: [{ type: 'text', text: c.text }], structuredContent: structured };
     }
     const isJson = /json/i.test(r.type) || (op.http.type ?? 'application/json') === 'application/json';

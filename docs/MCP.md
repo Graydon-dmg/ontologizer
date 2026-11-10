@@ -169,8 +169,10 @@ The outputs below have the real shapes (shortened where marked with …); the to
    ```json
    { "answer": "A sharp, nail-polish smell usually means the levain is hungry …",
      "citedNodes": [ { "id": "sourdough/starter/feeding", "label": "Feeding schedule" } ],
-     "sources": [ { "title": "…", "url": "https://…" } ], "chatId": "agent-bread" }
+     "sources": [ { "title": "…", "url": "https://…" } ], "chatId": "agent-bread",
+     "webSearch": { "used": true } }
    ```
+   One answer may search the web only a few times. When a search fails or runs out, `webSearch.failed` holds its code (`max_uses_exceeded`, `too_many_requests`, `unavailable`, `query_too_long`, `invalid_input`) and the text ends with a "Web search:" line naming the next step, e.g. "run sources on sourdough/starter/levain (or explain)": the `sources` job searches for that one node and keeps what it finds.
 2. Follow up with the same `chatId` (questions with one chatId share history; the default, `"main"`, is the conversation the map page shows). Use `get_node` on a cited node for more.
 
 Ask only when you need prose grounded in the map: you can usually answer from `get_context` and `get_node` yourself, for free.
@@ -344,7 +346,7 @@ Add a lens to a map: every node gets an analog from a persona's own world ("a ch
 
 ### `ask_map`: Ask a map a question
 
-Ask one question about a map and get a written answer that cites the map's nodes (and web pages for what the map lacks; none on a private map). It is not a read: the question and answer are added to the map's chat (the chatId conversation), which everyone who can open the map sees. Use when the user wants an answer in prose grounded in the map, with citations. Don't use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId }. Next: get_node on a cited node, or ask_map again with the same chatId to follow up. Calls the model: costs API credits.
+Ask one question about a map and get a written answer that cites the map's nodes (and web pages for what the map lacks; none on a private map). It is not a read: the question and answer are added to the map's chat (the chatId conversation), which everyone who can open the map sees. Use when the user wants an answer in prose grounded in the map, with citations. Don't use when you can answer from get_context or get_node yourself (free), or to change the map (research, explain). Returns { answer, citedNodes: [{ id, label }], sources: [{ title, url }], chatId, webSearch: { used, failed? } }: failed is the error_code of a web search that failed or ran out (max_uses_exceeded: one answer may search only a few times; too_many_requests, unavailable, query_too_long, invalid_input), and the text then says so and names the node to run sources on. Next: get_node on a cited node, ask_map again with the same chatId to follow up, or, when webSearch.failed, sources (or explain) on the node the question is about to find and keep its web sources. Calls the model: costs API credits.
 
 **calls the model** · writes to the map · token scope: `ask` · HTTP: `POST /v1/t/{tenant}/maps/{id}/chat`
 
