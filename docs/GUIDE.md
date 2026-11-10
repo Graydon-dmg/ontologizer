@@ -703,6 +703,10 @@ ontologizer usage --days 31 --json
 
 Over a limit, everything that calls the model answers 429 with `Retry-After` until 00:00 UTC, and a build already running stops at its next model call. Reads, waits, exports and view changes keep working. The Server panel shows today's counts and the limits.
 
+**The limits are soft.** They are checked before each model call, not during one: calls already running when a tenant reaches its limit finish and are counted, so the day's total can end a little over, and a single large call can take a tenant past `--limit-tokens` on its own. Set the limits with that headroom in mind.
+
+If `usage.json` is ever unreadable (a damaged disk, a hand edit gone wrong), `serve` moves it aside to `usage.json.corrupt-<time>`, says so in its log, and carries on with the counts it already knows; it never writes over a file it could not read.
+
 **This is not a spend cap.** Ontologizer counts calls and tokens, not money: prices differ by model and change. To cap what you spend, set a limit with your API provider as well.
 
 **Build timeout.** A build that runs longer than `--build-timeout` minutes (default 15) is stopped: its model calls are aborted, the map shows "Timed out after 15 minutes" in its jobs tray, and the next build in the queue starts.

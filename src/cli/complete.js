@@ -18,7 +18,7 @@ const FLAGS = {
   token: ['--name', '--tenant', '--scopes', '--sources', '--home', '--json'],
   sources: ['--config', '--home', '--json'],
   export: ['--format', '--3d', '--budget', '--out', '--live-url', '--include-chat'],
-  mcp: ['--url', '--token-file', '--home'],
+  mcp: ['--url', '--token-file', '--allow-http', '--home', '--build-timeout'],
   usage: ['--home', '--days', '--json'],
 };
 const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export']);

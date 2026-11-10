@@ -593,17 +593,22 @@ GET  /v1/t/:tenant/maps/:id/export?format=json|context|html|embed[&budget=][&thr
 ### MCP
 
 ```text
-ontologizer mcp [--url <server>] [--token-file <file>] [--home <dir>]
+ontologizer mcp [--url <server>] [--token-file <file>] [--allow-http] [--home <dir>] [--build-timeout <minutes>]
     stdio. With --url: forwards every tool call over HTTP to that server, with the token from --token-file
-    (or ONTOLOGIZER_TOKEN). Never takes a token on the command line.
-    Without --url: starts the service in-process on 127.0.0.1 (a random port) for the home, open mode
-    (loopback only, no token), and forwards to it. Refuses (exit 1) a home with tokens or a config.
+    (or ONTOLOGIZER_TOKEN). Never takes a token on the command line. Refuses (exit 1) http:// to a host that
+    is not loopback unless --allow-http; warns on stderr when the token file is group or world readable
+    (not on Windows).
+    Without --url: starts the service in-process on 127.0.0.1 (a random port) for the home, with one random
+    admin token made at start and held only in memory (never written or printed), and forwards to it with
+    that token: any other request gets 401. --build-timeout (1 to 1440, default 15) is passed to it.
+    Refuses (exit 1) a home with tokens or a config. Its builds and jobs end with the session: close()
+    marks every queued or running one failed ("Stopped: the server ended"), and wait reports it.
     Logs go to stderr; stdout is the protocol only.
 ```
 
 - **One security path.** No MCP code calls the engine or a store. Each tool call becomes an HTTP request to the router (`requestFor(op, input)`), carrying the caller's own credentials:
   - `/v1/mcp` first authenticates the request as every `/v1/t/` route does (401 with `WWW-Authenticate: Bearer`; then a cookie POST without a matching Origin, or any foreign Origin, 403). Each tool call is then sent to the same server on loopback with the incoming request's headers (Authorization, cookie, Host, Origin and the rest; hop-by-hop, length, content and MCP headers dropped), so the tenant, scope, read rule, policy, limits and Origin checks apply to it unchanged.
-  - stdio sends `Authorization: Bearer <token>` from the token file, or nothing (the in-process open server).
+  - stdio sends `Authorization: Bearer <token>` from the token file, or the in-process server's own in-memory token.
 - The tenant is the caller's own: `GET /v1/session` once per MCP request (HTTP) or per process (stdio).
 - **Tools** (each one op; `inputSchema` is the op's input without `tenant`):
   `check_context, build_map, wait_for_map, list_maps, get_outline, search_map, get_node, research, explain, sources, ask_map, fuse, rosetta, save_map, get_context, export_map`.
@@ -737,7 +742,9 @@ node -e "import('ontologizer/client').then(async ({ createClient }) => console.l
 1. **The router describes itself, it is not generated.** `src/ops.js` describes the hand-written router, and a test keeps them in step both ways. Generating the router from the list would remove the test but rewrite the security-reviewed code.
 2. **Usage is not money.** Calls and tokens are counted; prices change and differ by model, so no dollar figure is kept. A spend cap belongs with the API provider's own limits.
 3. **`usage.json` is shared by every process on a home.** Writes merge under a lock file; on a network filesystem without reliable `O_EXCL`, keep one server per home.
-4. **`ontologizer mcp` without `--url` opens a loopback port** while it runs, open to this machine as `ontologizer load` is. It refuses a home that has tokens or a config (exit 1, pointing to `--url` and `--token-file` against a running `serve`).
+4. **`ontologizer mcp` without `--url` opens a loopback port** while it runs, signed in with an in-memory token only it holds (another program on this machine gets 401), so its map `viewUrl` cannot be opened in a browser: open the map with `ontologizer load <id>` (a second writer on the home; each page shows the other's changes only after a reload). It refuses a home that has tokens or a config (exit 1, pointing to `--url` and `--token-file` against a running `serve`).
+5. **The map resource** (`ontologizer://<tenant>/maps/<id>/snapshot`) is the export's json through `agentMap` (allow-list, escaped, no chat or jobs), never the raw snapshot. Every tool with `callsModel` has `readOnlyHint: false`.
+6. **The build timeout** aborts only that build's model calls (the signal is carried with the build's own async work, made at its start); a chat answer on the map finishes before the timed-out engine is dropped.
 
 ---
 

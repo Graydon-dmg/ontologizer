@@ -42,47 +42,83 @@ function stamp(file) {
 }
 
 export const LOCK_STALE_MS = 10_000;
-/** How long a write waits for the lock (a busy lock keeps the counts in memory for the next write). */
+/** How long flush() waits for the lock by default (record() never waits: a busy lock is retried on a timer). */
 export const LOCK_WAIT_MS = 1_000;
 /** How long the last write, at exit, waits: past LOCK_STALE_MS, so even a crashed holder's lock is taken over. */
 export const EXIT_WAIT_MS = LOCK_STALE_MS + 2_000;
+/** How soon after a missed write (busy lock) record() retries it, off the request path. */
+export const RETRY_MS = 250;
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
+/** @param {string} f @returns {string|null} */
+const readOrNull = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+
 /**
- * Take <file>.lock (created with O_EXCL); a lock older than LOCK_STALE_MS is a crashed writer's and
- * is removed. Retries for up to `waitMs` (wall time: a lock's age is wall time too). Returns the
- * release function, or null.
+ * Move a stale lock (a crashed writer's) out of the way, only if it is still the one judged stale:
+ * the lock is renamed aside (one process wins the rename) and, should what was moved turn out to be a
+ * fresh lock someone took meanwhile, it is put back (link fails if yet another lock exists).
+ * @param {string} lockFile @param {string} seen the stale lock's content
+ */
+function removeStale(lockFile, seen) {
+  const aside = `${lockFile}.stale-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  try { fs.renameSync(lockFile, aside); } catch { return; } // gone already, or another took it over
+  try {
+    const st = fs.statSync(aside);
+    if (readOrNull(aside) !== seen || Date.now() - st.mtimeMs <= LOCK_STALE_MS) {
+      try { fs.linkSync(aside, lockFile); } catch { /* a newer lock is in place */ }
+    }
+  } finally { try { fs.rmSync(aside, { force: true }); } catch { /* best effort */ } }
+}
+
+/**
+ * Take <file>.lock (created with O_EXCL, holding a token unique to this taking); a lock older than
+ * LOCK_STALE_MS is a crashed writer's and is moved away. Retries for up to `waitMs` (wall time: a
+ * lock's age is wall time too; 0: one try, never waits). Returns the release function (which removes
+ * the lock only while it still holds this token), or null when another process holds it. Throws
+ * any other error (EACCES, EROFS, ...): the caller says what it was.
  * @param {string} file @param {number} [waitMs] @returns {(() => void) | null}
  */
 export function lock(file, waitMs = LOCK_WAIT_MS) {
   const lockFile = `${file}.lock`;
-  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* reported by the write */ }
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* reported by the open */ }
   const until = Date.now() + Math.max(0, waitMs);
-  for (let first = true; first || Date.now() < until; first = false) {
-    try {
-      const fd = fs.openSync(lockFile, 'wx', 0o600);
-      fs.writeSync(fd, String(process.pid));
-      fs.closeSync(fd);
-      return () => { try { fs.rmSync(lockFile, { force: true }); } catch { /* already gone */ } };
-    } catch (err) {
-      if (/** @type {any} */ (err)?.code !== 'EEXIST') return null;
-      try {
-        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS) { fs.rmSync(lockFile, { force: true }); continue; }
-      } catch { continue; } // it went away: try again at once
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  for (let tries = 0; tries < 3 || Date.now() < until; tries++) {
+    let fd;
+    try { fd = fs.openSync(lockFile, 'wx', 0o600); } catch (err) {
+      if (/** @type {any} */ (err)?.code !== 'EEXIST') throw err;
+      let st;
+      try { st = fs.statSync(lockFile); } catch { continue; } // it went away: try again at once
+      if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+        const seen = readOrNull(lockFile);
+        if (seen !== null) removeStale(lockFile, seen);
+        continue;
+      }
+      if (Date.now() >= until) return null;
       Atomics.wait(pause, 0, 0, 5);
+      continue;
     }
+    try { fs.writeSync(fd, token); } finally { fs.closeSync(fd); }
+    return () => {
+      try { if (readOrNull(lockFile) === token) fs.rmSync(lockFile, { force: true }); } catch { /* already gone */ }
+    };
   }
   return null;
 }
 
 /**
- * The file, as written; an empty one when it is missing or unreadable (never throws).
- * @param {string} home @returns {UsageFile}
+ * The file as written, and whether it was missing, fine, or corrupt (unparseable, the wrong shape,
+ * or unreadable). Never throws.
+ * @param {string} home @returns {{ data: UsageFile, state: 'missing' | 'ok' | 'corrupt' }}
  */
-export function readUsageFile(home) {
+function readState(home) {
+  let text;
+  try { text = fs.readFileSync(usagePath(home), 'utf8'); } catch (err) {
+    return { data: { version: 1, tenants: {} }, state: /** @type {any} */ (err)?.code === 'ENOENT' ? 'missing' : 'corrupt' };
+  }
   try {
-    const j = JSON.parse(fs.readFileSync(usagePath(home), 'utf8'));
-    if (!j || typeof j !== 'object' || !j.tenants || typeof j.tenants !== 'object') return { version: 1, tenants: {} };
+    const j = JSON.parse(text);
+    if (!j || typeof j !== 'object' || !j.tenants || typeof j.tenants !== 'object') return { data: { version: 1, tenants: {} }, state: 'corrupt' };
     /** @type {UsageFile} */
     const out = { version: 1, tenants: {} };
     for (const [t, days] of Object.entries(j.tenants)) {
@@ -93,8 +129,27 @@ export function readUsageFile(home) {
         out.tenants[t][d] = { calls: count(c.calls), inputTokens: count(c.inputTokens), outputTokens: count(c.outputTokens) };
       }
     }
-    return out;
-  } catch { return { version: 1, tenants: {} }; }
+    return { data: out, state: 'ok' };
+  } catch { return { data: { version: 1, tenants: {} }, state: 'corrupt' }; }
+}
+
+/**
+ * The file, as written; an empty one when it is missing or unreadable (never throws).
+ * @param {string} home @returns {UsageFile}
+ */
+export const readUsageFile = (home) => readState(home).data;
+
+/** Remove usage.json.*.tmp files older than a minute (a writer that died between write and rename). @param {string} file */
+function cleanTemps(file) {
+  const dir = path.dirname(file);
+  const prefix = `${path.basename(file)}.`;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const n of names) {
+    if (!n.startsWith(prefix) || !n.endsWith('.tmp')) continue;
+    const f = path.join(dir, n);
+    try { if (Date.now() - fs.statSync(f).mtimeMs > 60_000) fs.rmSync(f, { force: true }); } catch { /* gone, or not ours to remove */ }
+  }
 }
 
 /** Input tokens of one response: fresh input plus cache writes and reads. @param {any} u */
@@ -203,7 +258,7 @@ export function meterStream(s, params, add) {
  * @param {{ home: string, limitCalls?: number|null, limitTokens?: number|null, now?: () => number, log?: (line: string) => void, lockWaitMs?: number }} o
  *   limitCalls, limitTokens: per tenant per UTC day; null (or 0 and below) means no limit.
  *   now: the clock (ms) that decides the UTC day, the Retry-After and what is pruned; tests fix it.
- *   lockWaitMs: how long a write waits for the lock before keeping its counts for the next write.
+ *   lockWaitMs: how long flush() waits for the lock by default (record() never waits).
  */
 export function createUsage({ home, limitCalls = null, limitTokens = null, now = () => Date.now(), log = () => {}, lockWaitMs = LOCK_WAIT_MS }) {
   const file = usagePath(home);
@@ -216,39 +271,64 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
    * plus this process's additions not yet written (`pending`). Writes add `pending` to the file's
    * current counts under a lock, so two processes on one home never overwrite each other.
    */
-  let data = readUsageFile(home);
+  cleanTemps(file);
+  let data = readState(home).data;
   /** @type {Record<string, Record<string, Counts>>} */
   let pending = {};
   let seen = stamp(file);
   let warned = false;
+  let warnedCorrupt = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let retry = null;
 
   /** @param {Record<string, Record<string, Counts>>} map @param {string} tenant @param {string} day @returns {Counts} */
   const slotIn = (map, tenant, day) => ((map[tenant] ??= {})[day] ??= { calls: 0, inputTokens: 0, outputTokens: 0 });
 
-  /** Pick up another process's writes (the file changed since we last read or wrote it). */
+  /**
+   * Pick up another process's writes (the file changed since we last read or wrote it). A corrupt
+   * file changes nothing: the counts known so far keep being enforced (the next write moves it aside).
+   */
   function refresh() {
     const st = stamp(file);
     if (st === seen) return;
     seen = st;
-    data = readUsageFile(home);
+    const r = readState(home);
+    if (r.state !== 'corrupt') data = r.data;
   }
+
+  /** @param {string} line */
+  const warn = (line) => { if (!warned) log(line); warned = true; };
 
   /**
    * Add `pending` to the file's counts, under the lock, atomically; keep the last KEEP_DAYS days.
-   * Counts kept because the lock was busy go out with the next write, or at the latest with flush().
-   * @param {number} [waitMs] @returns {boolean} whether nothing is left pending
+   * A file that cannot be parsed is moved aside to usage.json.corrupt-<ms> first (never overwritten)
+   * and the counts this process knows are written in its place. Counts kept because the lock was busy
+   * go out with the next write, or at the latest with flush().
+   * @param {number} waitMs @returns {boolean} whether nothing is left pending
    */
-  function save(waitMs = lockWaitMs) {
+  function save(waitMs) {
     if (!Object.keys(pending).length) return true;
-    const release = lock(file, waitMs);
+    let release;
+    try { release = lock(file, waitMs); } catch (err) {
+      warn(`could not lock ${file}: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}; the counts are kept in memory`);
+      return false;
+    }
     if (!release) {
-      if (!warned) log(`could not lock ${file}: another process holds it; the counts are kept and written next time`);
-      warned = true;
+      warn(`could not lock ${file}: another process holds it; the counts are kept and written next time`);
       return false;
     }
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
-      const merged = readUsageFile(home);
+      const r = readState(home);
+      /** @type {UsageFile} */
+      let merged = r.data;
+      if (r.state === 'corrupt') {
+        const aside = `${file}.corrupt-${Date.now()}`;
+        fs.renameSync(file, aside); // throws: nothing is written over a file not moved aside
+        if (!warnedCorrupt) log(`${file} could not be read (corrupt); moved it to ${aside} and kept the counts this process knows`);
+        warnedCorrupt = true;
+        merged = JSON.parse(JSON.stringify(data));
+      }
       for (const [t, days] of Object.entries(pending)) {
         for (const [d, c] of Object.entries(days)) {
           const m = slotIn(merged.tenants, t, d);
@@ -269,16 +349,23 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
       return true;
     } catch (err) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing to remove */ }
-      if (!warned) log(`could not write ${file}: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`);
-      warned = true;
+      warn(`could not write ${file}: ${/** @type {any} */ (err)?.code ?? /** @type {any} */ (err)?.message ?? err}`);
       return false;
     } finally {
       release();
     }
   }
 
+  /** Write now if the lock is free (never waiting for it); else retry on a timer that does not hold the process open. */
+  function trySave() {
+    if (save(0) || retry) return;
+    retry = setTimeout(() => { retry = null; trySave(); }, RETRY_MS);
+    retry.unref?.();
+  }
+
   /**
-   * Add to a tenant's counts for today.
+   * Add to a tenant's counts for today. Never blocks on the lock: the count is in memory (and
+   * enforced) at once, and written now if the lock is free, else within a moment by a retry.
    * @param {string} tenant @param {{ calls?: number, inputTokens?: number, outputTokens?: number }} add
    */
   function record(tenant, add) {
@@ -287,7 +374,7 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
     c.calls += count(add.calls);
     c.inputTokens += count(add.inputTokens);
     c.outputTokens += count(add.outputTokens);
-    save();
+    trySave();
   }
 
   /** The counts as this process knows them: the file's, plus what it has not written yet. @param {string} tenant @param {string} day */
@@ -392,7 +479,10 @@ export function createUsage({ home, limitCalls = null, limitTokens = null, now =
      * outwaits a busy lock, and a lock left by a crashed writer goes stale and is taken over.
      * @param {{ waitMs?: number }} [o] @returns {boolean} whether nothing is left pending
      */
-    flush: ({ waitMs = lockWaitMs } = {}) => save(waitMs),
+    flush: ({ waitMs = lockWaitMs } = {}) => {
+      if (retry) { clearTimeout(retry); retry = null; }
+      return save(waitMs);
+    },
     /** Counts held in memory, not yet in the file (tests). */
     pendingCalls: () => Object.values(pending).flatMap((d) => Object.values(d)).reduce((n, c) => n + c.calls, 0),
   };

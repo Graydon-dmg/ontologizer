@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveVendorPath } from '../core/vendor.js';
 import { openStore, TENANT_RE, tenantsIsMap, TENANTS_MAP_WARNING } from '../core/store.js';
 import { readTokens, checkToken, hasScope } from './tokens.js';
@@ -52,6 +53,19 @@ const EXPORT_FORMATS = ['json', 'context', 'html', 'embed'];
 export const isLoopback = (host) => LOOPBACK.includes(String(host).replace(/^\[|\]$/g, ''));
 
 /** @param {string} tenant @param {string} id */
+/** The error a build or job gets when the server stops under it. */
+export const STOPPED = 'Stopped: the server ended';
+
+/**
+ * The last failed whole-build job's error on a folded map's jobs, if any (a category's build job has a
+ * nodeId and is left out: one failed category does not fail the build). @param {Record<string, any>} jobs
+ */
+export function lastBuildError(jobs) {
+  let out;
+  for (const j of Object.values(jobs || {})) if (j && j.kind === 'build' && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
+  return out;
+}
+
 export const mapBase = (tenant, id) => `/v1/t/${tenant}/maps/${id}`;
 
 /**
@@ -97,8 +111,10 @@ function refusal(message) {
  *   makeEngine: (o: { store: any, id: string, tenant: string, clientFor?: any }) => Promise<any>,
  *   version?: string, webDir?: string, log?: (line: string) => void,
  *   config?: any, configPath?: string|null, sources?: ReturnType<typeof createSources>|null,
- *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any }} opts
+ *   limitCalls?: number|null, limitTokens?: number|null, buildTimeoutMs?: number, usage?: any,
+ *   tokens?: import('./tokens.js').TokenRow[]|null }} opts
  *   tokensFile: the tokens to load; null (or no rows) means none: loopback only, open, no --allow-host.
+ *   tokens: rows held only in memory, used when there is no tokensFile (`ontologizer mcp`'s own token).
  *   watchTokensFile: when open, a tokens file to watch so status can say "restart serve to require them".
  *   maxBuilds: builds running at once. maxQueued: builds waiting per tenant (more: 429).
  *   maxChecks: context checks at once (more: 429). maxStreamsPerToken: event streams + waits per token.
@@ -120,15 +136,16 @@ export async function startService({
   home, host = '127.0.0.1', port = 8787, tokensFile = null, watchTokensFile = null, allowHosts = [],
   maxBuilds = 2, maxQueued = 10, maxChecks = 4, maxStreamsPerToken = 50, idleMs = 10 * 60 * 1000, pingMs, maxStores = MAX_STORES, recheckMs = RECHECK_MS,
   makeEngine, version = '', webDir, log = () => {}, config = null, configPath = null, sources: givenSources = null,
-  limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null,
+  limitCalls = null, limitTokens = null, buildTimeoutMs = BUILD_TIMEOUT_MS, usage: givenUsage = null, tokens: memoryTokens = null,
 }) {
   // Model calls and tokens per tenant per UTC day, from the SDK's usage fields (never dollars).
   const usage = givenUsage ?? createUsage({ home, limitCalls, limitTokens, log });
   /**
-   * Each engine's abort, by tenant/id: a build timeout aborts every model call of that engine (in flight
-   * and later ones) and drops the engine, so the next request gets a fresh one. @type {Map<string, AbortController>}
+   * The running build's abort signal, carried with the build's own async work: a build timeout aborts
+   * that build's model calls (in flight and later ones), never a chat or a job started from a request,
+   * and never another build's (an engine made again mid-build has its own). @type {AsyncLocalStorage<AbortSignal>}
    */
-  const aborts = new Map();
+  const buildSignal = new AsyncLocalStorage();
   // ---- ports: each one is the config's, or I1's own behaviour ----
   const identity = config?.identity ?? null;
   const policy = config?.policy ?? defaultPolicy;
@@ -145,7 +162,7 @@ export async function startService({
   if (noTenants) log(TENANTS_MAP_WARNING);
 
   // ---- tokens: read at start; re-read when the file changes (a revoke takes effect at once). ----
-  let tokenRows = tokensFile ? readTokens(tokensFile) : [];
+  let tokenRows = tokensFile ? readTokens(tokensFile) : (Array.isArray(memoryTokens) ? [...memoryTokens] : []);
   // Whether auth is required is fixed at start: revoking every token never opens the server.
   // A custom identity port always requires a principal.
   const authRequired = tokenRows.length > 0 || identity !== null;
@@ -357,10 +374,9 @@ export async function startService({
     lastUsed.set(key, Date.now());
     let e = engines.get(key);
     if (!e) {
-      // Every model client this engine gets is metered (usage, limits) and abortable (build timeout).
-      const ctl = new AbortController();
-      aborts.set(key, ctl);
-      const meter = (/** @type {any} */ client) => usage.wrap(client, { tenant, signal: () => ctl.signal });
+      // Every model client this engine gets is metered (usage, limits) and abortable (a build timeout:
+      // the signal of the build whose work makes the call, if any).
+      const meter = (/** @type {any} */ client) => usage.wrap(client, { tenant, signal: () => buildSignal.getStore() ?? null });
       e = makeEngine({ store: storeFor(tenant, true), id, tenant, meter, ...(config?.model ? { clientFor: config.model } : {}) });
       e.catch(() => engines.delete(key));
       engines.set(key, e);
@@ -423,7 +439,6 @@ export async function startService({
     const h = handlers.get(key);
     handlers.delete(key);
     engines.delete(key);
-    aborts.delete(key);
     live.delete(key);
     lastUsed.delete(key);
     if (h) await (await h.catch(() => null))?.close();
@@ -472,6 +487,8 @@ export async function startService({
       let expired = false;
       /** @type {ReturnType<typeof setTimeout>|undefined} */
       let timer;
+      // This build's own abort, made now: the timer aborts exactly this build's calls.
+      const ctl = new AbortController();
       try {
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
@@ -482,13 +499,13 @@ export async function startService({
         const timedOut = new Promise((_, reject) => {
           timer = setTimeout(() => {
             expired = true;
-            aborts.get(key)?.abort();
+            ctl.abort();
             reject(new Error(`Timed out after ${Number.isInteger(minutes) ? minutes : minutes.toFixed(2)} ${minutes === 1 ? 'minute' : 'minutes'}`));
           }, Math.max(1, buildTimeoutMs));
           timer.unref?.();
         });
         // picked: the sources chosen in New map (the build is told to search them for every category).
-        const run = engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
+        const run = buildSignal.run(ctl.signal, () => engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) }));
         Promise.resolve(run).catch(() => {}); // after a timeout its rejection is expected, never unhandled
         await Promise.race([run, timedOut]);
         b.state = 'done';
@@ -499,8 +516,16 @@ export async function startService({
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
         try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error }, actor: p.actor }); } catch { /* gone */ }
-        // A timed-out engine is dropped: whatever it still does is no longer this map's build.
-        if (expired) drop(key).catch(() => {});
+        // A timed-out engine is dropped: whatever it still does is no longer this map's build. A chat
+        // answer being written on the map is left to finish first (its calls never had the build's signal).
+        if (expired) {
+          const dropWhenQuiet = () => {
+            if (closing) return;
+            if (live.get(key)?.chatting()) { setTimeout(dropWhenQuiet, 250).unref?.(); return; }
+            drop(key).catch(() => {});
+          };
+          dropWhenQuiet();
+        }
       } finally {
         clearTimeout(timer);
         lastUsed.set(key, Date.now());
@@ -508,6 +533,35 @@ export async function startService({
         try { Promise.resolve(storeFor(tenant, true).flush(id)).catch(() => {}); } catch { /* renamed or gone */ }
       }
     })();
+  }
+
+  /**
+   * The server is stopping: every build and job still queued or running ends here, so it is marked
+   * failed on its map (wait_for_map and the jobs tray say so) instead of vanishing.
+   */
+  function markStopped() {
+    const error = STOPPED;
+    for (const [key, b] of builds) {
+      if (b.state !== 'queued' && b.state !== 'running') continue;
+      b.state = 'failed';
+      b.error = error;
+      const [tenant, id] = key.split('/');
+      try {
+        const store = storeFor(tenant, true);
+        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error } });
+      } catch { /* gone */ }
+    }
+    for (const key of new Set([...engines.keys(), ...handlers.keys()])) {
+      const [tenant, id] = key.split('/');
+      try {
+        const store = storeFor(tenant, true);
+        for (const j of Object.values(store.read(id).jobs ?? {})) {
+          const job = /** @type {any} */ (j);
+          if (!job || (job.state !== 'queued' && job.state !== 'running')) continue;
+          store.append(id, { t: 'job.failed', at: store.now(id), job: { id: job.id, kind: job.kind, ...(job.nodeId ? { nodeId: job.nodeId } : {}), error } });
+        }
+      } catch { /* renamed or gone */ }
+    }
   }
 
   /** @param {string} tenant @param {string} id */
@@ -1083,7 +1137,10 @@ export async function startService({
         const jobs = busy(tenant, id);
         if (!jobs.length || Date.now() >= until || gone || closing) {
           const b = builds.get(key);
-          return json(res, 200, { state: jobs.length ? 'busy' : 'idle', jobs, ...(b?.state === 'failed' ? { error: b.error } : {}) });
+          // A build this process never ran (one stopped with an earlier server, or by a restart) says
+          // why from the map: its last failed build job.
+          const error = b ? (b.state === 'failed' ? b.error : undefined) : lastBuildError(storeFor(tenant, true).read(id).jobs);
+          return json(res, 200, { state: jobs.length ? 'busy' : 'idle', jobs, ...(error ? { error } : {}) });
         }
         await new Promise((r) => setTimeout(r, Math.min(100, Math.max(1, until - Date.now()))));
       }
@@ -1321,6 +1378,7 @@ export async function startService({
       if (closing) return;
       closing = true;
       clearInterval(sweeper);
+      markStopped();
       const done = new Promise((r) => server.close(() => r(undefined)));
       for (const h of handlers.values()) {
         try { await (await h).close(); } catch { /* never built */ }

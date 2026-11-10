@@ -109,7 +109,7 @@ export const OPS = [
     http: { method: 'POST', path: '/v1/t/{tenant}/maps/check' },
     mcp: { name: 'check_context', title: 'Check a topic before building',
       description: 'Turn a plain description of a topic into a brief that build_map can use. Use when you want a new map: it is always the first step of building. Don\'t use when a map of the topic already exists (list_maps, then read it). Returns { ready: true, brief, name } when the topic is clear, or { ready: false, questions: [{ id, text, options }] }: ask your user (or answer from what you know), then call again with the same context and all answers so far, at most three rounds (if it still asks, add detail to the context and start again). Your context goes to the model as plain text; it never uses configured sources and writes nothing. Next: build_map with the brief. ' + COST_NOTE,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
     input: obj({ tenant,
       context: str('What the map is about and for whom, in plain words; at most 4000 characters. E.g. "Home espresso for a complete beginner: machines, grinders, beans, technique"'),
       answers: { type: 'array', items: ANY, maxItems: 30, description: 'Every answer so far to the questions check_context asked, as { id, answer } with the question\'s id (add question: its text, if you like). E.g. [{ "id": "budget", "answer": "Under 500 dollars" }]. Omit on the first call.' } }, ['tenant', 'context']),
