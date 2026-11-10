@@ -12,7 +12,7 @@ import { nodeDetails } from '../../web/embed/helpers.js';
 import { startService } from '../../src/server/service.js';
 import { openStore } from '../../src/core/store.js';
 import { createToken, tokensPath } from '../../src/server/tokens.js';
-import { bundleText, privateMarkProblems } from './build-check.js';
+import { bundleText, privateMarkProblems, dataTagText } from './build-check.js';
 import { fixtureEvents, req, stubEngine, tempHome } from './helpers-service.js';
 
 const RAISE = { t: 'visibility.raised', at: 1, to: 'private', reason: 'source', sources: ['wiki'] };
@@ -105,4 +105,36 @@ test('the embed\'s details panel lists every source ref as "source · title", li
   // Planted faults: a javascript: link, and refs without a url collapsed into one (dedupe by url).
   assert.ok(refProblems([{ title: 'wiki · Choosing glue', href: 'javascript:alert(1)' }]).length > 0);
   assert.ok(refProblems([{ title: 'wiki · Choosing glue', href: 'https://wiki.example/doc-glue' }, { title: 'No link', href: null }]).length >= 2);
+});
+
+test('an exported page carries the refs the embed shows: read back from the html and embed data tags, the details list "source · title"', async () => {
+  const bundle = await bundleText();
+  const o = foldAll(privateEvents());
+  const id = /** @type {string} */ (Object.values(o.nodes).find((n) => (n.sources ?? []).some((/** @type {any} */ s) => s.source))?.id);
+  for (const format of /** @type {const} */ (['html', 'embed'])) {
+    const tag = dataTagText(exportMap(o, { format, bundle }));
+    assert.ok(tag, format);
+    // The data tag escapes '<' as \u003c; JSON.parse reads it back.
+    const carried = JSON.parse(/** @type {string} */ (tag));
+    assert.deepEqual(refProblems(/** @type {any} */ (nodeDetails(carried, id)).sources), [], format);
+  }
+  // Planted fault: an export that keeps only title and url (no source, no ref) loses the refs' names.
+  const stripped = JSON.parse(JSON.stringify(o));
+  stripped.nodes[id].sources = stripped.nodes[id].sources.map((/** @type {any} */ s) => ({ title: s.title ?? '', url: s.url ?? '' }));
+  assert.ok(refProblems(/** @type {any} */ (nodeDetails(stripped, id)).sources).length > 0);
+});
+
+test('the context pack names a ref by its source, escaped like any title; refs without a web link are left out', () => {
+  const o = foldAll(privateEvents());
+  const id = /** @type {string} */ (Object.values(o.nodes).find((n) => (n.sources ?? []).some((/** @type {any} */ s) => s.source))?.id);
+  // A title that tries to form a link or a heading must stay inert text.
+  const n = /** @type {any} */ (o.nodes[id]);
+  n.sources = [...n.sources, { source: 'wiki', ref: 'doc-x', title: '[click](https://evil.example) # Heading', url: 'https://wiki.example/doc-x' }];
+  const pack = exportMap(o, { format: 'context', budget: 100000 });
+  assert.match(pack.split('\n')[0], /Private/);
+  const sources = pack.slice(pack.indexOf('## Sources'));
+  assert.match(sources, /wiki · Choosing glue: https:\/\/wiki\.example\/doc-glue/);
+  assert.ok(!sources.includes('javascript:'), 'a script link reached the pack');
+  assert.ok(!sources.includes('No link'), 'a ref without a web link was listed');
+  assert.ok(!/\[click\]\(https:\/\/evil/.test(pack), 'map text formed a link');
 });

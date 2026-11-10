@@ -4,8 +4,15 @@
 
 /** @typedef {import('../schema.js').Ontology} Ontology */
 
-/** @param {any} list */
-const sourcesOf = (list) => (Array.isArray(list) ? list.map((x) => ({ title: x?.title ?? '', url: x?.url ?? '' })) : []);
+/**
+ * A node's sources as the element reads them: title and url, and for a source ref (a configured
+ * source's item) its source name and ref, which the details panel shows as "source · title".
+ * @param {any} list
+ */
+const sourcesOf = (list) => (Array.isArray(list) ? list.map((x) => ({
+  title: x?.title ?? '', url: x?.url ?? '',
+  ...(typeof x?.source === 'string' ? { source: x.source.slice(0, 64), ref: String(x?.ref ?? '').slice(0, 500) } : {}),
+})) : []);
 
 /**
  * The snapshot an html or embed export carries: only what the element and its views read (see
