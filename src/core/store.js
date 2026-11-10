@@ -114,6 +114,11 @@ function pidAlive(pid) {
 /** Names a map can never take: `tenants` is the folder that holds the other tenants' maps. */
 export const RESERVED_NAMES = ['tenants'];
 
+/** sessions.json keys for running servers (a map id never starts with ":"). */
+const SERVER_KEY = ':server:';
+/** Thrown to skip the open-time purge (never escapes openStore). */
+const SKIP = Symbol('skip');
+
 /** How long a deleted map stays in the trash before it is purged for good. */
 export const TRASH_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -422,6 +427,29 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       delete all[id];
       writeJsonAtomic(sessionsFile, all);
     },
+    /**
+     * Register a running server on this home (service mode: `serve`, or `ontologizer mcp`'s in-process
+     * one), under a key no map id can take. @param {{ pid: number, port: number, url: string, startedAt: number }} info
+     * @returns {string} the key, for remove()
+     */
+    addServer(info) {
+      const key = `${SERVER_KEY}${info.pid}:${info.port}`;
+      this.set(key, info);
+      return key;
+    },
+    /** The servers running on this home now; an entry whose process is gone is dropped. @returns {Array<{ pid: number, port: number, url: string, startedAt: number }>} */
+    servers() {
+      const all = readJson(sessionsFile, {});
+      /** @type {any[]} */
+      const out = [];
+      let stale = false;
+      for (const [k, v] of Object.entries(all)) {
+        if (!k.startsWith(SERVER_KEY)) continue;
+        if (v && pidAlive(v.pid)) out.push(v); else { delete all[k]; stale = true; }
+      }
+      if (stale) writeJsonAtomic(sessionsFile, all);
+      return out;
+    },
   };
 
   /** @returns {TrashItem[]} newest first; an item whose trash.json is unreadable is listed from its id */
@@ -458,8 +486,11 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
   }
 
   // On open: purge what is past its 30 days, and drop an index row a crash left behind after its map
-  // folder had already moved to the trash (the folder is gone, and the trash holds that id).
+  // folder had already moved to the trash (the folder is gone, and the trash holds that id). Not while
+  // another process's server runs on this home: it owns the trash then (it purges once a day), and a
+  // purge here could race its restore.
   try {
+    if (sessions.servers().some((s) => s.pid !== process.pid)) throw SKIP;
     purgeTrash();
     const trashed = new Set(listTrash().map((t) => t.id));
     const stale = readIndex().ontologies.filter((r) => trashed.has(r.id) && !fs.existsSync(path.join(root, r.id)));
@@ -469,7 +500,7 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
         if (idx.current && stale.some((s) => s.id === idx.current)) idx.current = null;
       });
     }
-  } catch (err) { log(`ontologizer: could not tidy the trash: ${/** @type {any} */ (err)?.message ?? err}`); }
+  } catch (err) { if (err !== SKIP) log(`ontologizer: could not tidy the trash: ${/** @type {any} */ (err)?.message ?? err}`); }
 
   return {
     root,

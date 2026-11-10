@@ -946,8 +946,13 @@ POST   /v1/t/:tenant/trash/:trashId/restore { as? } -> 200 { ok, id, viewUrl }
 ```text
 ontologizer delete <map> [--yes]        exact id or saved name, never a prefix. Asks in a terminal; without one, refuses
                                         unless --yes. Refuses a map a running new/load serves (sessions.json), and
-                                        any delete while serve runs on the home (serve.json, a live pid): "A server is
-                                        running on this home (pid N, <url>): delete from its page, or stop it first."
+                                        any delete while a server runs on the home: "A server is running on this home
+                                        (pid N, <url>): delete from its page, or stop it first."
+ontologizer restore ...                 refuses the same way while a server runs ("restore from its page").
+Every startService on a files home registers itself in sessions.json while it runs (key ":server:<pid>:<port>",
+{ pid, port, url, startedAt }; removed on close and at exit; a dead pid's entry is dropped when read), so this
+covers `serve` and `ontologizer mcp`'s in-process server. A store opened while another process's server runs
+skips the open-time purge (the server purges daily; a purge here could race its restore).
 ontologizer trash [--json]              newest first, with when each is purged
 ontologizer restore <trash-id> [--as <name>]
 ```
@@ -986,7 +991,9 @@ Faults in the router and the `delete` command are planted in the code itself: th
 | The order: 401, tenant 404, scope 403, missing 404. | The router's scope check moved after the missing-map check. |
 | `delete` without a terminal refuses unless `--yes`; in one it asks; no prefix ever deletes. | A delete command that never asks. |
 | `delete` refuses a map a running one-map session serves; a stale session does not block it. | A delete command that ignores `sessions.json` (a broken copy of `delete.js`). |
-| `delete` refuses while `serve` runs on the home; a stale `serve.json` does not block it. | A delete command that ignores `serve.json`. |
+| `delete` and `restore` refuse while a server runs on the home; a dead process's entry does not block. | `delete` and `restore` with the check removed. |
+| The router registers itself in `sessions.json` while it runs and removes it on close. | A router that never registers. |
+| Opening a store skips the purge while another process's server runs. | A store that purges on open whatever runs. |
 | The page: the deleted banner links home; the source stops for good on `deleted` (no reconnect, even on an explicit reconnect). | A banner that treats it as a lost connection; a source that never sees the named event. |
 | Every op is served and every route has an op; the new ops are not MCP tools; every feature has its command and button. | (I3's faults.) |
 | The top bar wraps at the same widths, 1024–1600 in 2 px steps, on the one-map page and a service-mode map page, before and after; and every panel stays inside the window at 320x640, 375x812, 768x1024, 1024x768 and 1280x800 (headless Chrome, by hand). | |
@@ -1006,6 +1013,6 @@ node src/cli/index.js serve --home $H                                 # the home
 1. **Top-level tab completion** still leaves out `delete`, `trash` and `restore` (with `serve`, `status`, `token`, `export`), because `test/b` pins `complete([''])`.
 2. **Delete is not an MCP tool.** An agent that wants a map gone asks its user. Say if you want a tool (it would carry `destructiveHint` and need `admin` for a named map).
 3. **The trash is on disk for 30 days**, readable there by anyone who can read the home. `TRASH_DAYS` is a constant; say if it should be a `serve` flag.
-4. **`ontologizer delete` and a running `serve` on the same home.** The CLI refuses every delete while `serve` runs on the home (its `serve.json` names a live pid), so open pages and engines are never left stale: delete from the server's page or API. `serve` does not register each map it has open; a finer rule (refuse only maps with open streams) would need it to.
+4. **The command line and a running server on the same home.** `delete` and `restore` refuse while a server (`serve`, or `ontologizer mcp`'s in-process one) runs on the home, by its `sessions.json` entry, so open pages and engines are never left stale: use the server's page or API. A finer rule (refuse only maps the server has open) would need the server to publish which maps it holds.
 5. **Back to the home has no command of its own**: `list` stands for it in `src/features.js`.
 6. **A custom policy decides delete and restore itself.** The router passes `draft` in the context; the default policy turns it into "a named map needs admin". A config policy that maps actions to scopes alone (e.g. through `ACTION_SCOPE`) lets `build` delete a named map (the planted fault in `trash-routes.test.js` is exactly that). Say if the router should require admin for a named map whatever the policy says.

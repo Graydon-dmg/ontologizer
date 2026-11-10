@@ -381,3 +381,24 @@ test('postgres store (no server): two processes creating the tables at once is n
   // planted fault: any other error still stops the store
   await assert.rejects(openPostgresStore({ pool: racing('XX000'), tenant: 'acme', root }).ready);
 });
+
+/** Whether opening a store purged an expired item. @param {(home: string) => any} open @param {boolean} serverRuns @returns {Promise<boolean>} */
+async function purgedOnOpen(open, serverRuns) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-trash-'));
+  try {
+    const s = openStore(home);
+    const old = s.trash(makeMap(s, 'old'), { now: Date.now() - 40 * DAY });
+    if (serverRuns) s.sessions.addServer({ pid: process.ppid, port: 8787, url: 'http://127.0.0.1:8787/', startedAt: Date.now() });
+    open(home);
+    return !fs.existsSync(path.join(home, '.trash', old));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
+test('file store: opening a store does not purge the trash while another process\'s server runs on the home', async () => {
+  assert.equal(await purgedOnOpen(openStore, false), true, 'no server: the open purges');
+  assert.equal(await purgedOnOpen(openStore, true), false, 'a server runs: it owns the purge');
+  // Planted fault: a store that purges on open whatever runs (it could race the server's restore).
+  const { openStore: eager } = await import('./helpers-fault.js').then((m) => m.faultyModule('src/core/store.js',
+    [['    if (sessions.servers().some((s) => s.pid !== process.pid)) throw SKIP;\n', '']]));
+  assert.equal(await purgedOnOpen(eager, true), true);
+});

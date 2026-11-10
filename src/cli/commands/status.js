@@ -24,8 +24,8 @@ function alive(pid) {
   }
 }
 
-/** The running `serve` on a home (its serve.json, with a live pid), or null. @param {string} home */
-export function readServer(home) {
+/** @param {string} home */
+function readServer(home) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(home, 'serve.json'), 'utf8'));
     if (j && alive(j.pid)) return { url: String(j.url), pid: j.pid, startedAt: j.startedAt ?? null, auth: j.auth === 'open' || j.auth === 'tokens' ? j.auth : null };

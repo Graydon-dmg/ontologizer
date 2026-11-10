@@ -1481,6 +1481,19 @@ export async function startService({
   const addr = /** @type {import('node:net').AddressInfo} */ (server.address());
   boundPort = addr.port;
   const shown = wildcard ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
+  // A files home says a server runs on it (sessions.json), so the command line leaves its maps to it:
+  // `ontologizer delete` and `restore` refuse, and a store opened elsewhere does not purge its trash.
+  /** @type {null | (() => void)} */
+  let unregister = null;
+  if (!config?.store) {
+    try {
+      const reg = openStore(home).sessions;
+      const key = reg.addServer({ pid: process.pid, port: boundPort, url: `http://${shown}:${boundPort}/`, startedAt: Date.now() });
+      const onExit = () => { try { reg.remove(key); } catch { /* best effort */ } };
+      unregister = () => { unregister = null; process.off('exit', onExit); onExit(); };
+      process.once('exit', onExit);
+    } catch (err) { log(`could not register this server in ${home}: ${/** @type {any} */ (err)?.message ?? err}`); }
+  }
   return {
     url: `http://${shown}:${boundPort}/`,
     port: boundPort,
@@ -1500,6 +1513,7 @@ export async function startService({
       clearInterval(sweeper);
       clearInterval(purger);
       markStopped();
+      unregister?.();
       const done = new Promise((r) => server.close(() => r(undefined)));
       for (const h of handlers.values()) {
         try { await (await h).close(); } catch { /* never built */ }

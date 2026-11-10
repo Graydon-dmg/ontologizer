@@ -2,6 +2,7 @@
 // `ontologizer restore <trash-id> [--as <name>]`: bring a deleted map back from the trash.
 import { CliError } from '../deps.js';
 import { LOCAL_ACTOR } from './delete.js';
+import { runningServer, serverRefusal } from '../served.js';
 
 export default {
   command: 'restore <trash-id>',
@@ -13,6 +14,9 @@ export default {
     const deps = argv.deps;
     const store = deps.store();
     const trashId = String(argv.trashId);
+    // A running server keeps its own view of the maps (a restored id it has cached as empty, say).
+    const server = runningServer(store);
+    if (server) throw new CliError(serverRefusal(server, 'restore'));
     try {
       const id = store.restore(trashId, { as: argv.as ?? null, actor: LOCAL_ACTOR });
       deps.stdout.write(`Restored ${id}. Open it with: ontologizer load ${id}\n`);

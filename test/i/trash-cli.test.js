@@ -21,20 +21,23 @@ const FAULTS = {
   noQuestion: [['    if (!argv.yes) {\n', '    if (false) {\n']],
   /** Ignores sessions.json (the store's own guard still stops it, with the store's message). */
   noSessionCheck: [['    if (live && live.pid !== process.pid) {\n      throw new CliError(', '    if (false) {\n      throw new CliError(']],
-  /** Ignores a running serve on the home. */
+  /** Ignores a server running on the home (delete). */
   noServeCheck: [['    if (server) throw new CliError(', '    if (false) throw new CliError(']],
 };
+/** restore that ignores a server running on the home (a broken copy of src/cli/commands/restore.js). */
+const RESTORE_NO_SERVE_CHECK = [['    if (server) throw new CliError(', '    if (false) throw new CliError(']];
 
 /**
  * Run a broken copy of the delete command's handler, as main() would run the real one.
- * @param {Array<[string, string]>} fault @param {string} map @param {string} home @param {{ yes?: boolean }} [o]
+ * @param {Array<[string, string]>} fault @param {string} map @param {string} home
+ * @param {{ yes?: boolean, command?: 'delete'|'restore', trashId?: string }} [o]
  */
-async function runBroken(fault, map, home, { yes = false } = {}) {
-  const mod = await faultyModule('src/cli/commands/delete.js', fault);
+async function runBroken(fault, map, home, { yes = false, command = 'delete', trashId = '' } = {}) {
+  const mod = await faultyModule(`src/cli/commands/${command}.js`, fault);
   const stdout = cap(); const stderr = cap();
   const deps = makeDeps({ home, stdout, stderr, interactive: false, env: { ...process.env, ONTOLOGIZER_HOME: home }, prompts: /** @type {any} */ (async () => ({ confirm: async () => true })) });
   try {
-    await mod.default.handler({ deps, map, yes });
+    await mod.default.handler({ deps, map, yes, trashId });
     return { code: 0, stdout: stdout.out, stderr: stderr.out };
   } catch (/** @type {any} */ e) { return { code: e.code ?? 1, stdout: stdout.out, stderr: `${e.message}\n` }; }
 }
@@ -164,31 +167,42 @@ test('completion: the new commands\' flags and map names; the pinned top-level l
   } finally { if (prev === undefined) delete process.env.ONTOLOGIZER_HOME; else process.env.ONTOLOGIZER_HOME = prev; }
 });
 
-/** A map on a home where `serve` runs is refused, and stays. @param {{ code: number, stderr: string }} r @param {string[]} left @param {number} pid */
-function serveRunningProblems(r, left, pid) {
+/**
+ * A delete or restore on a home where a server runs is refused, and changes nothing.
+ * @param {{ code: number, stderr: string }} r @param {boolean} unchanged @param {number} pid @param {'delete'|'restore'} verb
+ */
+function serverRunningProblems(r, unchanged, pid, verb) {
   /** @type {string[]} */ const p = [];
   if (r.code !== 1) p.push(`exit ${r.code}`);
-  const want = `A server is running on this home (pid ${pid}, http://127.0.0.1:8787/): delete from its page, or stop it first.`;
+  const want = `A server is running on this home (pid ${pid}, http://127.0.0.1:8787/): ${verb} from its page, or stop it first.`;
   if (r.stderr.trim() !== want) p.push(`message: ${r.stderr.trim()}`);
-  if (!left.includes('demo')) p.push('the map was deleted under a running server');
+  if (!unchanged) p.push(`the ${verb} went ahead under a running server`);
   return p;
 }
 
-test('delete refuses while serve runs on the home (serve.json with a live pid); a stale serve.json does not block it', async () => {
+test('delete and restore refuse while a server runs on the home (its sessions.json entry); a dead one does not block', async () => {
   const home = tmp();
-  openStore(home).importEvents('demo', fixtureEvents('demo'));
-  const serveFile = path.join(home, 'serve.json');
-  fs.writeFileSync(serveFile, JSON.stringify({ pid: process.ppid, url: 'http://127.0.0.1:8787/', startedAt: new Date().toISOString(), auth: 'open' }));
-  const r = await run(['delete', 'demo', '--yes'], home);
-  assert.deepEqual(serveRunningProblems(r, ids(home), process.ppid), []);
-  // trash and restore still work: they only read, or add a map the server finds on its next request.
-  assert.equal((await run(['trash'], home)).code, 0);
-  // Planted fault: a delete command that ignores serve.json.
-  const broken = await runBroken(FAULTS.noServeCheck, 'demo', home, { yes: true });
-  assert.deepEqual(serveRunningProblems(broken, ids(home), process.ppid), [`exit 0`, `message: `, 'the map was deleted under a running server']);
-  // A serve.json whose process is gone is stale: the delete goes ahead.
-  openStore(home).importEvents('demo', fixtureEvents('demo'));
-  fs.writeFileSync(serveFile, JSON.stringify({ pid: 2 ** 22 + 12345, url: 'http://127.0.0.1:8787/' }));
+  const s = openStore(home);
+  s.importEvents('demo', fixtureEvents('demo'));
+  s.importEvents('other', fixtureEvents('demo'));
+  const trashId = s.trash('other');
+  // A server another (live) process runs: what `serve` and `ontologizer mcp` register while they run.
+  const key = s.sessions.addServer({ pid: process.ppid, port: 8787, url: 'http://127.0.0.1:8787/', startedAt: Date.now() });
+  const del = await run(['delete', 'demo', '--yes'], home);
+  assert.deepEqual(serverRunningProblems(del, ids(home).includes('demo'), process.ppid, 'delete'), []);
+  const res = await run(['restore', trashId], home);
+  assert.deepEqual(serverRunningProblems(res, !ids(home).includes('other'), process.ppid, 'restore'), []);
+  assert.equal((await run(['trash'], home)).code, 0, 'listing the trash still works');
+  // Planted faults: the check removed from delete, and from restore.
+  const badDel = await runBroken(FAULTS.noServeCheck, 'demo', home, { yes: true });
+  assert.deepEqual(serverRunningProblems(badDel, ids(home).includes('demo'), process.ppid, 'delete'), ['exit 0', 'message: ', 'the delete went ahead under a running server']);
+  const badRes = await runBroken(RESTORE_NO_SERVE_CHECK, '', home, { command: 'restore', trashId });
+  assert.deepEqual(serverRunningProblems(badRes, !ids(home).includes('other'), process.ppid, 'restore'), ['exit 0', 'message: ', 'the restore went ahead under a running server']);
+  // A stale entry (its process is gone) does not block, and is dropped.
+  s.sessions.remove(key);
+  s.importEvents('demo', fixtureEvents('demo'));
+  s.sessions.addServer({ pid: 2 ** 22 + 12345, port: 8787, url: 'http://127.0.0.1:8787/', startedAt: Date.now() });
   const ok = await run(['delete', 'demo', '--yes'], home);
   assert.equal(ok.code, 0, ok.stderr);
+  assert.deepEqual(openStore(home).sessions.servers(), []);
 });

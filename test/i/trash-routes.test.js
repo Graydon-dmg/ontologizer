@@ -400,3 +400,18 @@ test('restore to a taken name is 409 and names "as"; restore with as; the daily 
     assert.equal(row.deletedBy, 'token:boss');
   } finally { await x.srv.close(); }
 });
+
+test('a running router registers itself in the home\'s sessions.json (the CLI refuses delete and restore then) and unregisters on close', async () => {
+  const x = await start();
+  const servers = () => openStore(x.home).sessions.servers();
+  let mine;
+  try {
+    mine = servers().filter((/** @type {any} */ s) => s.pid === process.pid && s.port === x.srv.port);
+  } finally { await x.srv.close(); }
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].url, `http://127.0.0.1:${x.srv.port}/`);
+  assert.deepEqual(servers().filter((/** @type {any} */ s) => s.port === x.srv.port), []);
+  // Planted fault: a router that never registers.
+  const quiet = await start({ serve: await faultyStartService([['  if (!config?.store) {\n    try {\n      const reg = openStore(home).sessions;', '  if (false) {\n    try {\n      const reg = openStore(home).sessions;']]) });
+  try { assert.equal(openStore(quiet.home).sessions.servers().length, 0); } finally { await quiet.srv.close(); }
+});
