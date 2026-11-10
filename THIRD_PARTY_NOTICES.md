@@ -8,7 +8,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 - **Served to your browser:** the local web page that `ontologizer` opens serves the d3 packages and `three` to your browser straight from `node_modules`.
 - **Platform binaries:** `@napi-rs/keyring` ships one prebuilt binary per platform; npm installs only the one for your system.
 
-86 shipped packages: MIT 65, ISC 17, Apache-2.0 2, BSD-3-Clause 1, Unlicense 1. Plus 27 build-only packages (MIT 27), listed under Build tools at the end: never shipped.
+179 shipped packages: MIT 148, ISC 24, BSD-3-Clause 3, Apache-2.0 2, Unlicense 1, BSD-2-Clause 1. Plus 41 development-only packages (MIT 39, ISC 2), listed under Build tools at the end: never shipped.
 
 ## Packages
 
@@ -16,6 +16,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 |---|---|---|---|
 | @anthropic-ai/sdk | 1.6.0 | Apache-2.0 | copyright notice that is included in or attached to the work |
 | @babel/runtime | 7.29.13 | MIT | Copyright (c) 2014-present Sebastian McKenzie and other contributors |
+| @hono/node-server | 2.1.6 | MIT | Copyright (c) 2022 - present, Yusuke Wada and Hono contributors |
 | @inquirer/ansi | 2.0.10 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/checkbox | 5.2.8 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/confirm | 6.3.5 | MIT | Copyright (c) 2025 Simon Boudrias |
@@ -32,6 +33,7 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 | @inquirer/search | 4.3.6 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/select | 5.2.8 | MIT | Copyright (c) 2025 Simon Boudrias |
 | @inquirer/type | 4.2.1 | MIT | Copyright (c) 2025 Simon Boudrias |
+| @modelcontextprotocol/sdk | 1.32.2 | MIT | Copyright (c) 2024 Anthropic, PBC |
 | @napi-rs/keyring | 2.1.2 | MIT | Copyright (c) 2020 N-API for Rust |
 | @napi-rs/keyring-darwin-arm64 | 2.1.2 | MIT | (platform-specific prebuilt binary of @napi-rs/keyring; same project and licence) |
 | @napi-rs/keyring-darwin-x64 | 2.1.2 | MIT | (platform-specific prebuilt binary of @napi-rs/keyring; same project and licence) |
@@ -47,12 +49,29 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 | @napi-rs/keyring-win32-x64-msvc | 2.1.2 | MIT | (platform-specific prebuilt binary of @napi-rs/keyring; same project and licence) |
 | @opentelemetry/api | 1.10.0 | Apache-2.0 | copyright notice that is included in or attached to the work |
 | @stablelib/base64 | 1.0.1 | MIT | Copyright (C) 2016 Dmitry Chestnykh |
+| accepts | 2.0.0 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
+| ajv | 8.20.0 | MIT | Copyright (c) 2015-2021 Evgeny Poberezkin |
+| ajv-formats | 3.0.1 | MIT | Copyright (c) 2020 Evgeny Poberezkin |
 | ansi-regex | 6.6.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | ansi-styles | 6.2.3 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| body-parser | 2.4.0 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
 | bundle-name | 4.1.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| bytes | 3.1.2 | MIT | Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca> |
+| call-bind-apply-helpers | 1.0.2 | MIT | Copyright (c) 2024 Jordan Harband |
+| call-bound | 1.0.4 | MIT | Copyright (c) 2024 Jordan Harband |
 | chardet | 2.2.0 | MIT | Copyright (C) 2024 Dmitry Shirokov |
 | cli-width | 4.1.0 | ISC | Copyright (c) 2015, Ilya Radchenko <knownasilya@gmail.com> |
 | cliui | 9.0.1 | ISC | Copyright (c) 2015, Contributors |
+| content-disposition | 2.0.1 | MIT | Copyright (c) 2014-2017 Douglas Christopher Wilson |
+| content-type | 1.0.5 | MIT | Copyright (c) 2015 Douglas Christopher Wilson |
+| content-type | 2.1.0 | MIT | Copyright (c) 2015 Douglas Christopher Wilson |
+| content-type | 2.1.0 | MIT | Copyright (c) 2015 Douglas Christopher Wilson |
+| content-type | 2.1.0 | MIT | Copyright (c) 2015 Douglas Christopher Wilson |
+| content-type | 2.1.0 | MIT | Copyright (c) 2015 Douglas Christopher Wilson |
+| cookie | 0.7.2 | MIT | Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com> |
+| cookie-signature | 1.2.2 | MIT | Copyright (c) 2012–2024 LearnBoost <tj@learnboost.com> and other contributors; |
+| cors | 2.8.6 | MIT | Copyright (c) 2013 Troy Goode <troygoode@gmail.com> |
+| cross-spawn | 7.0.6 | MIT | Copyright (c) 2018 Made With MOXY Lda <hello@moxy.studio> |
 | d3-color | 3.1.1 | ISC | Copyright 2010-2026 Mike Bostock |
 | d3-dispatch | 3.0.2 | ISC | Copyright 2010-2026 Mike Bostock |
 | d3-drag | 3.0.1 | ISC | Copyright 2010-2026 Mike Bostock |
@@ -64,42 +83,116 @@ Ontologizer is licensed under the MIT License (see `LICENSE`). It depends on the
 | d3-timer | 3.0.2 | ISC | Copyright 2010-2026 Mike Bostock |
 | d3-transition | 3.0.2 | ISC | Copyright 2010-2026 Mike Bostock |
 | d3-zoom | 3.0.1 | ISC | Copyright 2010-2026 Mike Bostock |
+| debug | 4.4.3 | MIT | Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca> |
 | default-browser | 5.5.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | default-browser-id | 5.0.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | define-lazy-prop | 3.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| depd | 2.0.0 | MIT | Copyright (c) 2014-2018 Douglas Christopher Wilson |
+| dunder-proto | 1.0.1 | MIT | Copyright (c) 2024 ECMAScript Shims |
+| ee-first | 1.1.1 | MIT | Copyright (c) 2014 Jonathan Ong me@jongleberry.com |
 | emoji-regex | 10.6.0 | MIT | Copyright Mathias Bynens <https://mathiasbynens.be/> |
+| encodeurl | 2.0.1 | MIT | Copyright (c) 2016 Douglas Christopher Wilson |
+| es-define-property | 1.0.1 | MIT | Copyright (c) 2024 Jordan Harband |
+| es-errors | 1.3.0 | MIT | Copyright (c) 2024 Jordan Harband |
+| es-object-atoms | 1.1.2 | MIT | Copyright (c) 2024 Jordan Harband |
 | escalade | 3.2.0 | MIT | Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com) |
+| escape-html | 1.0.3 | MIT | Copyright (c) 2012-2013 TJ Holowaychuk |
+| etag | 1.8.1 | MIT | Copyright (c) 2014-2016 Douglas Christopher Wilson |
+| eventsource | 3.0.7 | MIT | Copyright (c) EventSource GitHub organisation |
+| eventsource-parser | 3.1.1 | MIT | Copyright (c) 2026 Espen Hovlandsdal <espen@hovlandsdal.com> |
+| express | 5.3.0 | MIT | Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca> |
+| express-rate-limit | 8.7.4 | MIT | Copyright 2023 Nathan Friedly, Vedant K |
+| fast-deep-equal | 3.1.3 | MIT | Copyright (c) 2017 Evgeny Poberezkin |
 | fast-sha256 | 1.3.0 | Unlicense | Author: Dmitry Chestnykh |
 | fast-string-truncated-width | 3.0.3 | MIT | Copyright (c) 2024-present Fabio Spampinato |
 | fast-string-width | 3.0.2 | MIT | Copyright (c) 2024-present Fabio Spampinato |
+| fast-uri | 3.1.9 | BSD-3-Clause | Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae |
 | fast-wrap-ansi | 0.2.2 | MIT | Copyright (c) 2025 James Garbutt |
+| finalhandler | 2.1.1 | MIT | Copyright (c) 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com> |
+| forwarded | 0.2.0 | MIT | Copyright (c) 2014-2017 Douglas Christopher Wilson |
+| fresh | 2.0.0 | MIT | Copyright (c) 2012 TJ Holowaychuk <tj@vision-media.ca> |
+| function-bind | 1.1.2 | MIT | Copyright (c) 2013 Raynos. |
 | get-caller-file | 2.0.5 | ISC | Copyright 2018 Stefan Penner |
 | get-east-asian-width | 1.7.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| get-intrinsic | 1.3.0 | MIT | Copyright (c) 2020 Jordan Harband |
+| get-proto | 1.0.1 | MIT | Copyright (c) 2025 Jordan Harband |
+| gopd | 1.2.0 | MIT | Copyright (c) 2022 Jordan Harband |
+| has-symbols | 1.1.0 | MIT | Copyright (c) 2016 Jordan Harband |
+| hasown | 2.0.4 | MIT | Copyright (c) Jordan Harband and contributors |
+| hono | 4.13.17 | MIT | Copyright (c) 2021 - present, Yusuke Wada and Hono contributors |
+| http-errors | 2.0.1 | MIT | Copyright (c) 2014 Jonathan Ong me@jongleberry.com |
 | iconv-lite | 0.7.3 | MIT | Copyright (c) 2011 Alexander Shtuchkin |
+| inherits | 2.0.4 | ISC | Copyright (c) Isaac Z. Schlueter |
+| ip-address | 10.7.6 | MIT | Copyright (C) 2011 by Beau Gunderson |
+| ipaddr.js | 1.9.1 | MIT | Copyright (C) 2011-2017 whitequark <whitequark@whitequark.org> |
 | is-docker | 3.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | is-in-ssh | 1.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | is-inside-container | 1.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| is-promise | 4.0.0 | MIT | Copyright (c) 2014 Forbes Lindesay |
 | is-wsl | 3.1.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| isexe | 2.0.0 | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
+| jose | 6.2.17 | MIT | Copyright (c) 2018 Filip Skokan |
 | json-schema-to-ts | 3.1.1 | MIT | Copyright (c) 2020 Thomas Aribart |
+| json-schema-traverse | 1.0.0 | MIT | Copyright (c) 2017 Evgeny Poberezkin |
+| json-schema-typed | 8.0.2 | BSD-2-Clause | Author: Remy Rylan |
+| math-intrinsics | 1.1.0 | MIT | Copyright (c) 2024 ECMAScript Shims |
+| media-typer | 1.1.1 | MIT | Copyright (c) 2014-2017 Douglas Christopher Wilson |
+| merge-descriptors | 2.0.0 | MIT | Copyright (c) Jonathan Ong <me@jongleberry.com> |
+| mime-db | 1.54.0 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
+| mime-types | 3.0.2 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
+| ms | 2.1.3 | MIT | Copyright (c) 2020 Vercel, Inc. |
 | mute-stream | 3.0.0 | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
+| negotiator | 1.1.0 | MIT | Copyright (c) 2012-2014 Federico Romero |
+| object-assign | 4.1.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com) |
+| object-inspect | 1.13.4 | MIT | Copyright (c) 2013 James Halliday |
+| on-finished | 2.4.2 | MIT | Copyright (c) 2013 Jonathan Ong <me@jongleberry.com> |
+| once | 1.4.0 | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
 | open | 11.0.4 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | p-queue | 10.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| parseurl | 1.3.3 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
+| path-key | 3.1.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com) |
+| path-to-regexp | 8.4.2 | MIT | Copyright (c) 2014 Blake Embrey (hello@blakeembrey.com) |
+| pkce-challenge | 5.0.1 | MIT | Copyright (c) 2019 |
 | powershell-utils | 0.2.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| proxy-addr | 2.0.8 | MIT | Copyright (c) 2014-2016 Douglas Christopher Wilson |
+| qs | 6.17.1 | BSD-3-Clause | Copyright (c) 2014, Nathan LaFreniere and other [contributors](https://github.com/ljharb/qs/graphs/contributors) |
+| range-parser | 1.3.0 | MIT | Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca> |
+| raw-body | 3.0.2 | MIT | Copyright (c) 2013-2014 Jonathan Ong <me@jongleberry.com> |
+| require-from-string | 2.0.2 | MIT | Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop) |
+| router | 2.2.0 | MIT | Copyright (c) 2013 Roman Shtylman |
 | run-applescript | 7.1.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | safer-buffer | 2.1.2 | MIT | Copyright (c) 2018 Nikita Skovoroda <chalkerx@gmail.com> |
+| send | 1.2.1 | MIT | Copyright (c) 2012 TJ Holowaychuk |
+| serve-static | 2.2.1 | MIT | Copyright (c) 2010 Sencha Inc. |
+| setprototypeof | 1.2.0 | ISC | Copyright (c) 2015, Wes Todd |
+| shebang-command | 2.0.0 | MIT | Copyright (c) Kevin Mårtensson <kevinmartensson@gmail.com> (github.com/kevva) |
+| shebang-regex | 3.0.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com) |
+| side-channel | 1.1.1 | MIT | Copyright (c) 2019 Jordan Harband |
+| side-channel-list | 1.0.1 | MIT | Copyright (c) 2024 Jordan Harband |
+| side-channel-map | 1.0.1 | MIT | Copyright (c) 2024 Jordan Harband |
+| side-channel-weakmap | 1.0.2 | MIT | Copyright (c) 2019 Jordan Harband |
 | signal-exit | 4.1.0 | ISC | Copyright (c) 2015-2023 Benjamin Coe, Isaac Z. Schlueter, and Contributors |
 | standardwebhooks | 1.1.1 | MIT | Author: Standard Webhooks |
+| statuses | 2.0.2 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
 | string-width | 7.2.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | string-width | 7.2.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | string-width | 8.3.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | strip-ansi | 7.2.0 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | three | 0.187.0 | MIT | Copyright © 2010-2026 three.js authors |
+| toidentifier | 1.0.1 | MIT | Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com> |
 | ts-algebra | 2.0.0 | MIT | Copyright (c) 2020 Thomas Aribart |
+| type-is | 2.1.0 | MIT | Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> |
+| unpipe | 1.0.0 | MIT | Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com> |
+| vary | 1.1.2 | MIT | Copyright (c) 2014-2017 Douglas Christopher Wilson |
+| which | 2.0.2 | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
 | wrap-ansi | 9.0.2 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
+| wrappy | 1.0.2 | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
 | wsl-utils | 1.0.1 | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) |
 | y18n | 5.0.8 | ISC | Copyright (c) 2015, Contributors |
 | yargs | 18.2.0 | MIT | Copyright 2010 James Halliday (mail@substack.net); Modified work Copyright 2014 Contributors (ben@npmjs.com) |
 | yargs-parser | 22.0.0 | ISC | Copyright (c) 2016, Contributors |
+| zod | 4.6.7 | MIT | Copyright (c) 2025 Colin McDonnell |
+| zod-to-json-schema | 3.25.2 | ISC | Copyright (c) 2020, Stefan Terdell |
 
 ## Licence texts
 
@@ -308,6 +401,70 @@ Apache License
    limitations under the License.
 ```
 
+### BSD-2-Clause
+
+Used by: json-schema-typed@8.0.2
+
+```text
+BSD 2-Clause License
+
+Original source code is copyright (c) 2019-2025 Remy Rylan
+<https://github.com/RemyRylan>
+
+All JSON Schema documentation and descriptions are copyright (c):
+
+2009 [draft-0] IETF Trust <https://www.ietf.org/>, Kris Zyp <kris@sitepen.com>,
+and SitePen (USA) <https://www.sitepen.com/>.
+
+2009 [draft-1] IETF Trust <https://www.ietf.org/>, Kris Zyp <kris@sitepen.com>,
+and SitePen (USA) <https://www.sitepen.com/>.
+
+2010 [draft-2] IETF Trust <https://www.ietf.org/>, Kris Zyp <kris@sitepen.com>,
+and SitePen (USA) <https://www.sitepen.com/>.
+
+2010 [draft-3] IETF Trust <https://www.ietf.org/>, Kris Zyp <kris@sitepen.com>,
+Gary Court <gary.court@gmail.com>, and SitePen (USA) <https://www.sitepen.com/>.
+
+2013 [draft-4] IETF Trust <https://www.ietf.org/>), Francis Galiegue
+<fgaliegue@gmail.com>, Kris Zyp <kris@sitepen.com>, Gary Court
+<gary.court@gmail.com>, and SitePen (USA) <https://www.sitepen.com/>.
+
+2018 [draft-7] IETF Trust <https://www.ietf.org/>, Austin Wright <aaa@bzfx.net>,
+Henry Andrews <henry@cloudflare.com>, Geraint Luff <luffgd@gmail.com>, and
+Cloudflare, Inc. <https://www.cloudflare.com/>.
+
+2019 [draft-2019-09] IETF Trust <https://www.ietf.org/>, Austin Wright
+<aaa@bzfx.net>, Henry Andrews <andrews_henry@yahoo.com>, Ben Hutton
+<bh7@sanger.ac.uk>, and Greg Dennis <gregsdennis@yahoo.com>.
+
+2020 [draft-2020-12] IETF Trust <https://www.ietf.org/>, Austin Wright
+<aaa@bzfx.net>, Henry Andrews <andrews_henry@yahoo.com>, Ben Hutton
+<ben@jsonschema.dev>, and Greg Dennis <gregsdennis@yahoo.com>.
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### BSD-3-Clause
 
 Used by: d3-ease@3.0.2
@@ -339,6 +496,72 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+Used by: fast-uri@3.1.9
+
+```text
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * The names of any contributors may not be used to endorse or promote
+      products derived from this software without specific prior written
+      permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS AND CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+                                  *   *   *
+
+The complete list of contributors can be found at:
+- https://github.com/garycourt/uri-js/graphs/contributors
+```
+
+Used by: qs@6.17.1
+
+```text
+BSD 3-Clause License
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### ISC
@@ -401,7 +624,24 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-Used by: mute-stream@3.0.0
+Used by: inherits@2.0.4
+
+```text
+The ISC License
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
+
+Used by: isexe@2.0.0, mute-stream@3.0.0, once@1.4.0, which@2.0.2, wrappy@1.0.2
 
 ```text
 The ISC License
@@ -416,6 +656,21 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+Used by: setprototypeof@1.2.0
+
+```text
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 Used by: signal-exit@4.1.0
@@ -435,6 +690,23 @@ LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES
 OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
 WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
 ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+Used by: zod-to-json-schema@3.25.2
+
+```text
+ISC License
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 ### MIT
@@ -464,6 +736,30 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+Used by: @hono/node-server@2.1.6, @modelcontextprotocol/sdk@1.32.2, @napi-rs/keyring@2.1.2, ajv-formats@3.0.1, call-bind-apply-helpers@1.0.2, call-bound@1.0.4, dunder-proto@1.0.1, es-define-property@1.0.1, es-errors@1.3.0, es-object-atoms@1.1.2, eventsource-parser@3.1.1, fast-deep-equal@3.1.3, fast-wrap-ansi@0.2.2, get-intrinsic@1.3.0, get-proto@1.0.1, gopd@1.2.0, has-symbols@1.1.0, hasown@2.0.4, hono@4.13.17, json-schema-to-ts@3.1.1, json-schema-traverse@1.0.0, math-intrinsics@1.1.0, object-inspect@1.13.4, pkce-challenge@5.0.1, safer-buffer@2.1.2, side-channel@1.1.1, side-channel-list@1.0.1, side-channel-map@1.0.1, side-channel-weakmap@1.0.2, toidentifier@1.0.1, ts-algebra@2.0.0, zod@4.6.7
+
+```text
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 Used by: @inquirer/ansi@2.0.10, @inquirer/checkbox@5.2.8, @inquirer/confirm@6.3.5, @inquirer/core@12.0.6, @inquirer/editor@5.3.6, @inquirer/expand@5.1.8, @inquirer/external-editor@3.0.7, @inquirer/figures@2.0.10, @inquirer/input@5.1.9, @inquirer/number@4.2.6, @inquirer/password@5.2.5, @inquirer/prompts@8.7.5, @inquirer/rawlist@5.3.8, @inquirer/search@4.3.6, @inquirer/select@5.2.8, @inquirer/type@4.2.1
 
 ```text
@@ -487,30 +783,6 @@ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
-```
-
-Used by: @napi-rs/keyring@2.1.2, fast-wrap-ansi@0.2.2, json-schema-to-ts@3.1.1, safer-buffer@2.1.2, ts-algebra@2.0.0
-
-```text
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ```
 
 Used by: @stablelib/base64@1.0.1
@@ -537,7 +809,56 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-Used by: ansi-regex@6.6.0, ansi-styles@6.2.3, bundle-name@4.1.1, default-browser@5.5.1, default-browser-id@5.0.1, define-lazy-prop@3.0.0, escalade@3.2.0, get-east-asian-width@1.7.0, is-docker@3.0.0, is-in-ssh@1.0.0, is-inside-container@1.0.0, is-wsl@3.1.1, open@11.0.4, p-queue@10.0.0, powershell-utils@0.2.1, run-applescript@7.1.0, string-width@7.2.0, string-width@7.2.0, string-width@8.3.0, strip-ansi@7.2.0, wrap-ansi@9.0.2, wsl-utils@1.0.1
+Used by: accepts@2.0.0, body-parser@2.4.0, bytes@3.1.2, content-disposition@2.0.1, content-type@1.0.5, content-type@2.1.0, content-type@2.1.0, content-type@2.1.0, content-type@2.1.0, cookie@0.7.2, cookie-signature@1.2.2, cors@2.8.6, depd@2.0.0, encodeurl@2.0.1, escape-html@1.0.3, etag@1.8.1, express@5.3.0, finalhandler@2.1.1, forwarded@0.2.0, fresh@2.0.0, media-typer@1.1.1, mime-db@1.54.0, mime-types@3.0.2, negotiator@1.1.0, on-finished@2.4.2, parseurl@1.3.3, proxy-addr@2.0.8, range-parser@1.3.0, router@2.2.0, send@1.2.1, serve-static@2.2.1, type-is@2.1.0, unpipe@1.0.0, vary@1.1.2
+
+```text
+(The MIT License)
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+Used by: ajv@8.20.0, jose@6.2.17, ms@2.1.3
+
+```text
+The MIT License (MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+Used by: ansi-regex@6.6.0, ansi-styles@6.2.3, bundle-name@4.1.1, default-browser@5.5.1, default-browser-id@5.0.1, define-lazy-prop@3.0.0, escalade@3.2.0, get-east-asian-width@1.7.0, is-docker@3.0.0, is-in-ssh@1.0.0, is-inside-container@1.0.0, is-wsl@3.1.1, merge-descriptors@2.0.0, open@11.0.4, p-queue@10.0.0, path-key@3.1.1, powershell-utils@0.2.1, run-applescript@7.1.0, shebang-command@2.0.0, shebang-regex@3.0.0, string-width@7.2.0, string-width@7.2.0, string-width@8.3.0, strip-ansi@7.2.0, wrap-ansi@9.0.2, wsl-utils@1.0.1
 
 ```text
 MIT License
@@ -549,7 +870,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Used by: chardet@2.2.0
+Used by: chardet@2.2.0, function-bind@1.1.2, ip-address@10.7.6, ipaddr.js@1.9.1, is-promise@4.0.0
 
 ```text
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -569,6 +890,51 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+Used by: cross-spawn@7.0.6, ee-first@1.1.1, http-errors@2.0.1, object-assign@4.1.1, path-to-regexp@8.4.2, raw-body@3.0.2, require-from-string@2.0.2, statuses@2.0.2
+
+```text
+The MIT License (MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+Used by: debug@4.4.3
+
+```text
+(The MIT License)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+and associated documentation files (the 'Software'), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 Used by: emoji-regex@10.6.0, iconv-lite@0.7.3
@@ -592,6 +958,55 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+Used by: eventsource@3.0.7
+
+```text
+The MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+Used by: express-rate-limit@8.7.4
+
+```text
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 Used by: fast-string-truncated-width@3.0.3, fast-string-width@3.0.2
@@ -703,7 +1118,7 @@ For more information, please refer to <http://unlicense.org>
 
 ## Build tools: installed for development only, never shipped or bundled
 
-These are development dependencies. They build `web/dist/` from source and are not part of the published package or of any exported page.
+These are development dependencies: the tools that build `web/dist/` from source, and drivers used only by the tests (such as `pg`, which a deployment that uses the optional Postgres store installs itself). None is part of the published package or of any exported page.
 
 | Package | Version | Licence | Copyright |
 |---|---|---|---|
@@ -734,3 +1149,17 @@ These are development dependencies. They build `web/dist/` from source and are n
 | @esbuild/win32-ia32 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
 | @esbuild/win32-x64 | 0.28.2 | MIT | (platform-specific prebuilt binary of esbuild; same project and licence) |
 | esbuild | 0.28.2 | MIT | Copyright (c) 2020 Evan Wallace |
+| pg | 8.23.1 | MIT | Copyright (c) 2010 - 2021 Brian Carlson |
+| pg-cloudflare | 1.4.1 | MIT | Copyright (c) 2010 - 2021 Brian Carlson |
+| pg-connection-string | 2.14.1 | MIT | Copyright (c) 2014 Iced Development |
+| pg-int8 | 1.0.1 | ISC | Copyright © 2017, Charmander <~@charmander.me> |
+| pg-pool | 3.14.0 | MIT | Copyright (c) 2017 Brian M. Carlson |
+| pg-protocol | 1.16.1 | MIT | Copyright (c) 2010 - 2021 Brian Carlson |
+| pg-types | 2.2.0 | MIT | Author: Brian M. Carlson |
+| pgpass | 1.0.5 | MIT | Author: Hannes Hörl |
+| postgres-array | 2.0.0 | MIT | Copyright (c) Ben Drucker <bvdrucker@gmail.com> (bendrucker.me) |
+| postgres-bytea | 1.0.1 | MIT | Copyright (c) Ben Drucker <bvdrucker@gmail.com> (bendrucker.me) |
+| postgres-date | 1.0.7 | MIT | Copyright (c) Ben Drucker <bvdrucker@gmail.com> (bendrucker.me) |
+| postgres-interval | 1.2.0 | MIT | Copyright (c) Ben Drucker <bvdrucker@gmail.com> (bendrucker.me) |
+| split2 | 4.2.0 | ISC | Copyright (c) 2014-2018, Matteo Collina <hello@matteocollina.com> |
+| xtend | 4.0.2 | MIT | Copyright (c) 2012-2014 Raynos. |

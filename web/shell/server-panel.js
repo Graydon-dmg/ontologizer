@@ -5,7 +5,25 @@
 export function tokenLine(t) {
   const name = typeof t?.name === 'string' ? t.name : '';
   const scopes = Array.isArray(t?.scopes) ? t.scopes.filter((/** @type {any} */ s) => typeof s === 'string') : [];
-  return `${name} — ${scopes.join(', ')}`;
+  const base = `${name} — ${scopes.join(', ')}`;
+  const srcs = Array.isArray(t?.sources) ? t.sources.filter((/** @type {any} */ s) => typeof s === 'string') : [];
+  return srcs.length ? `${base} · sources: ${srcs.join(', ')}` : base;
+}
+
+/** The configured sources, one line each; null when the status has none (an I1 server).
+ * @param {any} status @returns {string[]|null} */
+export function sourceLines(status) {
+  if (!Array.isArray(status?.sources)) return null;
+  return status.sources.filter((/** @type {any} */ s) => s && typeof s.name === 'string')
+    .map((/** @type {any} */ s) => `${s.name} — ${s.visibility === 'private' ? 'private' : 'public'}, ${s.reachable ? 'reachable' : 'unreachable'}`);
+}
+
+/** "identity: tokens · policy: default · store: files · model: default", or null without ports.
+ * @param {any} status @returns {string|null} */
+export function portsLine(status) {
+  const p = status?.ports;
+  if (!p || typeof p !== 'object') return null;
+  return ['identity', 'policy', 'store', 'model'].filter((k) => typeof p[k] === 'string').map((k) => `${k}: ${p[k]}`).join(' · ') || null;
 }
 
 /** @param {any} tokens @returns {string[]} */

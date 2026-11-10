@@ -50,7 +50,24 @@ export const listMaps = (f, tenant) => request(f, `${root(tenant)}/maps`);
 export const checkContext = (f, tenant, context, answers) =>
   request(f, `${root(tenant)}/maps/check`, { method: 'POST', body: { context, answers } });
 
-/** @param {typeof fetch} f @param {string} tenant @param {{ brief: Brief, name?: string, depth?: number }} spec */
+/** The sources the caller holds, for the New map picker: [] on an error, a 404 (an I1 server) or none.
+ * @param {typeof fetch} f @param {string} tenant @returns {Promise<{ name: string, visibility: 'public'|'private' }[]>} */
+export async function listSources(f, tenant) {
+  const r = await request(f, `${root(tenant)}/sources`);
+  if (!r.ok || !Array.isArray(r.body)) return [];
+  return r.body.filter((/** @type {any} */ s) => s && typeof s.name === 'string')
+    .map((/** @type {any} */ s) => ({ name: s.name, visibility: s.visibility === 'private' ? 'private' : 'public' }));
+}
+
+/** The body of the build request. `sources` is added only when the picker was shown, and is exactly
+ * the checked names (an I1 server and no-config servers get the I1 body).
+ * @param {{ brief: Brief, name?: string, depth?: number }} spec
+ * @param {{ shown: boolean, checked: string[] }} [picker] */
+export function buildBody(spec, picker) {
+  return picker && picker.shown ? { ...spec, sources: [...picker.checked] } : { ...spec };
+}
+
+/** @param {typeof fetch} f @param {string} tenant @param {{ brief: Brief, name?: string, depth?: number, sources?: string[] }} spec */
 export async function startBuild(f, tenant, spec) {
   const r = await request(f, `${root(tenant)}/maps`, { method: 'POST', body: spec });
   if (r.ok && r.status === 202 && typeof r.body?.viewUrl === 'string') return { ...r, viewUrl: /** @type {string} */ (r.body.viewUrl) };

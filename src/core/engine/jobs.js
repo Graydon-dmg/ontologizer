@@ -3,6 +3,7 @@
 // Each reads the map, makes one model call, and writes events. Errors propagate; the queue fails the job.
 import { researchContextPrompt, researchGeneralPrompt, explainPrompt, sourcesPrompt } from './prompts.js';
 import { childId, labelPath } from './ids.js';
+import { sourcesNote } from './run.js';
 
 const MAX_NEW = 10;
 const MAX_LABEL = 80;
@@ -58,10 +59,31 @@ export function cleanSources(list, sites = new Set()) {
   return out;
 }
 
-/** Existing sources plus new ones, cleaned (one per site), capped. @param {any[]} have @param {any[]} add */
-function mergeSources(have, add) {
-  return cleanSources([...(have ?? []), ...add]).slice(0, MAX_SOURCES);
+/** A source ref (from a configured source) rather than a web source. @param {any} s */
+const isRef = (s) => !!s && typeof s.source === 'string';
+
+/**
+ * Existing sources plus new ones: web sources cleaned (one per site) and capped; source refs kept
+ * apart (they have no site rule), deduplicated, capped. Without refs this is exactly the old merge.
+ * @param {any[]} have @param {any[]} add @param {any[]} [refs]
+ */
+function mergeSources(have, add, refs = []) {
+  const web = cleanSources([...(have ?? []).filter((s) => !isRef(s)), ...add]).slice(0, MAX_SOURCES);
+  /** @type {Map<string, any>} */
+  const kept = new Map();
+  for (const r of [...(have ?? []).filter(isRef), ...refs]) {
+    const k = `${r.source}\u0000${r.ref}`;
+    if (!kept.has(k) && kept.size < MAX_SOURCES) kept.set(k, r);
+  }
+  return [...web, ...kept.values()];
 }
+
+/** A job's call with the run's source tools, when it has any. @param {any} ectx @param {any} p */
+function grounded(ectx, p) {
+  return ectx.run?.hasTools ? { ...p, system: p.system + sourcesNote(ectx.run.tools), useTools: true } : p;
+}
+/** @param {any} ectx @param {any} obj */
+const citeOf = (ectx, obj) => (ectx.cite ? ectx.cite(obj?.sources) : []);
 
 /** @param {any} ectx @param {string} nodeId @param {'context'|'general'} mode */
 export async function research(ectx, nodeId, mode) {
@@ -76,7 +98,7 @@ export async function research(ectx, nodeId, mode) {
   let added = 0;
   let newCategories = 0;
 
-  const result = await ectx.call({ model: ectx.models.strong, effort: 'medium', system, prompt }, (/** @type {any} */ obj) => {
+  const result = await ectx.call(grounded(ectx, { model: ectx.models.strong, effort: 'medium', system, prompt }), (/** @type {any} */ obj) => {
     if (added >= MAX_NEW || !obj || typeof obj.label !== 'string') return;
     const label = obj.label.trim();
     if (!label || label.length > MAX_LABEL || seen.has(label.toLowerCase())) return;
@@ -94,7 +116,7 @@ export async function research(ectx, nodeId, mode) {
         summary: typeof obj.summary === 'string' ? obj.summary : '',
         hook: typeof obj.hook === 'string' ? obj.hook : '',
         origin: mode === 'general' ? 'general' : 'context',
-        sources: [], article: null, status: 'done', createdBy: 'research',
+        sources: citeOf(ectx, obj), article: null, status: 'done', createdBy: 'research',
       },
     });
     added++;
@@ -109,9 +131,10 @@ export async function explain(ectx, nodeId) {
   const { system, prompt } = explainPrompt(o.brief, path);
   /** @type {any} */ let found = null;
   const result = await ectx.call(
-    { model: ectx.models.strong, effort: 'medium', system, prompt, webSearch: true },
+    grounded(ectx, { model: ectx.models.strong, effort: 'medium', system, prompt, webSearch: true }),
     (/** @type {any} */ obj) => { if (!found && obj && typeof obj.summary === 'string') found = obj; });
   if (!found) throw new Error('explain: the model returned no article');
+  const refs = citeOf(ectx, found);
 
   const strings = (/** @type {any} */ v, /** @type {number} */ max) =>
     (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []).slice(0, max);
@@ -122,7 +145,7 @@ export async function explain(ectx, nodeId) {
     seeAlso: strings(found.seeAlso, 6),
     sources: cleanSources(result.sources).slice(0, 6),
   };
-  ectx.emit('node.updated', { id: nodeId, patch: { article, sources: mergeSources(node.sources, article.sources) } });
+  ectx.emit('node.updated', { id: nodeId, patch: { article, sources: mergeSources(node.sources, article.sources, refs) } });
 }
 
 /** @param {any} ectx @param {string} nodeId */

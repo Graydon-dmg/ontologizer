@@ -29,25 +29,38 @@ export function createEngine({ store, id, client: _client = null }) {
       return { ready: true, brief: created.brief, name: 'plastic-modeling' };
     },
 
-    /** @param {any} brief @param {any} [_opts] @returns {Promise<void>} */
-    async build(brief, _opts) {
+    /** @param {any} brief @param {{ actor?: any, privateSources?: string[] }} [opts] @returns {Promise<void>} */
+    async build(brief, opts) {
+      const actor = opts?.actor ?? null; // service mode stamps who asked on every event
+      const picked = Array.isArray(opts?.privateSources) ? [...new Set(opts.privateSources)].sort() : [];
+      // Service mode wrote ontology.created (and any picked raise) with the draft: start from there.
+      const already = Boolean(store.read(id).root);
       const speed = Number(process.env.ONTOLOGIZER_STUB_SPEED) || 1;
       let prev = 0;
       for (const ev of fixtureEvents()) {
         const wait = ((ev.at ?? 0) - prev) / speed;
         if (wait > 0) await sleep(wait);
         prev = ev.at ?? prev;
-        store.append(id, ev.t === 'ontology.created' ? { ...ev, brief } : ev);
+        if (ev.t === 'ontology.created' && already) continue;
+        const e = ev.t === 'ontology.created' ? { ...ev, brief } : ev;
+        store.append(id, actor ? { ...e, actor } : e);
+        // As the real engine: picked private sources raise the map right after ontology.created.
+        if (ev.t === 'ontology.created' && picked.length) {
+          const raise = { t: 'visibility.raised', at: ev.at ?? 0, to: 'private', reason: 'sources-picked', sources: picked };
+          store.append(id, actor ? { ...raise, actor } : raise);
+          if (typeof store.sync === 'function') await store.sync();
+        }
       }
     },
 
-    /** @param {{ kind: string, nodeId?: string }} job @param {any} [_o] */
-    enqueue(job, _o = {}) {
+    /** @param {{ kind: string, nodeId?: string }} job @param {{ actor?: any }} [o] */
+    enqueue(job, o = {}) {
       const jobId = `job-${++jobCounter}`;
       const info = { id: jobId, kind: job.kind, nodeId: job.nodeId };
-      store.append(id, { t: 'job.queued', at: store.now(id), job: info });
+      const as = (/** @type {any} */ e) => (o?.actor ? { ...e, actor: o.actor } : e);
+      store.append(id, as({ t: 'job.queued', at: store.now(id), job: info }));
       setTimeout(() => {
-        try { store.append(id, { t: 'job.done', at: store.now(id), job: info }); } catch { /* store closed */ }
+        try { store.append(id, as({ t: 'job.done', at: store.now(id), job: info })); } catch { /* store closed */ }
       }, 10);
       return jobId;
     },

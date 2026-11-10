@@ -3,6 +3,30 @@
 import { isAuthError } from './call.js';
 import { checkPrompt, wave0Prompt, wave1Prompt, wave2Prompt } from './prompts.js';
 import { slug, childId, norm, findByLabelPath, labelPath } from './ids.js';
+import { sourcesNote } from './run.js';
+
+/**
+ * A wave's call with the run's source tools (when it has any): the tools are offered and the system
+ * prompt says how to cite them. Without tools the call is exactly as before.
+ * @param {any} ectx @param {{ system: string, prompt: string }} p
+ */
+function grounded(ectx, p) {
+  return ectx.run?.hasTools ? { ...p, system: p.system + sourcesNote(ectx.run.tools) + pickedNote(ectx.chosen), useTools: true } : p;
+}
+
+/**
+ * When the reader picked sources in New map: they are the reader's chosen references, and each
+ * category is searched in them before its nodes are written. Nothing is added when none were picked.
+ * @param {string[]|undefined} chosen
+ */
+export function pickedNote(chosen) {
+  if (!Array.isArray(chosen) || !chosen.length) return '';
+  return `
+The reader chose these sources as the references for this map: ${chosen.join(', ')}. Before you write the lines for a category, search these sources for it with their tools, and base the lines on what they return, citing each document you use. Use general knowledge only where they have nothing.`;
+}
+
+/** The verified refs of a line (only refs a tool returned in this run); [] without tools. @param {any} ectx @param {any} obj */
+const citeOf = (ectx, obj) => (ectx.cite ? ectx.cite(obj?.sources) : []);
 
 const LEVELS = new Set(['beginner', 'intermediate', 'expert']);
 const LINK_TYPES = new Set(['influences', 'requires', 'part-of', 'bridge', 'analog']);
@@ -103,7 +127,16 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   ectx.resetClock();
   const subject = String(brief.subject);
   const root = slug(subject);
-  ectx.emit('ontology.created', { name: subject, root, brief, categories: [] });
+  // Service mode writes ontology.created (and a picked private source's raise) with the draft, before
+  // the build is even queued: then the build starts from there instead of writing them again.
+  const already = Boolean(ectx.store.read(ectx.id).root);
+  if (!already) ectx.emit('ontology.created', { name: subject, root, brief, categories: [] });
+  // Private sources picked in New map make the map private before anything else is written (not even
+  // the root node is ever public), durably, whether or not the build ends up using them.
+  if (ectx.picked?.length && !already) {
+    ectx.emit('visibility.raised', { to: 'private', reason: 'sources-picked', sources: [...new Set(/** @type {string[]} */ (ectx.picked))].sort() });
+    await ectx.durable?.();
+  }
 
   /** @param {object} p */
   const node = (p) => ({ summary: '', hook: '', sources: [], article: null, status: 'done', ...p });
@@ -120,7 +153,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
   /** @type {{ id: string, label: string }[]} */
   const categories = [];
   const seenCat = new Set();
-  await ectx.call({ model: ectx.models.fast, effort: 'low', ...wave0Prompt(brief) }, (/** @type {any} */ obj) => {
+  await ectx.call({ model: ectx.models.fast, effort: 'low', ...grounded(ectx, wave0Prompt(brief)) }, (/** @type {any} */ obj) => {
     const label = validLabel(obj?.label);
     if (!label || seenCat.has(norm(label)) || categories.length >= MAX_CATEGORIES) return;
     seenCat.add(norm(label));
@@ -132,7 +165,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
     ectx.emit('node.added', {
       node: node({
         id, label, parent: root, category: id, depth: 1, summary: str(obj.summary), hook: str(obj.hook),
-        origin: 'context', createdBy: 'wave0',
+        origin: 'context', createdBy: 'wave0', sources: citeOf(ectx, obj),
       }),
     });
   });
@@ -146,7 +179,7 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
       const local = new Map();          // norm(label) -> node this call added
       const seen = new Set();           // parentId|norm(label)
       let count = 0;
-      await ectx.call({ model: ectx.models.fast, effort: 'low', ...wave1Prompt(brief, cat.label, allLabels, depth) }, (/** @type {any} */ obj) => {
+      await ectx.call({ model: ectx.models.fast, effort: 'low', ...grounded(ectx, wave1Prompt(brief, cat.label, allLabels, depth)) }, (/** @type {any} */ obj) => {
         const label = validLabel(obj?.label);
         if (!label || count >= MAX_PER_CATEGORY) return;
         let parentId = cat.id;
@@ -163,12 +196,12 @@ export async function build(ectx, brief, { depth = 2 } = {}) {
         ectx.emit('node.added', {
           node: node({
             id, label, parent: parentId, category: cat.id, depth: parentDepth + 1, summary: str(obj.summary), hook: str(obj.hook),
-            origin: 'context', createdBy: 'wave1',
+            origin: 'context', createdBy: 'wave1', sources: citeOf(ectx, obj),
           }),
         });
       });
     };
-    return ectx.queue.add({ kind: 'build', nodeId: cat.id }, work, { priority: 0 }).done;
+    return ectx.queue.add({ kind: 'build', nodeId: cat.id }, work, { priority: 0, actor: ectx.actor ?? null }).done;
   });
   const outcomes = await Promise.all(jobs);
   for (const o of outcomes) if (!o.ok && isAuthError(o.error)) throw o.error;

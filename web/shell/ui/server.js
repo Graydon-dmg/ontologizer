@@ -1,5 +1,5 @@
 // @ts-check
-import { panelRows, tokenLines, NO_TOKENS, HELP, failureText, noteText } from '../server-panel.js';
+import { panelRows, tokenLines, sourceLines, portsLine, NO_TOKENS, HELP, failureText, noteText } from '../server-panel.js';
 import { keepFitted } from './fit.js';
 
 const STYLE_ID = 'server-panel-style';
@@ -97,10 +97,20 @@ export function mountServerPanel(el, opts) {
   const note = document.createElement('p');
   note.className = 'server-msg';
   note.hidden = true;
-  body.append(msg, dl, note, tokHead, list, help);
+  const srcHead = document.createElement('h3');
+  srcHead.textContent = 'Sources';
+  srcHead.hidden = true;
+  const srcList = document.createElement('ul');
+  srcList.id = 'server-sources';
+  srcList.hidden = true;
+  const ports = document.createElement('p');
+  ports.id = 'server-ports';
+  ports.className = 'server-msg';
+  ports.hidden = true;
+  body.append(msg, dl, note, ports, srcHead, srcList, tokHead, list, help);
 
   /** @param {string} text */
-  const fail = (text) => { msg.textContent = text; msg.hidden = false; dl.replaceChildren(); list.replaceChildren(); tokHead.hidden = true; note.hidden = true; };
+  const fail = (text) => { msg.textContent = text; msg.hidden = false; dl.replaceChildren(); list.replaceChildren(); tokHead.hidden = true; note.hidden = true; ports.hidden = true; srcHead.hidden = true; srcList.hidden = true; };
 
   async function load() {
     msg.hidden = false;
@@ -123,6 +133,13 @@ export function mountServerPanel(el, opts) {
       }
       note.textContent = noteText(s);
       note.hidden = !note.textContent;
+      const pl = portsLine(s);
+      ports.textContent = pl ? `Ports · ${pl}` : '';
+      ports.hidden = !pl;
+      const sl = sourceLines(s);
+      srcList.replaceChildren();
+      for (const line of sl ?? []) { const li = document.createElement('li'); li.textContent = line; srcList.append(li); }
+      srcHead.hidden = srcList.hidden = !sl || !sl.length;
       const lines = tokenLines(s.tokens);
       list.replaceChildren();
       if (!lines.length) {

@@ -1,11 +1,43 @@
 // @ts-check
 /** @typedef {import('../../src/core/schema.js').Ontology} Ontology */
 
+/** A source ref has a string `source` field (a web source has title and url only). @param {any} s */
+export const isRef = (s) => !!s && typeof s.source === 'string';
+
+/** The url when it is http or https, else null. @param {any} u @returns {string|null} */
+export function safeHttpUrl(u) {
+  if (typeof u !== 'string') return null;
+  try { const p = new URL(u).protocol; return p === 'http:' || p === 'https:' ? u : null; } catch { return null; }
+}
+
+/** One list item for a source ref: "<source> · <title or ref>", a link only for an http(s) url.
+ * @param {any} r @returns {{ text: string, href: string|null }} */
+export const refItem = (r) => ({ text: `${r.source} · ${r.title || r.ref || ''}`, href: safeHttpUrl(r.url) });
+
+/**
+ * The Private badge: private once the snapshot says so or a visibility.raised event arrives, and
+ * never back (nothing lowers visibility, so anything else in an event is ignored).
+ * @param {any} snapshot @param {any[]} [events] @param {{ show: boolean, title: string }} [prev]
+ * @returns {{ show: boolean, title: string }}
+ */
+export function privateBadge(snapshot, events = [], prev) {
+  const names = new Set(prev && prev.show ? prev.title.replace(/^Private: built from /, '').split(', ').filter((n) => n && n !== 'Private') : []);
+  let show = !!(prev && prev.show);
+  if (snapshot && snapshot.visibility === 'private') show = true;
+  for (const n of (snapshot && snapshot.privateSources) || []) names.add(n);
+  for (const e of events) {
+    if (e && e.t === 'visibility.raised' && e.to === 'private') { show = true; for (const n of e.sources || []) names.add(n); }
+  }
+  if (!show) return { show: false, title: '' };
+  const list = [...names].sort();
+  return { show: true, title: list.length ? `Private: built from ${list.join(', ')}` : 'Private' };
+}
+
 /**
  * @param {Ontology} ontology @param {string} nodeId
  * @returns {{ node: any, article: any, researching: boolean,
  *   analog: { lensId: string, persona: string, label: string, breaks?: string }|null,
- *   seeAlso: { id: string, label: string }[], sources: { title: string, url: string }[] }|null}
+ *   seeAlso: { id: string, label: string }[], sources: { title: string, url: string }[], refs: { text: string, href: string|null }[] }|null}
  */
 export function explainModel(ontology, nodeId) {
   const node = ontology.nodes[nodeId];
@@ -26,8 +58,11 @@ export function explainModel(ontology, nodeId) {
     const hit = ontology.nodes[ref] || all.find((n) => n.label.toLowerCase() === String(ref).toLowerCase());
     if (hit && !seeAlso.some((s) => s.id === hit.id)) seeAlso.push({ id: hit.id, label: hit.label });
   }
-  const sources = (article && article.sources && article.sources.length ? article.sources : node.sources) || [];
-  return { node, article, researching, analog, seeAlso, sources };
+  const webOnly = (/** @type {any[]|undefined} */ l) => (l || []).filter((s) => !isRef(s));
+  const artWeb = webOnly(article && article.sources);
+  const sources = artWeb.length ? artWeb : webOnly(node.sources);
+  const refs = (node.sources || []).filter(isRef).map(refItem);
+  return { node, article, researching, analog, seeAlso, sources, refs };
 }
 
 /** How long a sent request may wait for its job to show up before we call it lost (ms). */

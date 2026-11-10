@@ -5,6 +5,7 @@
 import { WEB_SEARCH_TOOL, RefusalError, jobErrorMessage } from './call.js';
 import { labelPath, findByLabelPath } from './ids.js';
 import { chatSystem, outlineBlock } from './prompts-chat.js';
+import { UNTRUSTED } from './run.js';
 
 const MAX_TURNS = 6;           // model calls per question, tool turns included
 const HISTORY_EXCHANGES = 10;  // earlier question/answer pairs sent with each question
@@ -12,6 +13,11 @@ const MAX_SUGGESTIONS = 3;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export const STOPPED = 'Stopped.';
+
+const SOURCES_NOTE = `
+
+The reader's own sources can also be searched, with the tools named <source>__<tool>. Use them for what the map does not cover. When you use a document from a source that has a url, link it the way you link web pages.
+${UNTRUSTED}`;
 
 /**
  * @typedef {{ type: 'delta', text: string } | { type: 'citation', nodeId: string, label: string }
@@ -39,7 +45,9 @@ export const TOOLS = [
 
 /**
  * @param {{ store: any, id: string, models: { strong: string }, getClient: () => any,
- *           emit: (t: string, fields: object) => void }} cctx
+ *           emit: (t: string, fields: object) => void, run?: any }} cctx
+ *   run: the run's source tools (service mode with configured sources); offered beside the map
+ *   tools and web search. They only read, like the map tools.
  * @param {{ chatId?: string, text?: string, images?: ChatImage[], lens?: string|null }} input
  * @param {{ signal?: AbortSignal }} [opts]
  * @returns {AsyncIterable<ChatItem>}
@@ -75,6 +83,9 @@ let counter = 0;
  */
 async function run(cctx, q, out) {
   const { store, id, models, getClient, emit } = cctx;
+  /** Source tools for this ask (offered only when the run has any). */
+  const srcTools = cctx.run?.hasTools ? cctx.run.tools : null;
+  const srcNames = new Set((srcTools?.defs ?? []).map((/** @type {any} */ d) => d.name));
   const { chatId, msgId, answerId, text, images, lens, signal } = q;
   const answer = { text: '', usedWeb: false };
   /** @type {Map<string, { nodeId: string, label: string }>} */ const citations = new Map();
@@ -129,7 +140,7 @@ async function run(cctx, q, out) {
     const o = store.read(id);
     const index = buildIndex(o, lens);
     const system = [
-      { type: 'text', text: chatSystem(o.brief, lensInfo(o, lens)) },
+      { type: 'text', text: chatSystem(o.brief, lensInfo(o, lens)) + (srcTools ? SOURCES_NOTE : '') },
       { type: 'text', text: outlineBlock(outline(o, lens)), cache_control: { type: 'ephemeral' } },
     ];
     /** @type {any[]} */
@@ -149,7 +160,9 @@ async function run(cctx, q, out) {
       const params = {
         model: models.strong, max_tokens: 8000, system, messages,
         output_config: { effort: 'medium' },
-        tools: [...TOOLS, WEB_SEARCH_TOOL],
+        // A private map's answer never reaches the web or a public source: only the map's own tools
+        // and the private sources this ask may use (checked each turn: a source can raise it mid-answer).
+        tools: [...TOOLS, ...(store.read(id).visibility === 'private' ? [] : [WEB_SEARCH_TOOL]), ...(srcTools ? srcTools.defs : [])],
       };
       if (last) params.tool_choice = { type: 'none' };      // out of turns: answer with what it has
       const stream = client.messages.stream(params, signal ? { signal } : undefined);
@@ -160,7 +173,9 @@ async function run(cctx, q, out) {
         if (signal?.aborted) throw abortError();
         if (e.type === 'content_block_start') {
           const b = e.content_block ?? {};
-          if (b.type === 'tool_use' && !said.has('map')) { said.add('map'); send({ type: 'status', text: 'Searching your map…' }); }
+          if (b.type === 'tool_use' && srcNames.has(b.name)) {
+            if (!said.has('src')) { said.add('src'); send({ type: 'status', text: 'Searching your sources…' }); }
+          } else if (b.type === 'tool_use' && !said.has('map')) { said.add('map'); send({ type: 'status', text: 'Searching your map…' }); }
           if (b.type === 'server_tool_use' && b.name === 'web_search') {
             answer.usedWeb = true;
             if (!said.has('web')) { said.add('web'); send({ type: 'status', text: 'Searching the web…' }); }
@@ -183,13 +198,20 @@ async function run(cctx, q, out) {
       const uses = (final.content ?? []).filter((/** @type {any} */ b) => b.type === 'tool_use');
       if (final.stop_reason !== 'tool_use' || !uses.length || last) break;
       messages.push({ role: 'assistant', content: final.content });
-      messages.push({
-        role: 'user',
-        content: uses.map((/** @type {any} */ u) => {
-          const r = runTool(u.name, u.input, store.read(id), index, lens);
-          return { type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(r.result), ...(r.error ? { is_error: true } : {}) };
-        }),
-      });
+      /** @type {any[]} */
+      const results = [];
+      for (const u of uses) {
+        if (srcNames.has(u.name) && params.tools.some((/** @type {any} */ d) => d.name === u.name)) {
+          // A source tool (read-only). A private source's first answer raises the map first.
+          const r = await /** @type {any} */ (srcTools).call(u.name, u.input);
+          for (const ref of r.refs ?? []) if (ref.url && ref.title) searchTitles.set(ref.url, String(ref.title));
+          results.push({ type: 'tool_result', tool_use_id: u.id, content: r.text || '(no result)', ...(r.isError ? { is_error: true } : {}) });
+          continue;
+        }
+        const r = runTool(u.name, u.input, store.read(id), index, lens);
+        results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(r.result), ...(r.error ? { is_error: true } : {}) });
+      }
+      messages.push({ role: 'user', content: results });
     }
     emitText(filter.flush());
 

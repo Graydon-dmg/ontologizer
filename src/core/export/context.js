@@ -56,7 +56,8 @@ function webUrl(url) {
 
 /** @param {any} list @returns {{ title: string, url: string }[]} */
 const cleanSources = (list) => (Array.isArray(list) ? list : [])
-  .map((x) => ({ title: oneLine(x?.title), url: webUrl(x?.url) })).filter((x) => x.url);
+  // A source ref (a configured source's item) is named by its source: "wiki · Choosing glue". Escaped like any title.
+  .map((x) => ({ title: oneLine(typeof x?.source === 'string' ? `${x.source} · ${x?.title || x?.ref || ''}` : x?.title), url: webUrl(x?.url) })).filter((x) => x.url);
 
 /**
  * A copy of the map with every field the pack prints made safe once, up front, so no section can

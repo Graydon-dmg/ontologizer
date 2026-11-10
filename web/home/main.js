@@ -2,7 +2,7 @@
 import * as tokens from '../shared/tokens.js';
 import { loadChoice, applyTheme } from '../shell/theme.js';
 import { mountServerPanel } from '../shell/ui/server.js';
-import { getSession, signIn, listMaps, checkContext, startBuild, nextStep, cleanAnswers, addAnswers, safeNext, newMapRequested, describeFailure, relTime } from './flow.js';
+import { getSession, signIn, listMaps, checkContext, startBuild, listSources, buildBody, nextStep, cleanAnswers, addAnswers, safeNext, newMapRequested, describeFailure, relTime } from './flow.js';
 
 const $ = (/** @type {string} */ id) => /** @type {any} */ (document.getElementById(id));
 const f = globalThis.fetch.bind(globalThis);
@@ -78,6 +78,12 @@ async function loadMaps() {
     root.className = 'map-root';
     root.textContent = m.root ?? '';
     a.append(name, root);
+    if (m.visibility === 'private') {
+      const b = document.createElement('span');
+      b.className = 'map-private';
+      b.textContent = 'Private';
+      a.append(b);
+    }
     if (m.draft) {
       const d = document.createElement('span');
       d.className = 'map-draft';
@@ -113,8 +119,45 @@ function resetNew() {
   show('context');
 }
 
+/** Sources the picker offered; null when it is hidden. @type {{ name: string, visibility: string }[]|null} */
+let offered = null;
+
+/** @param {{ name: string, visibility: string }[]} list */
+function renderPicker(list) {
+  const box = $('sources-picker');
+  offered = list.length ? list : null;
+  box.replaceChildren();
+  box.hidden = !offered;
+  if (!offered) return;
+  const lg = document.createElement('legend');
+  lg.textContent = 'Sources';
+  box.append(lg);
+  for (const s of offered) {
+    const l = document.createElement('label');
+    l.className = 'src';
+    const i = document.createElement('input');
+    i.type = 'checkbox'; i.value = s.name; i.checked = true;
+    l.append(i, document.createTextNode(s.name));
+    if (s.visibility === 'private') {
+      const m = document.createElement('span');
+      m.className = 'src-private';
+      m.textContent = 'private';
+      l.append(m);
+    }
+    box.append(l);
+  }
+  if (offered.some((s) => s.visibility === 'private')) {
+    const h = document.createElement('p');
+    h.className = 'muted';
+    h.textContent = 'A map built from a private source becomes private.';
+    box.append(h);
+  }
+}
+
 function openNew() {
   resetNew();
+  renderPicker([]);
+  listSources(f, tenant).then(renderPicker);
   $('new-dialog').showModal();
   $('new-context').focus();
 }
@@ -194,7 +237,10 @@ async function runCheck() {
 }
 
 async function runBuild() {
-  const r = await startBuild(f, tenant, { brief: st.brief, name: st.name });
+  const r = await startBuild(f, tenant, buildBody({ brief: st.brief, name: st.name }, {
+    shown: !!offered,
+    checked: [...$('sources-picker').querySelectorAll('input[type=checkbox]:checked')].map((/** @type {any} */ i) => i.value),
+  }));
   if (!r.ok) { fail(r, runBuild); return; }
   location.href = /** @type {any} */ (r).viewUrl;
 }

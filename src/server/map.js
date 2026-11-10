@@ -16,6 +16,21 @@ function sleep(ms, c) {
 }
 
 /** @typedef {{ url: string, close: () => Promise<void> }} DraftServer */
+/**
+ * What one request brings in service mode (the one-map server passes nothing, and every event is
+ * appended exactly as before):
+ * - actor: stamped on every event the request causes;
+ * - principal: passed to the engine (the model port);
+ * - tools(): the source tools a job or an ask may use (made only when one runs);
+ * - canRead(mapId): whether the caller may read another map (the fuse picker, fuse's `with`).
+ * - valid(ev?): whether the caller may still read this map (re-checked on every ping and before every
+ *   event sent; also watched while its chat answer is written);
+ * - sync(): resolves when every write so far is stored (a Postgres store); awaited before a write's 2xx;
+ * - isPrivate(mapId): whether another map is private (fuse keeps its id out of this map's log).
+ * @typedef {{ valid?: (ev?: any) => boolean|Promise<boolean>, actor?: any, principal?: any, tools?: () => Promise<any>,
+ *   canRead?: (mapId: string) => boolean|Promise<boolean>, sync?: () => Promise<void>,
+ *   isPrivate?: (mapId: string) => boolean }} RequestCtx
+ */
 
 /**
  * @param {{ store: any, engine: any, id: string, replay?: null | { speed: number },
@@ -53,8 +68,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
 
   /**
    * @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {number} from
-   * @param {() => boolean} valid whether the caller may still read (checked on every ping and before every
-   *   event; false ends the stream: a revoked token or an expired session stops receiving at once)
+   * @param {(ev?: any) => boolean|Promise<boolean>} valid whether the caller may still read (checked on every
+   *   ping and before every event, with that event; false ends the stream before it is written: a revoked
+   *   token, an expired session, or a map that just became private to someone who cannot read it, stops
+   *   receiving at once). A Promise answer (an async policy) is awaited, and events wait behind it in order.
    */
   function sse(req, res, from, valid = () => true) {
     res.writeHead(200, {
@@ -69,11 +86,22 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     const buffer = [];
     let live = false;
     let nextIdx = from;
+    const stop = () => { if (!conn.gone) { cleanup(); res.end(); } };
+    /** @param {boolean} ok @param {any} ev */
+    const deliver = (ok, ev) => {
+      if (conn.gone) return;
+      if (ok !== true) { stop(); return; }
+      res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    };
+    /** Events waiting behind an async check, so they go out in order. @type {Promise<void>|null} */
+    let queue = null;
     /** @param {any} ev */
     const send = (ev) => {
       if (conn.gone) return;
-      if (!valid()) { cleanup(); res.end(); return; }
-      res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      if (queue) { queue = queue.then(async () => { if (!conn.gone) deliver(await valid(ev), ev); }).catch(stop); return; }
+      const v = valid(ev);
+      if (v === true || v === false) { deliver(v, ev); return; }
+      queue = Promise.resolve(v).then((ok) => deliver(ok, ev)).catch(stop);
     };
     /** @param {any} ev */
     const sendLive = (ev) => send(ev);
@@ -90,8 +118,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     });
     const ping = setInterval(() => {
       if (conn.gone) return;
-      if (!valid()) { cleanup(); res.end(); return; }
-      res.write(': ping\n\n');
+      const v = valid();
+      const pong = (/** @type {boolean} */ ok) => { if (conn.gone) return; if (ok !== true) { stop(); return; } res.write(': ping\n\n'); };
+      if (v === true || v === false) pong(v);
+      else Promise.resolve(v).then(pong, stop);
     }, pingMs);
     const cleanup = () => {
       if (conn.gone) return;
@@ -133,15 +163,25 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
   /** @param {any} v */
   const isId = (v) => typeof v === 'string' && v.length > 0;
 
-  /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
-  async function action(req, res) {
+  /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {RequestCtx} [ctx] */
+  async function action(req, res, ctx = {}) {
     const body = await readBody(req, res);
     if (!body) return;
+    const actor = ctx.actor ?? null;
+    /** @param {Record<string, any>} ev */
+    const as = (ev) => (actor ? { ...ev, actor } : ev);
+    /** A 202 only once what this action wrote is stored (a Postgres store's sync; nothing to wait for with files). @param {any} reply */
+    const ok = async (reply) => {
+      try { if (ctx.sync) await ctx.sync(); } catch { return json(res, 503, { ok: false, error: 'the store is not available' }); }
+      return json(res, 202, reply);
+    };
+    /** Who asked, for the engine (only what was given: the one-map server gives nothing). */
+    const who = { ...(actor ? { actor } : {}), ...(ctx.principal ? { principal: ctx.principal } : {}) };
     /** @param {string} error */
     const bad = (error) => json(res, 400, { ok: false, error });
     /** @param {Record<string, any>} patch */
     const viewEvent = (patch) => {
-      const ev = { t: 'view.changed', at: store.now(id), patch };
+      const ev = as({ t: 'view.changed', at: store.now(id), patch });
       if (!replay) return store.append(id, ev);
       const v = currentView();
       replayView = { ...v, ...patch, filter: patch.filter ? { ...v.filter, ...patch.filter } : v.filter };
@@ -155,26 +195,26 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         const rest = cur.filter((n) => n !== body.nodeId);
         const collapsed = body.type === 'collapse' ? [...rest, body.nodeId] : rest;
         viewEvent({ collapsed });
-        return json(res, 202, { ok: true });
+        return ok({ ok: true });
       }
       case 'focus':
         if (!isId(body.nodeId)) return bad('nodeId must be a non-empty string');
         viewEvent({ focus: body.nodeId });
-        return json(res, 202, { ok: true });
+        return ok({ ok: true });
       case 'layout':
         if (!isId(body.value)) return bad('value must be a non-empty string');
         viewEvent({ layout: body.value });
-        return json(res, 202, { ok: true });
+        return ok({ ok: true });
       case 'lens':
         if (body.value !== null && !isId(body.value)) return bad('value must be a string or null');
         viewEvent({ lens: body.value });
-        return json(res, 202, { ok: true });
+        return ok({ ok: true });
       case 'filter':
         if (!body.value || typeof body.value !== 'object' || Array.isArray(body.value)) {
           return bad('value must be an object');
         }
         viewEvent({ filter: body.value });
-        return json(res, 202, { ok: true });
+        return ok({ ok: true });
       case 'research':
       case 'explain':
       case 'sources': {
@@ -185,9 +225,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
           if (body.mode !== 'context' && body.mode !== 'general') return bad("mode must be 'context' or 'general'");
           job = { kind: 'research', nodeId: body.nodeId, mode: body.mode };
         }
-        const r = await engine.enqueue(job, { priority: 10 });
+        const tools = ctx.tools && body.type !== 'sources' ? await ctx.tools() : null;
+        const r = await engine.enqueue(job, { priority: 10, ...who, ...(tools ? { tools } : {}) });
         const jobId = typeof r === 'string' ? r : (r?.jobId ?? r?.id);
-        return json(res, 202, jobId === undefined ? { ok: true } : { ok: true, jobId });
+        return ok(jobId === undefined ? { ok: true } : { ok: true, jobId });
       }
       case 'rosetta': {
         const persona = typeof body.persona === 'string' ? body.persona.trim() : '';
@@ -199,13 +240,19 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         const name = typeof body.name === 'string' ? body.name : undefined;
         const key = persona.toLowerCase();
         const running = rosettaRuns.get(key);
-        if (running) return json(res, 202, { ok: true, jobId: running.jobId, ...(running.lensId ? { lensId: running.lensId } : {}) });
-        return json(res, 202, await startRosetta(persona, name, key));
+        if (running) return ok({ ok: true, jobId: running.jobId, ...(running.lensId ? { lensId: running.lensId } : {}) });
+        return ok(await startRosetta(persona, name, key, who));
       }
       case 'fuse': {
         if (typeof body.with !== 'string' || !body.with.trim()) return bad('with must be a map id or name');
-        const r = store.resolve(body.with.trim());
-        if (r === null) return bad(`no map named "${body.with}"`);
+        let r = store.resolve(body.with.trim());
+        // An ambiguous name counts only the maps this caller may read; a map it may not read is "no map".
+        if (r && typeof r === 'object' && ctx.canRead) {
+          const readable = [];
+          for (const m of r.ambiguous) if (m !== id && await ctx.canRead(m)) readable.push(m);
+          r = readable.length === 1 ? readable[0] : readable.length ? { ambiguous: readable } : null;
+        }
+        if (r === null || (typeof r === 'string' && ctx.canRead && !await ctx.canRead(r))) return bad(`no map named "${body.with}"`);
         if (typeof r === 'object') return bad(`"${body.with}" is ambiguous: ${r.ambiguous.join(', ')}`);
         if (r === id) return bad('fuse needs a different map than this one');
         if (body.into !== undefined && body.into !== null &&
@@ -216,8 +263,8 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         const into = typeof body.into === 'string' ? body.into : undefined;
         const key = `${r}|${into ?? ''}`;
         const running = fuseRuns.get(key);
-        if (running) return json(res, 202, fuseReply(running));
-        return json(res, 202, await startFuse(r, into, key));
+        if (running) return ok(fuseReply(running));
+        return ok(await startFuse(r, into, key, { ...who, masked: Boolean(ctx.isPrivate && (ctx.isPrivate(r) || ctx.isPrivate(id))) }));
       }
       default:
         return bad(`unknown action type: ${String(body.type)}`);
@@ -229,8 +276,11 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
    * in job events so the shell's jobs tray shows it and its errors. Answers with the lensId as soon as
    * the lens.added event appears (at most 3 s), which engine.rosetta emits first.
    * @param {string} persona @param {string|undefined} name @param {string} key
+   * @param {{ actor?: any, principal?: any }} [who]
    */
-  async function startRosetta(persona, name, key) {
+  async function startRosetta(persona, name, key, who = {}) {
+    /** @param {Record<string, any>} ev */
+    const as = (ev) => (who.actor ? { ...ev, actor: who.actor } : ev);
     const jobId = `rosetta-${process.pid}-${++rosettaSeq}`;
     const job = { id: jobId, kind: 'rosetta', persona };
     const run = { jobId, lensId: /** @type {string|null} */ (null) };
@@ -244,20 +294,20 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         gotLens(ev.lens.id);
       }
     });
-    store.append(id, { t: 'job.queued', at: store.now(id), job });
-    store.append(id, { t: 'job.started', at: store.now(id), job });
+    store.append(id, as({ t: 'job.queued', at: store.now(id), job }));
+    store.append(id, as({ t: 'job.started', at: store.now(id), job }));
     const finished = Promise.resolve()
-      .then(() => engine.rosetta(id, persona, { name }))
+      .then(() => engine.rosetta(id, persona, { name, ...who }))
       .then(
         (lensId) => {
           if (!run.lensId && typeof lensId === 'string') run.lensId = lensId;
-          try { store.append(id, { t: 'job.done', at: store.now(id), job }); } catch { /* store gone */ }
+          try { store.append(id, as({ t: 'job.done', at: store.now(id), job })); } catch { /* store gone */ }
         },
         (/** @type {any} */ err) => {
           const error = err && (err.status === 401 || err.name === 'AuthenticationError')
             ? 'Your Anthropic API key was rejected: run ontologizer key set'
             : String(err?.message ?? err);
-          try { store.append(id, { t: 'job.failed', at: store.now(id), job: { ...job, error } }); } catch { /* store gone */ }
+          try { store.append(id, as({ t: 'job.failed', at: store.now(id), job: { ...job, error } })); } catch { /* store gone */ }
         },
       )
       .finally(() => { off(); rosettaRuns.delete(key); gotLens(null); })
@@ -280,10 +330,17 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
    * job events on THIS map (kind 'fuse'); job.done carries draftId and url. Answers as soon as the
    * draft is reachable (engine.fuse's onDraft), or after at most 5 s.
    * @param {string} withId @param {string|undefined} into @param {string} key
+   * @param {{ actor?: any, principal?: any, masked?: boolean }} [who]
+   *   masked: either map is private, so the draft is too. This map's log then records only
+   *   "with": "a private map": no id, no name, no draftId or url (readers of this map may not read them).
+   *   The caller still gets them in the reply.
    */
-  async function startFuse(withId, into, key) {
+  async function startFuse(withId, into, key, who = {}) {
+    const masked = who.masked === true;
+    /** @param {Record<string, any>} ev */
+    const as = (ev) => (who.actor ? { ...ev, actor: who.actor } : ev);
     const jobId = `fuse-${process.pid}-${++fuseSeq}`;
-    const job = { id: jobId, kind: 'fuse', with: withId, ...(into ? { into } : {}) };
+    const job = masked ? { id: jobId, kind: 'fuse', with: 'a private map' } : { id: jobId, kind: 'fuse', with: withId, ...(into ? { into } : {}) };
     const run = { jobId, draftId: /** @type {string|null} */ (null), url: /** @type {string|null} */ (null) };
     fuseRuns.set(key, run);
     /** @type {(v: any) => void} */
@@ -308,15 +365,15 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       })().catch(() => { ready(null); });
       return serving;
     };
-    store.append(id, { t: 'job.queued', at: store.now(id), job });
-    store.append(id, { t: 'job.started', at: store.now(id), job });
+    store.append(id, as({ t: 'job.queued', at: store.now(id), job }));
+    store.append(id, as({ t: 'job.started', at: store.now(id), job }));
     const finished = Promise.resolve()
-      .then(() => engine.fuse(id, withId, { into, onDraft: (/** @type {string} */ d) => { serveDraft(d); } }))
+      .then(() => engine.fuse(id, withId, { into, onDraft: (/** @type {string} */ d) => { serveDraft(d); }, ...(who.actor ? { actor: who.actor } : {}), ...(who.principal ? { principal: who.principal } : {}) }))
       .then(async (draftId) => {
         if (typeof draftId === 'string') await serveDraft(draftId); // an engine without onDraft
         try {
-          store.append(id, { t: 'job.done', at: store.now(id),
-            job: { ...job, ...(run.draftId ? { draftId: run.draftId } : {}), ...(run.url ? { url: run.url } : {}) } });
+          store.append(id, as({ t: 'job.done', at: store.now(id),
+            job: masked ? job : { ...job, ...(run.draftId ? { draftId: run.draftId } : {}), ...(run.url ? { url: run.url } : {}) } }));
         } catch { /* store gone */ }
       }, async (/** @type {any} */ err) => {
         // A failed fuse leaves no server behind for its half-made draft.
@@ -327,7 +384,7 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         const error = err && (err.status === 401 || err.name === 'AuthenticationError')
           ? 'Your Anthropic API key was rejected: run ontologizer key set'
           : String(err?.message ?? err);
-        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { ...job, error } }); } catch { /* store gone */ }
+        try { store.append(id, as({ t: 'job.failed', at: store.now(id), job: { ...job, error } })); } catch { /* store gone */ }
       })
       .finally(() => {
         fuseRuns.delete(key);
@@ -347,8 +404,8 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
   /** The response of the chat in flight, so close() can stop it. @type {import('node:http').ServerResponse|null} */
   let chatRes = null;
 
-  /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
-  async function chat(req, res) {
+  /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res @param {RequestCtx} [ctx] */
+  async function chat(req, res, ctx = {}) {
     /** @param {number} status @param {string} error @param {boolean} [drop] close the socket (body past the cap) */
     const fail = (status, error, drop = false) => {
       res.writeHead(status, { 'Content-Type': TYPES['.json'], 'Cache-Control': 'no-store', ...(drop ? { Connection: 'close' } : {}) });
@@ -389,7 +446,18 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         if (err instanceof ChatError) return fail(err.status, err.message);
         return fail(500, 'Could not save the image.'); // e.g. a disk error; never a 400
       }
-      await relayAsk({ engine, req, res, input, ...chatTimeouts });
+      const tools = ctx.tools ? await ctx.tools() : null;
+      const askOpts = { ...(ctx.actor ? { actor: ctx.actor } : {}), ...(ctx.principal ? { principal: ctx.principal } : {}), ...(tools ? { tools } : {}) };
+      // The answer stops if the asker may no longer read the map (a raise, sources rewritten, a revoke):
+      // checked before every chunk is sent, and on every event of the map (so the model stops too).
+      const stillOk = ctx.valid;
+      const cut = (/** @type {any} */ v) => { if (v === false) res.destroy(); else if (v !== true) Promise.resolve(v).then((ok) => { if (ok !== true) res.destroy(); }, () => res.destroy()); };
+      const off = stillOk ? store.subscribe(id, (/** @type {any} */ ev) => cut(stillOk(ev))) : null;
+      try {
+        await relayAsk({ engine, req, res, input, askOpts, ...(ctx.sync ? { sync: ctx.sync } : {}), ...(stillOk ? { allow: stillOk } : {}), ...chatTimeouts });
+      } finally {
+        off?.();
+      }
     } finally {
       chatBusy = false;
       chatRes = null;
@@ -402,14 +470,14 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
    * answered, false when the path is not one of these routes (the caller answers 404).
    * @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res
    * @param {string} rawPath @param {URLSearchParams} query
-   * @param {{ valid?: () => boolean }} [o] valid: whether the caller may still read an event stream
+   * @param {RequestCtx} [o] valid: whether the caller may still read an event stream; the rest: see RequestCtx
    */
   async function handleApi(req, res, rawPath, query, o = {}) {
     const method = req.method || 'GET';
     if (rawPath === '/api/action' || rawPath === '/api/chat') {
       if (method !== 'POST') { plain(res, 405, 'method not allowed'); return true; }
       if (!originOk(req.headers.origin)) { plain(res, 403, 'forbidden origin'); return true; }
-      await (rawPath === '/api/chat' ? chat(req, res) : action(req, res));
+      await (rawPath === '/api/chat' ? chat(req, res, o) : action(req, res, o));
       return true;
     }
     if (rawPath === '/api/maps' || rawPath === '/api/snapshot' || rawPath === '/api/events' || rawPath.startsWith('/api/attachments/')) {
@@ -417,9 +485,12 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     }
     if (rawPath === '/api/maps') {
       // Every other map, for the Fuse picker: saved maps first, then drafts (newest first in each).
-      const rows = store.list({ drafts: true })
-        .filter((/** @type {any} */ m) => m.id !== id)
-        .map((/** @type {any} */ m) => ({ id: m.id, name: m.name, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft) }));
+      /** @type {any[]} */
+      const rows = [];
+      for (const m of store.list({ drafts: true })) {
+        if (m.id === id || (o.canRead && !await o.canRead(m.id))) continue; // maps this caller may not read are left out
+        rows.push({ id: m.id, name: m.name, nodes: m.nodes, updatedAt: m.updatedAt, draft: Boolean(m.draft) });
+      }
       rows.sort((a, b) => Number(a.draft) - Number(b.draft) || b.updatedAt - a.updatedAt);
       json(res, 200, rows);
       return true;
