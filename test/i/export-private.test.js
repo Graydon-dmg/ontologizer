@@ -124,7 +124,7 @@ test('an exported page carries the refs the embed shows: read back from the html
   assert.ok(refProblems(/** @type {any} */ (nodeDetails(stripped, id)).sources).length > 0);
 });
 
-test('the context pack names a ref by its source, escaped like any title; refs without a web link are left out', () => {
+test('the context pack names a ref by its source, escaped like any title; refs without a web link are listed as plain text', () => {
   const o = foldAll(privateEvents());
   const id = /** @type {string} */ (Object.values(o.nodes).find((n) => (n.sources ?? []).some((/** @type {any} */ s) => s.source))?.id);
   // A title that tries to form a link or a heading must stay inert text.
@@ -135,6 +135,8 @@ test('the context pack names a ref by its source, escaped like any title; refs w
   const sources = pack.slice(pack.indexOf('## Sources'));
   assert.match(sources, /wiki · Choosing glue: https:\/\/wiki\.example\/doc-glue/);
   assert.ok(!sources.includes('javascript:'), 'a script link reached the pack');
-  assert.ok(!sources.includes('No link'), 'a ref without a web link was listed');
+  // A private document often has no web link: it is still named (so agents see where a node came from), as plain text.
+  assert.match(sources, /^- wiki · No link$/m, 'a ref without a web link was not listed as plain text');
+  assert.ok(!/wiki · Bad link: /.test(sources), 'a non-web link reached the pack');
   assert.ok(!/\[click\]\(https:\/\/evil/.test(pack), 'map text formed a link');
 });
