@@ -1,0 +1,602 @@
+[
+ {
+  "id": "pay.refund-payment",
+  "label": "Refund Payment",
+  "text": "Reverse a captured charge back to the customer card."
+ },
+ {
+  "id": "pay.create-charge",
+  "label": "Create Charge",
+  "text": "Charge a card or wallet for a one-off amount."
+ },
+ {
+  "id": "pay.capture-authorization",
+  "label": "Capture Authorization",
+  "text": "Capture funds from a previously authorized payment."
+ },
+ {
+  "id": "pay.invoice-send",
+  "label": "Invoice Send",
+  "text": "Email a hosted invoice to a customer."
+ },
+ {
+  "id": "pay.subscription-plan",
+  "label": "Subscription Plan",
+  "text": "Define a recurring billing plan with a trial period."
+ },
+ {
+  "id": "pay.payout-schedule",
+  "label": "Payout Schedule",
+  "text": "Control when collected funds are paid to a bank account."
+ },
+ {
+  "id": "pay.3d-secure-check",
+  "label": "3D Secure Check",
+  "text": "Run a strong-customer-authentication challenge on a card."
+ },
+ {
+  "id": "pay.dispute-evidence",
+  "label": "Dispute Evidence",
+  "text": "Submit documents to contest a chargeback."
+ },
+ {
+  "id": "pay.tax-calculate",
+  "label": "Tax Calculate",
+  "text": "Compute sales tax for a basket and address."
+ },
+ {
+  "id": "pay.coupon-redeem",
+  "label": "Coupon Redeem",
+  "text": "Apply a promotional discount code to an order."
+ },
+ {
+  "id": "pay.currency-convert",
+  "label": "Currency Convert",
+  "text": "Convert an amount between currencies at a live rate."
+ },
+ {
+  "id": "pay.balance-fetch",
+  "label": "Balance Fetch",
+  "text": "Read the current available and pending balance."
+ },
+ {
+  "id": "pay.card-tokenize",
+  "label": "Card Tokenize",
+  "text": "Swap raw card details for a safe reusable token."
+ },
+ {
+  "id": "pay.wallet-top-up",
+  "label": "Wallet Top Up",
+  "text": "Add stored value to a customer wallet."
+ },
+ {
+  "id": "pay.fraud-score",
+  "label": "Fraud Score",
+  "text": "Rate a transaction by its likelihood of fraud."
+ },
+ {
+  "id": "crm:lead-score",
+  "label": "Lead Score",
+  "text": "Rank new leads by how likely they are to buy."
+ },
+ {
+  "id": "crm:contact-merge",
+  "label": "Contact Merge",
+  "text": "Combine duplicate contact records into one."
+ },
+ {
+  "id": "crm:deal-pipeline",
+  "label": "Deal Pipeline",
+  "text": "Move deals through the stages of a sales funnel."
+ },
+ {
+  "id": "crm:account-notes",
+  "label": "Account Notes",
+  "text": "Attach free-text notes to a company account."
+ },
+ {
+  "id": "crm:task-reminder",
+  "label": "Task Reminder",
+  "text": "Schedule a follow-up reminder for a sales rep."
+ },
+ {
+  "id": "crm:email-sequence",
+  "label": "Email Sequence",
+  "text": "Send a timed series of outreach emails."
+ },
+ {
+  "id": "crm:opportunity-forecast",
+  "label": "Opportunity Forecast",
+  "text": "Predict revenue from open opportunities."
+ },
+ {
+  "id": "crm:segment-builder",
+  "label": "Segment Builder",
+  "text": "Group contacts by shared attributes."
+ },
+ {
+  "id": "crm:call-log",
+  "label": "Call Log",
+  "text": "Record the outcome of a phone call."
+ },
+ {
+  "id": "crm:quote-generate",
+  "label": "Quote Generate",
+  "text": "Produce a priced quote for a prospect."
+ },
+ {
+  "id": "crm:territory-assign",
+  "label": "Territory Assign",
+  "text": "Route accounts to reps by region."
+ },
+ {
+  "id": "crm:churn-risk",
+  "label": "Churn Risk",
+  "text": "Flag customers likely to cancel."
+ },
+ {
+  "id": "crm:import-contacts",
+  "label": "Import Contacts",
+  "text": "Bulk load contacts from a spreadsheet."
+ },
+ {
+  "id": "crm:activity-timeline",
+  "label": "Activity Timeline",
+  "text": "Show every touchpoint with a contact in order."
+ },
+ {
+  "id": "crm:win-loss-report",
+  "label": "Win Loss Report",
+  "text": "Summarise why deals were won or lost."
+ },
+ {
+  "id": "msg-sms-send",
+  "label": "SMS Send",
+  "text": "Deliver a text message to a mobile number."
+ },
+ {
+  "id": "msg-email-deliver",
+  "label": "Email Deliver",
+  "text": "Send a transactional email with tracking."
+ },
+ {
+  "id": "msg-push-notify",
+  "label": "Push Notify",
+  "text": "Send a push notification to a phone app."
+ },
+ {
+  "id": "msg-chat-webhook",
+  "label": "Chat Webhook",
+  "text": "Post a message into a team chat channel."
+ },
+ {
+  "id": "msg-voice-call",
+  "label": "Voice Call",
+  "text": "Place an automated phone call with text-to-speech."
+ },
+ {
+  "id": "msg-whatsapp-template",
+  "label": "WhatsApp Template",
+  "text": "Send an approved template over WhatsApp."
+ },
+ {
+  "id": "msg-inbound-parse",
+  "label": "Inbound Parse",
+  "text": "Turn incoming emails into structured events."
+ },
+ {
+  "id": "msg-bounce-handler",
+  "label": "Bounce Handler",
+  "text": "Track and suppress undeliverable addresses."
+ },
+ {
+  "id": "msg-unsubscribe-link",
+  "label": "Unsubscribe Link",
+  "text": "Manage opt-outs from a mailing list."
+ },
+ {
+  "id": "msg-template-render",
+  "label": "Template Render",
+  "text": "Fill a message template with variables."
+ },
+ {
+  "id": "msg-delivery-receipt",
+  "label": "Delivery Receipt",
+  "text": "Report whether a message arrived."
+ },
+ {
+  "id": "msg-short-link",
+  "label": "Short Link",
+  "text": "Create a trackable short URL for a message."
+ },
+ {
+  "id": "msg-number-lookup",
+  "label": "Number Lookup",
+  "text": "Check whether a phone number is valid and its carrier."
+ },
+ {
+  "id": "msg-quiet-hours",
+  "label": "Quiet Hours",
+  "text": "Hold messages until a recipient waking hours."
+ },
+ {
+  "id": "msg-broadcast-list",
+  "label": "Broadcast List",
+  "text": "Send one message to a whole audience."
+ },
+ {
+  "id": "auth.login-password",
+  "label": "Login Password",
+  "text": "Sign a user in with email and password."
+ },
+ {
+  "id": "auth.oauth-connect",
+  "label": "OAuth Connect",
+  "text": "Link a third-party account using OAuth."
+ },
+ {
+  "id": "auth.api-key-rotate",
+  "label": "API Key Rotate",
+  "text": "Replace an API key without downtime."
+ },
+ {
+  "id": "auth.two-factor-enroll",
+  "label": "Two-Factor Enroll",
+  "text": "Register an authenticator app for a user."
+ },
+ {
+  "id": "auth.session-revoke",
+  "label": "Session Revoke",
+  "text": "End a signed-in session remotely."
+ },
+ {
+  "id": "auth.role-assign",
+  "label": "Role Assign",
+  "text": "Grant a user a named permission role."
+ },
+ {
+  "id": "auth.magic-link",
+  "label": "Magic Link",
+  "text": "Sign in through a one-time emailed link."
+ },
+ {
+  "id": "auth.passkey-register",
+  "label": "Passkey Register",
+  "text": "Enrol a device-bound passkey credential."
+ },
+ {
+  "id": "auth.sso-saml",
+  "label": "SSO SAML",
+  "text": "Federate sign-in with a company identity provider."
+ },
+ {
+  "id": "auth.password-reset",
+  "label": "Password Reset",
+  "text": "Let a user set a new password by email."
+ },
+ {
+  "id": "auth.audit-trail",
+  "label": "Audit Trail",
+  "text": "List who did what and when."
+ },
+ {
+  "id": "auth.ip-allowlist",
+  "label": "IP Allowlist",
+  "text": "Restrict access to known network addresses."
+ },
+ {
+  "id": "auth.token-refresh",
+  "label": "Token Refresh",
+  "text": "Exchange a refresh token for a new access token."
+ },
+ {
+  "id": "auth.scope-check",
+  "label": "Scope Check",
+  "text": "Verify a token carries the required scope."
+ },
+ {
+  "id": "auth.account-lock",
+  "label": "Account Lock",
+  "text": "Block sign-in after repeated failures."
+ },
+ {
+  "id": "db_query-rows",
+  "label": "Query Rows",
+  "text": "Read rows that match a filter."
+ },
+ {
+  "id": "db_insert-record",
+  "label": "Insert Record",
+  "text": "Add a new row to a table."
+ },
+ {
+  "id": "db_schema-migrate",
+  "label": "Schema Migrate",
+  "text": "Apply a versioned change to the table layout."
+ },
+ {
+  "id": "db_index-create",
+  "label": "Index Create",
+  "text": "Build an index to speed up lookups."
+ },
+ {
+  "id": "db_backup-snapshot",
+  "label": "Backup Snapshot",
+  "text": "Take a point-in-time copy of the database."
+ },
+ {
+  "id": "db_replica-promote",
+  "label": "Replica Promote",
+  "text": "Turn a read replica into the primary."
+ },
+ {
+  "id": "db_connection-pool",
+  "label": "Connection Pool",
+  "text": "Reuse database connections across requests."
+ },
+ {
+  "id": "db_transaction-begin",
+  "label": "Transaction Begin",
+  "text": "Group several writes so they succeed together."
+ },
+ {
+  "id": "db_full-text-search",
+  "label": "Full Text Search",
+  "text": "Search text columns with ranking."
+ },
+ {
+  "id": "db_row-level-policy",
+  "label": "Row Level Policy",
+  "text": "Limit which rows each user may see."
+ },
+ {
+  "id": "db_bulk-upsert",
+  "label": "Bulk Upsert",
+  "text": "Insert or update many rows at once."
+ },
+ {
+  "id": "db_vector-search",
+  "label": "Vector Search",
+  "text": "Find rows nearest to an embedding."
+ },
+ {
+  "id": "db_change-stream",
+  "label": "Change Stream",
+  "text": "Subscribe to inserts and updates as they happen."
+ },
+ {
+  "id": "db_query-explain",
+  "label": "Query Explain",
+  "text": "Show how the database will run a query."
+ },
+ {
+  "id": "db_data-export",
+  "label": "Data Export",
+  "text": "Dump a table to CSV or JSON."
+ },
+ {
+  "id": "ai.text-completion",
+  "label": "Text Completion",
+  "text": "Generate text continuing a prompt."
+ },
+ {
+  "id": "ai.embed-text",
+  "label": "Embed Text",
+  "text": "Turn text into a numeric vector."
+ },
+ {
+  "id": "ai.image-caption",
+  "label": "Image Caption",
+  "text": "Describe an image in one sentence."
+ },
+ {
+  "id": "ai.speech-transcribe",
+  "label": "Speech Transcribe",
+  "text": "Convert audio into written text."
+ },
+ {
+  "id": "ai.moderation-check",
+  "label": "Moderation Check",
+  "text": "Flag harmful or unsafe content."
+ },
+ {
+  "id": "ai.summarize-document",
+  "label": "Summarize Document",
+  "text": "Condense a long document to key points."
+ },
+ {
+  "id": "ai.translate-text",
+  "label": "Translate Text",
+  "text": "Convert text between languages."
+ },
+ {
+  "id": "ai.entity-extract",
+  "label": "Entity Extract",
+  "text": "Pull names, dates and places out of text."
+ },
+ {
+  "id": "ai.sentiment-classify",
+  "label": "Sentiment Classify",
+  "text": "Label text as positive, negative or neutral."
+ },
+ {
+  "id": "ai.fine-tune-job",
+  "label": "Fine-Tune Job",
+  "text": "Train a model further on your own examples."
+ },
+ {
+  "id": "ai.tool-calling",
+  "label": "Tool Calling",
+  "text": "Let a model request structured function calls."
+ },
+ {
+  "id": "ai.prompt-cache",
+  "label": "Prompt Cache",
+  "text": "Reuse the shared start of repeated prompts."
+ },
+ {
+  "id": "ai.batch-inference",
+  "label": "Batch Inference",
+  "text": "Run many model requests at lower cost."
+ },
+ {
+  "id": "ai.rerank-results",
+  "label": "Rerank Results",
+  "text": "Reorder search hits by relevance."
+ },
+ {
+  "id": "ai.text-to-speech",
+  "label": "Text to Speech",
+  "text": "Read text aloud in a chosen voice."
+ },
+ {
+  "id": "ops-deploy-release",
+  "label": "Deploy Release",
+  "text": "Roll a new build out to servers."
+ },
+ {
+  "id": "ops-log-tail",
+  "label": "Log Tail",
+  "text": "Stream live application logs."
+ },
+ {
+  "id": "ops-metric-alert",
+  "label": "Metric Alert",
+  "text": "Notify when a metric crosses a threshold."
+ },
+ {
+  "id": "ops-uptime-probe",
+  "label": "Uptime Probe",
+  "text": "Check a URL from several regions."
+ },
+ {
+  "id": "ops-rollback-version",
+  "label": "Rollback Version",
+  "text": "Return to the previous working release."
+ },
+ {
+  "id": "ops-secret-store",
+  "label": "Secret Store",
+  "text": "Keep credentials encrypted and versioned."
+ },
+ {
+  "id": "ops-cron-schedule",
+  "label": "Cron Schedule",
+  "text": "Run a job on a repeating timetable."
+ },
+ {
+  "id": "ops-feature-flag",
+  "label": "Feature Flag",
+  "text": "Switch a feature on for chosen users."
+ },
+ {
+  "id": "ops-error-tracker",
+  "label": "Error Tracker",
+  "text": "Group crashes and show the stack trace."
+ },
+ {
+  "id": "ops-trace-span",
+  "label": "Trace Span",
+  "text": "Follow one request across services."
+ },
+ {
+  "id": "ops-autoscale-rule",
+  "label": "Autoscale Rule",
+  "text": "Add servers when load climbs."
+ },
+ {
+  "id": "ops-status-page",
+  "label": "Status Page",
+  "text": "Publish incident updates to customers."
+ },
+ {
+  "id": "ops-container-build",
+  "label": "Container Build",
+  "text": "Package code into a runnable image."
+ },
+ {
+  "id": "ops-cdn-purge",
+  "label": "CDN Purge",
+  "text": "Clear cached files at the edge."
+ },
+ {
+  "id": "ops-dns-record",
+  "label": "DNS Record",
+  "text": "Point a domain at a server."
+ },
+ {
+  "id": "file~upload-file",
+  "label": "Upload File",
+  "text": "Store a file and return its address."
+ },
+ {
+  "id": "file~image-resize",
+  "label": "Image Resize",
+  "text": "Make a smaller copy of a picture."
+ },
+ {
+  "id": "file~pdf-generate",
+  "label": "PDF Generate",
+  "text": "Render HTML into a PDF document."
+ },
+ {
+  "id": "file~zip-archive",
+  "label": "Zip Archive",
+  "text": "Bundle several files into one archive."
+ },
+ {
+  "id": "file~signed-url",
+  "label": "Signed URL",
+  "text": "Create a temporary link to a private file."
+ },
+ {
+  "id": "file~virus-scan",
+  "label": "Virus Scan",
+  "text": "Check an upload for malware."
+ },
+ {
+  "id": "file~video-transcode",
+  "label": "Video Transcode",
+  "text": "Convert a video to a web-friendly format."
+ },
+ {
+  "id": "file~ocr-extract",
+  "label": "OCR Extract",
+  "text": "Read text from a scanned page."
+ },
+ {
+  "id": "file~thumbnail-make",
+  "label": "Thumbnail Make",
+  "text": "Produce a small preview image."
+ },
+ {
+  "id": "file~file-metadata",
+  "label": "File Metadata",
+  "text": "Read size, type and dates of a file."
+ },
+ {
+  "id": "file~folder-list",
+  "label": "Folder List",
+  "text": "List the files inside a folder."
+ },
+ {
+  "id": "file~version-history",
+  "label": "Version History",
+  "text": "Keep earlier copies of a changed file."
+ },
+ {
+  "id": "file~share-link",
+  "label": "Share Link",
+  "text": "Give someone access to a file."
+ },
+ {
+  "id": "file~watermark-add",
+  "label": "Watermark Add",
+  "text": "Stamp a logo over an image."
+ },
+ {
+  "id": "file~chunked-upload",
+  "label": "Chunked Upload",
+  "text": "Send a large file in resumable pieces."
+ }
+]
