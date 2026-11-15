@@ -70,9 +70,10 @@ test('one call appends exactly one node, and answers the folded node', async () 
 test('under the root: a category with the next index and family 0, and a valid fixture', async () => {
   const s = setup();
   const o = s.store.read(s.id);
+  const before = o.categories.length; // read before adding: store.read() is live (folds in place since epic E)
   const r = /** @type {any} */ (addNode(s.store, s.id, { parentId: o.root, label: 'Restaking' }, { emit: s.emit }));
   assert.deepEqual(oneNodeProblems(r, s.written, true), []);
-  assert.deepEqual(s.written[0].category, { id: r.node.id, label: 'Restaking', index: o.categories.length, family: 0 });
+  assert.deepEqual(s.written[0].category, { id: r.node.id, label: 'Restaking', index: before, family: 0 });
   assert.equal(r.node.category, r.node.id);
   const all = [...fixtureEvents('plastic-modeling'), ...s.written];
   assert.deepEqual(validate(all), []);
