@@ -23,8 +23,12 @@ const FLAGS = {
   delete: ['--yes'],
   trash: ['--json'],
   restore: ['--as'],
+  organize: ['--name', '--depth', '--human', '--home'],
+  hydrate: ['--all', '--nodes', '--model', '--redo', '--home'],
+  'add-node': ['--parent', '--label', '--summary', '--home'],
 };
-const NAME_COMMANDS = new Set(['load', 'explain', 'research', 'rosetta', 'fuse', 'export', 'delete']);
+const NAME_COMMANDS = new Set(['hydrate', 'add-node', 'load', 'explain', 'research', 'rosetta', 'fuse', 'export', 'delete']);
+// `organize`, `hydrate` and `add-node` are likewise left out of COMMANDS (flags only; the last two complete a map name).
 // `export` completes its map name, its flags and the --format values, but is left out of COMMANDS:
 // the top-level list is pinned by test/b/complete.test.js. So are `delete` (map names, --yes),
 // `trash` (--json) and `restore` (--as), for the same reason.
