@@ -12,6 +12,8 @@ import { fuse } from './fuse.js';
 import { rosetta } from './rosetta.js';
 import { ask } from './chat.js';
 import { createRun } from './run.js';
+import { organize } from './organize.js';
+import { hydrateJob } from './hydrate.js';
 
 export function defaultModels() {
   return {
@@ -20,7 +22,7 @@ export function defaultModels() {
   };
 }
 
-const JOB_KINDS = new Set(['research', 'explain', 'sources']);
+const JOB_KINDS = new Set(['research', 'explain', 'sources', 'hydrate']);
 
 /**
  * Per-run options (service mode; the CLI passes none and writes exactly what it always did):
@@ -33,7 +35,7 @@ const JOB_KINDS = new Set(['research', 'explain', 'sources']);
  * - picked (build only): every source picked in New map; the build's prompts say they are the
  *   reader's chosen references, to be searched for each category.
  * @typedef {{ actor?: any, principal?: any, tools?: import('./run.js').ToolSet|null, privateSources?: string[], picked?: string[] }} RunOpts
- * @typedef {'check'|'build'|'research'|'explain'|'sources'|'ask'|'fuse'|'rosetta'} Purpose
+ * @typedef {'check'|'build'|'research'|'explain'|'sources'|'ask'|'fuse'|'rosetta'|'organize'|'hydrate'} Purpose
  */
 
 /**
@@ -104,14 +106,22 @@ export function createEngine({ store, id, client = null, models = defaultModels(
     /** @param {any} brief @param {{ depth?: number } & RunOpts} [opts] */
     build: (brief, { depth = 2, ...o } = {}) => build(runCtx('build', o), brief, { depth }),
 
+    /** Epic A's organise run on this map. @param {any} input @param {RunOpts} [o] @returns {Promise<any>} */
+    organize: (input, o = {}) => organize(runCtx('organize', o), input),
+
     /**
      * @param {{ kind: 'research', nodeId: string, mode: 'context'|'general' }
-     *        | { kind: 'explain', nodeId: string } | { kind: 'sources', nodeId: string }} job
+     *        | { kind: 'explain', nodeId: string } | { kind: 'sources', nodeId: string }
+     *        | { kind: 'hydrate', nodeIds?: string[], [k: string]: any }} job   hydrate needs no nodeId
      * @param {{ priority?: number } & RunOpts} [opts]  the sources job never gets tools
      * @returns {string} jobId
      */
     enqueue(job, { priority = 0, ...o } = {}) {
       if (!job || !JOB_KINDS.has(job.kind)) throw new Error(`enqueue: unknown job kind ${JSON.stringify(job?.kind)}`);
+      if (job.kind === 'hydrate') {
+        const hctx = runCtx('hydrate', o);
+        return queue.add(job, () => hydrateJob(hctx, job), { priority, actor: hctx.actor }).jobId;
+      }
       if (typeof job.nodeId !== 'string' || !job.nodeId) throw new Error('enqueue: nodeId is required');
       const ctx = runCtx(job.kind, job.kind === 'sources' ? { ...o, tools: null } : o);
       const work = job.kind === 'research'

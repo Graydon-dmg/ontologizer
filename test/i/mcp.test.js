@@ -13,7 +13,7 @@ import { boot, req, seed } from './helpers-service.js';
 
 process.env.ONTOLOGIZER_STUB_SPEED = '200'; // the stub engine builds fast
 const TOOLS = ['check_context', 'build_map', 'wait_for_map', 'list_maps', 'get_outline', 'search_map', 'get_node', 'research',
-  'explain', 'sources', 'ask_map', 'fuse', 'rosetta', 'save_map', 'get_context', 'export_map'];
+  'explain', 'sources', 'ask_map', 'fuse', 'rosetta', 'save_map', 'get_context', 'export_map', 'organize_map', 'hydrate', 'add_node'];
 
 /** @param {string} origin @param {string} [token] */
 async function connect(origin, token) {
@@ -43,13 +43,13 @@ export function toolProblems(tools, ops = OPS) {
   return p;
 }
 
-test('tools/list is the 16 contract tools, each with an op, the cost line only on model calls', async () => {
+test('tools/list is the 19 contract tools, each with an op, the cost line only on model calls', async () => {
   const { srv, origin } = await boot();
   const c = await connect(origin);
   try {
     const { tools } = await c.listTools();
     assert.deepEqual(toolProblems(tools), []);
-    assert.equal(MCP_OPS.length, 16);
+    assert.equal(MCP_OPS.length, 19);
     assert.deepEqual(toolProblems(toolList()), []);
     // planted: an extra tool with no op
     assert.ok(toolProblems([...tools, { name: 'drop_everything', description: 'x' }]).some((x) => /drop_everything has no op/.test(x)));
