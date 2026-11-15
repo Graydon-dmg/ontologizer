@@ -141,3 +141,65 @@ test('CLI: the stub path needs no key: organize sample-120, then hydrate --all â
   assert.ok(nodes.every((/** @type {any} */ x) => x.hydration?.model === 'stub'));
   assert.match(h.stdout, new RegExp(`^Hydrated ${nodes.length} of ${nodes.length} nodes$`, 'm'));
 });
+
+/** A model server that holds every request open until closed; `seen` resolves on the first request. */
+async function hangingModel() {
+  const http = await import('node:http');
+  /** @type {() => void} */ let saw = () => {};
+  const seen = new Promise((r) => { saw = () => r(undefined); });
+  const srv = http.createServer((req) => { req.resume(); saw(); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', () => r(undefined)));
+  const close = () => { srv.closeAllConnections(); srv.close(); };
+  return { url: `http://127.0.0.1:${/** @type {any} */ (srv.address()).port}`, seen, close };
+}
+
+/** Runs hydrate on the real engine against a hanging model; returns the run, the SIGINT handler, the home. @param {Record<string, string>} [extraEnv] */
+async function hangingRun(extraEnv = {}) {
+  const model = await hangingModel();
+  const home = tempHome();
+  const store = openStore(home);
+  store.importEvents(P, fixtureEvents(P));
+  store.flush?.();
+  const cap = () => ({ out: '', write(/** @type {string} */ x) { this.out += x; return true; } });
+  const stdout = cap(); const stderr = cap();
+  /** @type {(() => void)[]} */ const handlers = [];
+  const done = main(['hydrate', P, '--nodes', `${P}/tools,${P}/kits,${P}/tools/adhesives`], { home, stdout, stderr, interactive: false,
+    keyring: { get: () => null, set() {}, delete: () => false }, openBrowser: async () => {},
+    onSignal: (_sig, fn) => { handlers.push(fn); return () => { handlers.splice(handlers.indexOf(fn), 1); }; },
+    env: { ...process.env, ONTOLOGIZER_HOME: home, ONTOLOGIZER_ENGINE: 'real', ANTHROPIC_API_KEY: 'sk-ant-test-0000', ANTHROPIC_BASE_URL: model.url, ...extraEnv } });
+  return { done, handlers, home, model, stdout, stderr };
+}
+/** @param {string} home */
+const hydrateJobs = (home) => Object.values(openStore(home).read(P).jobs ?? {}).filter((/** @type {any} */ j) => j.kind === 'hydrate');
+
+test('CLI: Ctrl-C marks every unfinished batch failed ("interrupted"), exits 130, and a later run hydrates them', async () => {
+  const r = await hangingRun();
+  try {
+    await r.model.seen;                                   // a batch is in flight
+    assert.equal(r.handlers.length, 1);
+    // planted fault: before the handler runs, the log shows the batches live: left so, they'd block every later run
+    assert.ok(hydrateJobs(r.home).every((/** @type {any} */ j) => j.state === 'queued' || j.state === 'running'));
+    r.handlers[0]();
+    const code = await r.done;
+    assert.equal(code, 130, r.stdout.out + r.stderr.out);
+    assert.match(r.stderr.out, /Interrupted/);
+    const jobs = hydrateJobs(r.home);
+    assert.equal(jobs.length, 2);                         // tools + kits (depth 1) and adhesives (depth 2)
+    assert.ok(jobs.every((/** @type {any} */ j) => j.state === 'failed' && j.error === 'interrupted'), JSON.stringify(jobs));
+    assert.equal(r.handlers.length, 0, 'the SIGINT handler is removed');
+  } finally { r.model.close(); }
+  // the next run (stub engine, no key) selects them again instead of "already running"
+  const again = await cli(r.home)(['hydrate', P, '--nodes', `${P}/tools,${P}/kits,${P}/tools/adhesives`]);
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /^Hydrated 3 of 3 nodes$/m);
+});
+
+test('CLI: the timeout marks the unfinished batches failed too', async () => {
+  const r = await hangingRun({ ONTOLOGIZER_HYDRATE_TIMEOUT_MS: '300' });
+  try {
+    const code = await r.done;
+    assert.equal(code, 1);
+    assert.match(r.stderr.out, /Timed out/);
+    assert.ok(hydrateJobs(r.home).every((/** @type {any} */ j) => j.state === 'failed' && j.error === 'interrupted'));
+  } finally { r.model.close(); }
+});

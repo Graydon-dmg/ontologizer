@@ -20,6 +20,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** @param {{ store: any, id: string, client?: any }} opts */
 export function createEngine({ store, id, client: _client = null }) {
   let jobCounter = 0;
+  /** @type {Set<string>} jobs queued and not yet done */ const live = new Set();
   // The stub never calls a model: fuse/rosetta (Epic G's real code) get a client that refuses.
   const refuse = () => { throw new Error('stub engine: no model calls'); };
   const offline = { messages: { stream: refuse, create: refuse } };
@@ -65,14 +66,18 @@ export function createEngine({ store, id, client: _client = null }) {
       const as = (/** @type {any} */ e) => (o?.actor ? { ...e, actor: o.actor } : e);
       const emit = (/** @type {string} */ t, /** @type {any} */ fields) => store.append(id, as({ t, at: store.now(id), ...fields }));
       store.append(id, as({ t: 'job.queued', at: store.now(id), job: info }));
+      live.add(jobId);
       setTimeout(async () => {
         try {
           if (job.kind === 'hydrate') await stubHydrate({ store, id, job, emit });
           store.append(id, as({ t: 'job.done', at: store.now(id), job: info }));
-        } catch { /* store closed */ }
+        } catch { /* store closed */ } finally { live.delete(jobId); }
       }, 10);
       return jobId;
     },
+
+    /** The ids of jobs queued and not yet done (as the real engine). @returns {Set<string>} */
+    activeJobIds: () => new Set(live),
 
     /** Epic A's offline organise. @param {any} input @param {{ actor?: any }} [o] @returns {Promise<any>} */
     async organize(input, o = {}) {

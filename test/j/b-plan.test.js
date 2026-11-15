@@ -138,3 +138,24 @@ test('plastic-modeling fixture: all nodes plan into batches that cover each node
   assert.deepEqual(b.map((x) => depth(x.parentId)), b.map((x) => depth(x.parentId)).sort((p, q) => p - q));
   assert.deepEqual(estimate(b), { calls: b.length, tokens: selected.length * 700 });
 });
+
+test('a stale job (in the log as queued or running, unknown to the live engine) blocks nothing, with or without redo', () => {
+  const o = build([['a', 'A', 'r'], ['b', 'B', 'r']], [{ t: 'node.hydrated', at: 99, nodeId: 'b', hydration: H }]);
+  for (const state of ['queued', 'running']) {
+    const stale = withJobs(o, { j1: { id: 'j1', kind: 'hydrate', nodeIds: ['a', 'b'], state } });
+    // planted fault (the reviewer's repro): trusting the log alone selects nothing, even with redo
+    assert.deepEqual(selectHydrate(stale, { all: true, redo: true }).selected, []);
+    assert.deepEqual(selectHydrate(stale, { all: true, redo: true, live: new Set() }), { selected: ['a', 'b'], skipped: [] });
+    assert.deepEqual(selectHydrate(stale, { all: true, live: new Set(['other-job']) }),
+      { selected: ['a'], skipped: [{ nodeId: 'b', reason: 'already hydrated' }] });
+  }
+});
+
+test('a job the live engine still runs keeps skipping its nodes', () => {
+  const o = build([['a', 'A', 'r'], ['b', 'B', 'r']]);
+  const running = withJobs(o, { j1: { id: 'j1', kind: 'hydrate', nodeIds: ['a'], state: 'running' } });
+  assert.deepEqual(selectHydrate(running, { all: true, redo: true, live: new Set(['j1']) }),
+    { selected: ['b'], skipped: [{ nodeId: 'a', reason: 'already running in j1' }] });
+  // planted fault: ignoring every logged job (an empty live set) would hydrate a twice
+  assert.deepEqual(selectHydrate(running, { all: true, redo: true, live: new Set() }).selected, ['a', 'b']);
+});
