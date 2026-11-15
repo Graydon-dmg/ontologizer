@@ -129,7 +129,7 @@ function step(o, e, own) {
       return assign(o, { nodes: put(o.nodes, n.id, copyNode(n), own) }, own);
     }
     case 'node.updated': {
-      const prev = o.nodes[e.id];
+      const prev = entry(o.nodes, e.id);
       if (!prev) return o;
       return assign(o, { nodes: put(o.nodes, e.id, { ...prev, ...(e.patch || {}) }, own) }, own);
     }
@@ -153,8 +153,8 @@ function step(o, e, own) {
       return assign(o, { lenses: put(o.lenses, l.id, { ...l, analogs: { ...(l.analogs || {}) } }, own) }, own);
     }
     case 'lens.analog': {
-      const l = o.lenses[e.lensId];
-      if (!l) return o;
+      const l = entry(o.lenses, e.lensId);
+      if (!l || !plain(l.analogs)) return o;
       /** @type {{ label: string, breaks?: string }} */
       const a = { label: e.label };
       if (e.breaks !== undefined) a.breaks = e.breaks;
@@ -167,9 +167,10 @@ function step(o, e, own) {
     case 'job.failed': {
       const j = e.job;
       if (!j || !j.id) return o;
-      const prev = o.jobs[j.id] || {};
+      const prev = entry(o.jobs, j.id) || {};
       /** @type {any} */
       const job = { ...prev, ...j, state: JOB_STATE[e.t] };
+      if (Array.isArray(j.nodeIds)) job.nodeIds = [...j.nodeIds]; // the record never shares the event's array
       if (e.t !== 'job.failed' && j.error === undefined) delete job.error;
       return assign(o, { jobs: put(o.jobs, j.id, job, own) }, own);
     }
@@ -200,6 +201,15 @@ function step(o, e, own) {
       return o; // unknown event types are ignored
   }
 }
+
+/**
+ * map[k] only when it is map's own key: an event-supplied key such as `constructor`, `toString` or
+ * `__proto__` must never reach a built-in (foldInto would write into it, fold would fold junk).
+ * @param {Record<string, any>} map @param {unknown} k
+ */
+const entry = (map, k) => ((typeof k === 'string' || typeof k === 'number') && Object.hasOwn(map, k) ? map[k] : undefined);
+/** @param {unknown} x */
+const plain = (x) => Boolean(x) && typeof x === 'object' && Object.getPrototypeOf(x) === Object.prototype;
 
 // The write helpers step uses: in place when own, else a copy of the changed branch. Object.assign
 // and spread both keep an existing key where it is and append a new one.
