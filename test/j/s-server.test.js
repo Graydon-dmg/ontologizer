@@ -44,7 +44,7 @@ test('hydrate and add_node via …/actions need the build scope: a read token ge
     for (const body of [{ type: 'hydrate', all: true }, { type: 'add_node', parentId: 'plastic-modeling', label: 'X' }]) {
       assert.equal((await act('r', body)).status, 403, body.type);
       const b = await act('b', body);
-      assert.equal(b.status, 501, body.type);
+      assert.notEqual(b.status, 403, body.type); // a build token is not refused (the feature's own answer varies as epics land)
     }
     assert.equal((await act('b', { type: 'hydrate' })).json().error, 'give nodeIds or all');
     assert.equal((await act('b', { type: 'add_node', label: 'X' })).json().error, 'give parentId and label');
