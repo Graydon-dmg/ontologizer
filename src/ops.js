@@ -44,6 +44,8 @@ const JOBS = { type: 'object', properties: { ok: { type: 'boolean' }, jobId: { t
   jobs: { type: 'array', items: { type: 'object', properties: { nodeId: { type: 'string' }, jobId: { type: 'string' },
     skipped: { type: 'string', description: 'Why no job was started: "already explained"' },
     refused: { type: 'string', description: 'The daily limit was reached before this node: the limit\'s message' } }, required: ['nodeId'] } } }, required: ['ok'] };
+const include = { type: 'array', items: { enum: ['hydration'] }, uniqueItems: true,
+  description: 'Extra node fields to include. ["hydration"] adds each hydrated node\'s hydration: { job, examples, not_for, not_for_ids, model, at }. For export_map, format json only. E.g. ["hydration"]' };
 const ONE_OR_MANY = 'Give nodeId for one node or nodeIds for several (at most 8), not both.';
 /** @param {Record<string, any>} properties @param {string[]} [required] */
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -142,7 +144,7 @@ export const OPS = [
     scope: 'build', callsModel: true, cli: 'new', ui: { page: HOME, id: 'new-map' } },
   { name: 'get_snapshot', summary: 'The whole map as JSON (the folded event log)',
     http: { method: 'GET', path: `${MAP}/snapshot` }, mcp: null,
-    input: mapIn(), output: ANY, scope: 'read', callsModel: false, cli: 'export', ui: { page: PAGE, id: 'export-json' } },
+    input: mapIn({ include }), output: ANY, scope: 'read', callsModel: false, cli: 'export', ui: { page: PAGE, id: 'export-json' } },
   { name: 'map_events', summary: 'The map\'s events as a server-sent event stream, from event n',
     http: { method: 'GET', path: `${MAP}/events`, type: 'text/event-stream' }, mcp: null,
     input: mapIn({ from: { type: 'integer', minimum: 0, description: 'The first event to send (default 0)' } }), output: { type: 'string' },
@@ -249,9 +251,52 @@ export const OPS = [
   { name: 'get_node', summary: 'One node in full: summary, article, sources, children, neighbours',
     http: { method: 'GET', path: `${MAP}/nodes/{nodeId}` },
     mcp: { name: 'get_node', title: 'Read one node',
-      description: 'Read everything a map says about one node: its path, summary, article (or "Not explained yet", with how much of the map is one line), sources (once each), children, its own cross-links (neighbours) and, for a node with children, the cross-links that leave its branch (branchLinks: a category\'s links usually sit on the nodes under it). Use when you need the detail behind one line of the outline, or to see what research or explain added. Don\'t use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. Next: explain or research on the node if it is thin.',
+      description: 'Read everything a map says about one node: its path, summary, article (or "Not explained yet", with how much of the map is one line), sources (once each), children, its own cross-links (neighbours) and, for a node with children, the cross-links that leave its branch (branchLinks: a category\'s links usually sit on the nodes under it). Use when you need the detail behind one line of the outline, or to see what research or explain added. Don\'t use when you do not know the node id (search_map or get_outline first). Returns the node as an object; an unknown id is an error that suggests close ids. Free: no model call. With include: ["hydration"] each node also carries its hydration (job, examples, not_for), when it has any. Next: explain or research on the node if it is thin.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-    input: mapIn({ nodeId }, ['nodeId']), output: ANY, scope: 'read', callsModel: false, cli: 'load', ui: { page: PAGE, id: 'explain' } },
+    input: mapIn({ nodeId, include }, ['nodeId']), output: ANY, scope: 'read', callsModel: false, cli: 'load', ui: { page: PAGE, id: 'explain' } },
+  { name: 'organize_map', summary: 'Organise a supplied list of items into a map; answers at once (202) with its id',
+    http: { method: 'POST', path: '/v1/t/{tenant}/maps/organize' },
+    mcp: { name: 'organize_map', title: 'Organise a list into a map',
+      description: 'Turn a list of items you supply (tools, categories, codes, products) into a map: the model groups them into families and sub-families, and every item becomes exactly one leaf node whose id is your own id. Use when you already have the items and want them organised for an agent to classify against. Don\'t use when you only have a topic description (check_context, then build_map) or the list has more than 10,000 items or 4 MB (split it). Returns at once with { id, viewUrl, eventsUrl }: the map is kept as a draft under id and grows in the background (about a minute per 1,000 items); an item the model could not place sits under an "Unsorted" family, never dropped. Lists bigger than an MCP request (about 2,000 items) go through the HTTP API or the CLI. Next: wait_for_map with the id, then hydrate with all: true. ' + COST_NOTE,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+    input: obj({ tenant,
+      name: str('A display name for the map, 1 to 120 characters. E.g. "Crypto categories"'),
+      items: { type: 'array', minItems: 1, maxItems: 10000,
+        description: 'The items to organise, each { id, label, text? }. id: 1 to 120 characters of letters, digits and . _ : ~ - , not starting with _ and with no /, unique in the list. label: 1 to 80 characters. text: optional, at most 500 characters. E.g. [{ "id": "defi", "label": "DeFi", "text": "Decentralised finance protocols" }]',
+        items: obj({ id: { type: 'string' }, label: { type: 'string' }, text: { type: 'string' } }, ['id', 'label']) },
+      depth: { type: 'integer', minimum: 2, maximum: 4, default: 3, description: 'Levels below the root, leaves included: 2 = families then items; 3 = families, sub-families, items (default); 4 = three family levels. E.g. 2 for a list under 100 items' },
+      mode: { enum: ['agent', 'human'], default: 'agent', description: 'agent (default): up to 10,000 items, and the page opens on the top two levels. human: up to 500 items, all shown' } },
+      ['tenant', 'name', 'items']),
+    output: obj({ id: { type: 'string' }, viewUrl: { type: 'string' }, eventsUrl: { type: 'string' } }, ['id', 'viewUrl']),
+    scope: 'build', callsModel: true, cli: 'organize', ui: { page: HOME, id: 'new-map' } },
+  { name: 'hydrate', summary: 'Hydrate nodes for agents: write job, examples and look-alikes',
+    http: { method: 'POST', path: `${MAP}/actions`, fixed: { type: 'hydrate' } },
+    mcp: { name: 'hydrate', title: 'Hydrate nodes for agents',
+      description: 'Write three agent-facing fields on many nodes: job (what the node is for, one line), examples (three typical requests that belong to it) and not_for (its nearest look-alikes and what separates them, with their ids in not_for_ids). Siblings are done together in batches of up to 40, each batch its own job. Use when agents will classify requests against this map (after organize_map or build_map), or after add_node for the new node. Don\'t use when you want a readable article on a node (explain) or new nodes (research, add_node). Returns at once with { ok, jobs: [{ batch, parentId, nodeIds, jobId }], skipped: [{ nodeId, reason }], estimate: { calls, tokens } }: nodes already hydrated are skipped unless redo is true, and when the batches would pass the daily limit nothing starts (429). Read the fields with get_node or export_map with include: ["hydration"]. Next: wait_for_map (it waits for every batch). ' + COST_NOTE,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+    input: mapIn({
+      nodeIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 300, uniqueItems: true, description: 'The nodes to hydrate, by id; for more than 300 use all. Give nodeIds or all, not both. E.g. ["defi", "_root/finance/lending"]' },
+      all: { type: 'boolean', description: 'Hydrate every node except the root. Give all or nodeIds, not both' },
+      model: { enum: ['sonnet', 'haiku'], default: 'sonnet', description: 'sonnet (default) or haiku (cheaper, weaker on look-alikes)' },
+      redo: { type: 'boolean', default: false, description: 'Hydrate nodes again even if they already have fields' } }),
+    output: obj({ ok: { type: 'boolean' },
+      jobs: { type: 'array', items: obj({ batch: { type: 'integer' }, parentId: { type: 'string' }, nodeIds: { type: 'array', items: { type: 'string' } }, jobId: { type: 'string' } }, ['batch', 'parentId', 'nodeIds', 'jobId']) },
+      skipped: { type: 'array', items: obj({ nodeId: { type: 'string' }, reason: { type: 'string' } }, ['nodeId', 'reason']) },
+      estimate: obj({ calls: { type: 'integer' }, tokens: { type: 'integer' } }, ['calls', 'tokens']) },
+      ['ok', 'jobs', 'skipped', 'estimate']),
+    scope: 'build', callsModel: true, cli: 'hydrate', ui: { page: PAGE, id: 'explain' } },
+  { name: 'add_node', summary: 'Add exactly one named node under a parent',
+    http: { method: 'POST', path: `${MAP}/actions`, fixed: { type: 'add_node' } },
+    mcp: { name: 'add_node', title: 'Add one node',
+      description: 'Add exactly one node, with the label you give, under the parent you name; live views see it appear at once. Use when you know what the node is and where it belongs, such as growing a new narrative under an existing family. Don\'t use when you want the model to suggest children (research) or to organise many items (organize_map). Returns { ok, node } with the new node (its id is made from the parent id and the label); an unknown parent answers 404, a label already used under that parent answers 409, and a map that is still building answers 409; in each of those cases nothing is written. Next: hydrate with nodeIds [node.id] if agents will classify against the new node.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+    input: mapIn({
+      parentId: str('The id of the node to add under, exactly as get_node or get_outline shows it. E.g. "_root/finance"'),
+      label: str('The new node\'s label, 1 to 80 characters. E.g. "Restaking"'),
+      summary: str('A one-line summary, at most 300 characters. E.g. "Reusing staked ETH to secure other networks"') },
+      ['parentId', 'label']),
+    output: obj({ ok: { type: 'boolean' }, node: ANY }, ['ok', 'node']),
+    scope: 'build', callsModel: false, cli: 'add-node', ui: { page: PAGE, id: 'explain' } },
   { name: 'get_context', summary: 'The context pack: the map as markdown sized for an agent\'s context',
     http: { method: 'GET', path: `${MAP}/context`, type: 'text/markdown' },
     mcp: { name: 'get_context', title: 'Bring a map into your context',
@@ -262,11 +307,12 @@ export const OPS = [
   { name: 'export_map', summary: 'The map exported as json, context, or a self-contained html page or embed',
     http: { method: 'GET', path: `${MAP}/export` },
     mcp: { name: 'export_map', title: 'Export a map for a page or a file',
-      description: 'Export a map for people: "embed" is an HTML fragment (an interactive map: pan, zoom, click a node) to paste into a document or web page; "html" is a whole page; both work offline with nothing loaded from the network, keep their styles inside their own element (they do not clash with the page), and are a snapshot that does not update (export again after the map changes). "json" is the full data; "context" is the same pack as get_context. Use when the map must go into a document, a page or a file. Don\'t use when you want to read the map yourself (get_context, get_outline). A private map\'s export says "Private": share it only with people who may read it. Returns the exported text (html and embed are large, about 150 KB). Free: no model call. Next: write it into the user\'s file.',
+      description: 'Export a map for people: "embed" is an HTML fragment (an interactive map: pan, zoom, click a node) to paste into a document or web page; "html" is a whole page; both work offline with nothing loaded from the network, keep their styles inside their own element (they do not clash with the page), and are a snapshot that does not update (export again after the map changes). "json" is the full data; "context" is the same pack as get_context. Use when the map must go into a document, a page or a file. Don\'t use when you want to read the map yourself (get_context, get_outline). A private map\'s export says "Private": share it only with people who may read it. Returns the exported text (html and embed are large, about 150 KB). Free: no model call. With include: ["hydration"] each node also carries its hydration (job, examples, not_for), when it has any. Next: write it into the user\'s file.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
     input: mapIn({ format: { enum: ['json', 'context', 'html', 'embed'], description: 'One of "embed" (a fragment for a document or page), "html" (a whole page), "json", "context". E.g. "embed"' },
       budget: { type: 'integer', minimum: 300, maximum: 200000, default: 4000, description: 'For "context" only: estimated tokens at most, 300 to 200000 (default 4000). E.g. 2000' },
-      threeD: { type: 'boolean', default: false, description: 'For "html" and "embed" only: add the 3D view (default false; about five times bigger). E.g. false' } }, ['format']),
+      threeD: { type: 'boolean', default: false, description: 'For "html" and "embed" only: add the 3D view (default false; about five times bigger). E.g. false' },
+      include }, ['format']),
     output: { type: 'string' }, scope: 'read', callsModel: false, cli: 'export', ui: { page: PAGE, id: 'export' } },
 
   // ---- the map page's own routes (today's /api/* under the map's base) ----
@@ -369,7 +415,7 @@ export function openApi({ version = '0.0.0', serverUrl } = {}) {
       const schemas = ops.map(bodySchema);
       operation.requestBody = { required: true, content: { 'application/json': { schema: schemas.length === 1 ? schemas[0] : { oneOf: schemas } } } };
     }
-    if (method === 'POST' && main.name === 'build_map') operation.responses = { 202: operation.responses[200], ...operation.responses, 200: undefined };
+    if (method === 'POST' && ['build_map', 'organize_map'].includes(main.name)) operation.responses = { 202: operation.responses[200], ...operation.responses, 200: undefined };
     if (operation.responses[200] === undefined) delete operation.responses[200];
     paths[p] = { ...(paths[p] ?? {}), [method.toLowerCase()]: operation };
   }

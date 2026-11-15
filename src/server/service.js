@@ -21,6 +21,9 @@ import { openApi } from '../ops.js';
 import { buildIndex } from '../core/engine/chat.js';
 import { agentMap, outlineText, nodeForAgent } from './reads.js';
 import { exportMap } from '../core/export/index.js';
+import { parseInclude } from '../core/export/hydration.js';
+import { organizeRoute } from './organize.js';
+import { SAVING, BUSY } from './texts.js';
 import { handleMcpHttp, loopbackCaller } from './mcp.js';
 import { createUsage, EXIT_WAIT_MS } from './usage.js';
 
@@ -45,8 +48,7 @@ const REJECTED = 'Your Anthropic API key was rejected: run ontologizer key set';
 const MAX_STORES = 16;           // default cap on tenants with an open store at once (each Postgres store holds connections)
 const REACH_MS = 30000;          // how long a source's reachability is remembered for status
 const RECHECK_MS = 5000;         // how long an open stream or chat trusts a custom identity's or policy's last answer
-const SAVING = 'The map is being saved under a new name: open it by its new name.';
-export const BUSY = 'The map is busy: try again when it is idle.';
+export { BUSY };
 const NOT_IN_TRASH = 'That item is not in the trash.';
 const TRASH_ID_PATH_RE = /^[a-z0-9][a-z0-9-]{0,200}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -69,7 +71,7 @@ export function lastBuildError(jobs) {
   // categories, a research) is history, not the map's state: report it only when nothing came after.
   let out;
   for (const j of Object.values(jobs || {})) {
-    if (j && j.kind === 'build' && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
+    if (j && (j.kind === 'build' || j.kind === 'organize') && !j.nodeId && j.state === 'failed' && typeof j.error === 'string') out = j.error;
     else if (j) out = undefined;
   }
   return out;
@@ -461,7 +463,7 @@ export async function startService({
   }
 
   // ---- builds: at most maxBuilds at once; waiting builds queue per tenant, started round-robin ----
-  /** @type {Map<string, { state: 'queued'|'running'|'done'|'failed', error?: string }>} */
+  /** @type {Map<string, { state: 'queued'|'running'|'done'|'failed', error?: string, kind?: string, ctl?: AbortController }>} */
   const builds = new Map();
   let running = 0;
   /** @type {Map<string, Array<() => void>>} */
@@ -489,12 +491,17 @@ export async function startService({
   };
   let buildSeq = 0;
   /**
-   * @param {string} tenant @param {string} id @param {any} brief @param {number|undefined} depth
-   * @param {Principal} p @param {string[]} names the sources this build may use
+   * Run one background piece of work on a draft (a build, an organise) with the builds' own machinery:
+   * the slot limits, the abort signal and timeout, the failure job, wait_for_map's view of it.
+   * @param {string} tenant @param {string} draftId @param {string} kind 'build' or 'organize'
+   * @param {(engine: any) => any} work called as buildSignal.run(signal, () => work(engine))
+   * @param {{ timeoutMs?: number, actor?: any }} [opts] timeoutMs defaults to the service's buildTimeoutMs;
+   *   actor is stamped on the failure job
    */
-  function startBuild(tenant, id, brief, depth, p, names, picked = null) {
+  function startRun(tenant, draftId, kind, work, { timeoutMs = buildTimeoutMs, actor } = {}) {
+    const id = draftId;
     const key = `${tenant}/${id}`;
-    const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined) };
+    const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined), kind };
     builds.set(key, b);
     (async () => {
       await slot(tenant);
@@ -510,29 +517,26 @@ export async function startService({
         if (closing) throw new Error('the server is stopping');
         b.state = 'running';
         const engine = await engineFor(tenant, id);
-        const principal = publicPrincipal(p, tenant);
-        const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
-        const minutes = buildTimeoutMs / 60000;
+        const minutes = timeoutMs / 60000;
         const timedOut = new Promise((_, reject) => {
           timer = setTimeout(() => {
             expired = true;
             ctl.abort();
             reject(new Error(`Timed out after ${Number.isInteger(minutes) ? minutes : minutes.toFixed(2)} ${minutes === 1 ? 'minute' : 'minutes'}`));
-          }, Math.max(1, buildTimeoutMs));
+          }, Math.max(1, timeoutMs));
           timer.unref?.();
         });
-        // picked: the sources chosen in New map (the build is told to search them for every category).
-        const run = buildSignal.run(ctl.signal, () => engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) }));
+        const run = buildSignal.run(ctl.signal, () => work(engine));
         Promise.resolve(run).catch(() => {}); // after a timeout its rejection is expected, never unhandled
         await Promise.race([run, timedOut]);
         b.state = 'done';
       } catch (err) {
         b.state = 'failed';
         b.error = errText(err);
-        log(`build ${key} failed: ${b.error}`);
+        log(`${kind} ${key} failed: ${b.error}`);
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
-        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error: b.error }, actor: p.actor }); } catch { /* gone */ }
+        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `${kind}-${process.pid}-${++buildSeq}`, kind, error: b.error }, ...(actor ? { actor } : {}) }); } catch { /* gone */ }
         // A timed-out engine is dropped: whatever it still does is no longer this map's build. A chat
         // answer being written on the map is left to finish first (its calls never had the build's signal).
         if (expired) {
@@ -553,6 +557,19 @@ export async function startService({
   }
 
   /**
+   * @param {string} tenant @param {string} id @param {any} brief @param {number|undefined} depth
+   * @param {Principal} p @param {string[]} names the sources this build may use
+   */
+  function startBuild(tenant, id, brief, depth, p, names, picked = null) {
+    startRun(tenant, id, 'build', async (engine) => {
+      const principal = publicPrincipal(p, tenant);
+      const tools = srcs && names.length ? await srcs.toolset(principal, names) : null;
+      // picked: the sources chosen in New map (the build is told to search them for every category).
+      return engine.build(brief, { ...(depth ? { depth } : {}), actor: p.actor, principal, tools, ...(picked ? { picked } : {}) });
+    }, { actor: p.actor });
+  }
+
+  /**
    * The server is stopping: every build and job still queued or running ends here, so it is marked
    * failed on its map (wait_for_map and the jobs tray say so) instead of vanishing.
    */
@@ -566,7 +583,8 @@ export async function startService({
       const [tenant, id] = key.split('/');
       try {
         const store = storeFor(tenant, true);
-        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `build-${process.pid}-${++buildSeq}`, kind: 'build', error } });
+        const kind = b.kind ?? 'build';
+        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `${kind}-${process.pid}-${++buildSeq}`, kind, error } });
       } catch { /* gone */ }
     }
     // Only maps this process has an engine for (its own jobs): a map merely open for reading may have
@@ -1104,6 +1122,23 @@ export async function startService({
       }
       return fail(res, 405, 'method not allowed');
     }
+    // /v1/t/:tenant/maps/organize: a supplied list into a map; gates in the order build_map's are
+    if (rest.length === 2 && rest[1] === 'organize') {
+      if (method !== 'POST') return fail(res, 405, 'method not allowed');
+      if (!await can(p, 'build', { tenant })) return fail(res, 403, needs('build'));
+      if (overLimit()) return;
+      const body = await readBody(req, res, 4 * 1024 * 1024);
+      if (!body) return;
+      if (closing) return fail(res, 503, 'the server is stopping');
+      if (running >= Math.max(1, maxBuilds) && waiting(tenant) >= maxQueued) {
+        return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
+      }
+      const store = await readyStore(tenant, true);
+      if (store === 'down' || store === 'full' || !store) return storeFail(res, store);
+      return organizeRoute({ req, res, body, tenant, principal: p, actor: p.actor, store,
+        startRun: (/** @type {string} */ t, /** @type {string} */ draftId, /** @type {string} */ kind, /** @type {any} */ work, /** @type {any} */ opts) => startRun(t, draftId, kind, work, { actor: p.actor, ...opts }),
+        engineFor, durable, json, fail, buildTimeoutMs });
+    }
     // /v1/t/:tenant/maps/check
     if (rest.length === 2 && rest[1] === 'check') {
       if (!await can(p, 'build', { tenant })) return fail(res, 403, needs('build'));
@@ -1254,11 +1289,16 @@ export async function startService({
         if (rest.length !== 4) return fail(res, 404, 'not found');
         let nid = '';
         try { nid = decodeURIComponent(rest[3]); } catch { return fail(res, 400, 'bad node id'); }
-        const r = nodeForAgent(map, nid);
+        let include;
+        try { include = parseInclude(query.get('include') ?? undefined); } catch (err) { return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err)); }
+        const r = nodeForAgent(map, nid, { include });
         return r.error ? json(res, 404, { ok: false, ...r.result }) : json(res, 200, r.result);
       }
       const format = sub === 'context' ? 'context' : String(query.get('format') ?? '');
       if (!EXPORT_FORMATS.includes(format)) return fail(res, 400, `format must be one of ${EXPORT_FORMATS.join(', ')}`);
+      let include;
+      try { include = parseInclude(query.get('include') ?? undefined); } catch (err) { return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err)); }
+      if (include.length && format !== 'json') return fail(res, 400, 'include works only with format json');
       const b = Number.parseInt(query.get('budget') ?? '4000', 10);
       if (!Number.isInteger(b) || b < 300 || b > 200000) return fail(res, 400, 'budget must be a whole number from 300 to 200000');
       // A page or embed carries no chat and no unfinished jobs (I4); the bundle is the built one.
@@ -1270,7 +1310,7 @@ export async function startService({
         }
       }
       let out;
-      try { out = exportMap(map, { format: /** @type {any} */ (format), bundle, budget: b }); } catch (err) {
+      try { out = exportMap(map, { format: /** @type {any} */ (format), bundle, budget: b, include }); } catch (err) {
         return fail(res, 400, String(/** @type {any} */ (err)?.message ?? err));
       }
       if (format === 'json') return text(res, 'application/json', out);
@@ -1314,6 +1354,10 @@ export async function startService({
         // tenant's calls when it began (calls(), read once), so a started call is never counted twice.
         limit: (/** @type {number} */ extra = 0, /** @type {number|null} */ base = null) => usage.over(tenant, extra, base),
         calls: () => usage.today(tenant).calls,
+        // True only while this map's build or organise is queued or running (not jobs or chats: a running
+        // hydrate must not block add_node), and while a save of this map is in progress.
+        busy: () => { const b = builds.get(key); return b?.state === 'queued' || b?.state === 'running'; },
+        saving: () => saving.has(key),
         // Whether a map is private (fuse keeps a private map's id out of another map's log).
         isPrivate: (/** @type {string} */ other) => visibilityOf(tenant, other, store.list({ drafts: true }).find((/** @type {any} */ m) => m.id === other)).visibility === 'private',
       });

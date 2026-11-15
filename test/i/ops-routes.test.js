@@ -154,8 +154,8 @@ test('every op is served by the router, and every /v1 route the router serves ha
 
 test('every op with an MCP name is a tool and every tool is an op; the contract\'s sixteen tools', () => {
   assert.deepEqual(toolProblems(OPS, toolList()), []);
-  assert.deepEqual(toolList().map((t) => t.name).sort(), ['ask_map', 'build_map', 'check_context', 'explain', 'export_map', 'fuse', 'get_context',
-    'get_node', 'get_outline', 'list_maps', 'research', 'rosetta', 'save_map', 'search_map', 'sources', 'wait_for_map']);
+  assert.deepEqual(toolList().map((t) => t.name).sort(), ['add_node', 'ask_map', 'build_map', 'check_context', 'explain', 'export_map', 'fuse', 'get_context',
+    'get_node', 'get_outline', 'hydrate', 'list_maps', 'organize_map', 'research', 'rosetta', 'save_map', 'search_map', 'sources', 'wait_for_map']);
   // Planted faults: a tool with no op; an op whose tool is not offered.
   assert.deepEqual(toolProblems(OPS, [...toolList(), { name: 'delete_map' }]), ['tool delete_map has no op']);
   assert.deepEqual(toolProblems(OPS, toolList().filter((t) => t.name !== 'fuse')), ['op tool fuse is not offered']);

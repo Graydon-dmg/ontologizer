@@ -32,12 +32,13 @@ Start with the free reads: list_maps (what exists), get_context (a whole map as 
 
 A new map is mostly one-line summaries: a node has an article only once someone calls explain on it. get_context and get_node say how much of the map is still one line; call explain on the nodes your task depends on (it costs credits), never on a whole map by default.
 
-Tools that call the model cost the user API credits and say so: check_context, build_map, research, explain, sources, ask_map, fuse, rosetta. Use them only when the free reads cannot answer.
+Tools that call the model cost the user API credits and say so: check_context, build_map, organize_map, hydrate, research, explain, sources, ask_map, fuse, rosetta. Use them only when the free reads cannot answer.
 
 Usual workflows:
 - Learn a field: list_maps; if no map fits, check_context (repeat with answers while it asks questions), build_map, wait_for_map, then get_context and teach or brainstorm from it yourself.
 - Deepen one node: search_map or get_outline for its id, get_node, then explain (write its article) or research (add nodes under it), wait_for_map, get_node again.
 - Deepen several nodes your task depends on: explain or sources with nodeIds (at most 8 in one call; each node is its own job and about one model call), then wait_for_map (it waits for all of them) and get_node on each.
+- Agent maps: organize_map turns a list of items you supply into a map (one leaf per item id), hydrate writes the hydration fields agents classify against, and add_node adds one named node.
 - Put a map into a document or page: export_map with format "embed" (an offline, interactive fragment) or "html" (a whole page).
 - Where two fields connect: fuse two existing maps, wait_for_map on the new map (draftId), get_context on it and read its Bridges.
 - A question answered in prose with citations: ask_map. It is not a read: it adds the question and answer to the map's chat, which everyone who can open the map sees.
@@ -379,7 +380,7 @@ export function createMcpServer({ call, version = '0.0.0', baseUrl = '' }) {
     if (!isJson) return textResult(r.text);
     const j = tryJson(r.text);
     if (j === undefined) return textResult(r.text);
-    if (op.name === 'build_map' && j && typeof j === 'object') {
+    if (['build_map', 'organize_map'].includes(op.name) && j && typeof j === 'object') {
       if (j.viewUrl) j.viewUrl = abs(j.viewUrl);
       if (j.eventsUrl) j.eventsUrl = abs(j.eventsUrl);
     }

@@ -23,6 +23,9 @@ export const METHODS = {
   'maps.outline': 'get_outline',
   'maps.search': 'search_map',
   'maps.node': 'get_node',
+  'maps.organize': 'organize_map',
+  'maps.hydrate': 'hydrate',
+  'maps.addNode': 'add_node',
   usage: 'get_usage',
   status: 'get_status',
   sources: 'list_sources',
@@ -30,7 +33,7 @@ export const METHODS = {
 };
 
 /** The jobs that have their own op (they share POST .../actions with view_action). */
-export const JOB_TYPES = ['research', 'explain', 'sources', 'fuse', 'rosetta'];
+export const JOB_TYPES = ['research', 'explain', 'sources', 'fuse', 'rosetta', 'hydrate', 'add_node'];
 
 export class OntologizerError extends Error {
   /** @param {string} message @param {{ status?: number, error?: string, retryAfter?: number | null, body?: any }} [o] */

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { fuse } from '../core/engine/fuse.js';
 import { rosetta } from '../core/engine/rosetta.js';
 import { jsonLines } from '../core/engine/jsonl.js';
+import { stubOrganize } from './engine-stub-organize.js';
+import { stubHydrate } from './engine-stub-hydrate.js';
 
 const FIXTURE = new URL('../../fixtures/plastic-modeling.events.jsonl', import.meta.url);
 
@@ -53,16 +55,31 @@ export function createEngine({ store, id, client: _client = null }) {
       }
     },
 
-    /** @param {{ kind: string, nodeId?: string }} job @param {{ actor?: any }} [o] */
+    /** @param {{ kind: string, nodeId?: string, nodeIds?: string[] }} job @param {{ actor?: any }} [o] */
     enqueue(job, o = {}) {
       const jobId = `job-${++jobCounter}`;
-      const info = { id: jobId, kind: job.kind, nodeId: job.nodeId };
+      /** @type {{ id: string, kind: string, nodeId?: string, nodeIds?: string[] }} */
+      const info = { id: jobId, kind: job.kind };
+      if (typeof job.nodeId === 'string') info.nodeId = job.nodeId;
+      if (Array.isArray(job.nodeIds)) info.nodeIds = [...job.nodeIds];
       const as = (/** @type {any} */ e) => (o?.actor ? { ...e, actor: o.actor } : e);
+      const emit = (/** @type {string} */ t, /** @type {any} */ fields) => store.append(id, as({ t, at: store.now(id), ...fields }));
       store.append(id, as({ t: 'job.queued', at: store.now(id), job: info }));
-      setTimeout(() => {
-        try { store.append(id, as({ t: 'job.done', at: store.now(id), job: info })); } catch { /* store closed */ }
+      setTimeout(async () => {
+        try {
+          if (job.kind === 'hydrate') await stubHydrate({ store, id, job, emit });
+          store.append(id, as({ t: 'job.done', at: store.now(id), job: info }));
+        } catch { /* store closed */ }
       }, 10);
       return jobId;
+    },
+
+    /** Epic A's offline organise. @param {any} input @param {{ actor?: any }} [o] @returns {Promise<any>} */
+    async organize(input, o = {}) {
+      const actor = o?.actor ?? null;
+      const emit = (/** @type {string} */ t, /** @type {any} */ fields) =>
+        store.append(id, { t, at: store.now(id), ...fields, ...(actor ? { actor } : {}) });
+      return stubOrganize({ store, id, input, emit, actor });
     },
 
     /** @param {any} a @param {any} b @param {any} [opts] */

@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { foldAll, fold } from './events.js';
+import { foldAll, foldInto } from './events.js';
 
 /** @typedef {import('./schema.js').Ontology} Ontology */
 /** @typedef {import('./events.js').OntoEvent} OntoEvent */
@@ -111,8 +111,9 @@ function pidAlive(pid) {
   }
 }
 
-/** Names a map can never take: `tenants` is the folder that holds the other tenants' maps. */
-export const RESERVED_NAMES = ['tenants'];
+/** Names a map can never take: `tenants` is the folder that holds the other tenants' maps;
+ *  `check` and `organize` are routes beside the map ids. */
+export const RESERVED_NAMES = ['tenants', 'check', 'organize'];
 
 /** sessions.json keys for running servers (a map id never starts with ":"). */
 const SERVER_KEY = ':server:';
@@ -124,6 +125,13 @@ export const TRASH_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A trash id: the map's id, "--", and the UTC time it was deleted ("sourdough--20261109-153012z", "-2" on a clash). */
 export const TRASH_ID_RE = /^[a-z0-9][a-z0-9-]*--\d{8}-\d{6}z(?:-\d+)?$/;
+
+/** The largest numeric `at`, by loop: spreading 120k+ events into Math.max throws a RangeError. @param {OntoEvent[]} events */
+function lastAtOf(events) {
+  let max = -Infinity;
+  for (const x of events) max = Math.max(max, typeof x.at === 'number' ? x.at : 0);
+  return max;
+}
 
 /** @param {number} ms the deletion time, as a UTC stamp for a trash id */
 export function trashStamp(ms) {
@@ -189,7 +197,8 @@ function assertName(name) {
     throw new Error(`Invalid name "${name}": use lowercase letters, digits and hyphens (kebab-case).`);
   }
   if (RESERVED_NAMES.includes(name)) {
-    throw new Error(`"${name}" is a reserved name (it holds service mode's tenants). Pick another name.`);
+    const why = name === 'tenants' ? 'it holds service mode\'s tenants' : 'a route uses it';
+    throw new Error(`"${name}" is a reserved name (${why}). Pick another name.`);
   }
 }
 
@@ -324,7 +333,7 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
     const events = readEventsFile(path.join(dir(id), 'events.jsonl'));
     const onto = foldAll(events);
     const created = events.find((x) => x.t === 'ontology.created');
-    const lastAt = events.length ? Math.max(...events.map((x) => (typeof x.at === 'number' ? x.at : 0))) : 0;
+    const lastAt = events.length ? lastAtOf(events) : 0;
     const startedAt = Date.now() - (created ? created.at : 0);
     e = { onto, count: events.length, lastAt, startedAt, dirty: false, timer: null, subs: new Set() };
     cache.set(id, e);
@@ -546,7 +555,7 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       const e = load(id);
       fs.appendFileSync(path.join(dir(id), 'events.jsonl'), JSON.stringify(event) + '\n');
       if (event.t === 'ontology.created') e.startedAt = Date.now() - event.at;
-      e.onto = fold(e.onto, event);
+      e.onto = foldInto(e.onto, event);
       if (typeof event.at === 'number') e.lastAt = Math.max(e.lastAt, event.at);
       const index = e.count++;
       e.dirty = true;
@@ -565,7 +574,11 @@ export function openStore(home, { tenant = 'default', repair = false, log = (lin
       for (const fn of [...e.subs]) fn(event, index);
     },
 
-    /** @param {string} id @returns {Ontology} */
+    /**
+     * The live map, not a copy: appends fold into it in place (foldInto), so a caller that holds it
+     * across an await sees later events appear. Callers only read it; never mutate it.
+     * @param {string} id @returns {Ontology}
+     */
     read(id) {
       return load(id).onto;
     },
