@@ -67,7 +67,7 @@ test('MED-4: a failed retry batch goes under Unsorted, and the first pass placem
   assert.equal(list.filter((it) => m.nodes[it.id]).length, 500);
   // planted fault: the old rule (any retry failure ends the run) loses everything
   // (the copy lives in a temp folder, so its one package import is pointed at this checkout's copy)
-  const f = await broken('src/core/engine/organize.js', [['if (isAuthError(e) || isAbort(e)) {', 'if (retry || isAuthError(e)) {'],
+  const f = await broken('src/core/engine/organize.js', [['if (isAuthError(e) || isAbort(e) || isUsageLimit(e)) {', 'if (retry || isAuthError(e)) {'],
     ["import PQueue from 'p-queue';", `import PQueue from '${import.meta.resolve('p-queue')}';`]]);
   assert.ok('rejected' in await outcome(f.organize));
 });
@@ -78,6 +78,26 @@ test('MED-4: a rejected key and an abort still end the run', async () => {
     const t = setup(model({ failId: 'it3', failWith }));
     await assert.rejects(organize(t.ectx, { name: 'M', items: items(30), depth: 2, mode: 'agent' }), { message: failWith.message });
   }
+});
+
+test('the daily limit ends the run, and its job fails with the limit\'s message', async () => {
+  const limit = Object.assign(new Error('This tenant reached its daily limit of 5 model calls.'), { name: 'UsageLimitError', code: 'USAGE_LIMIT', retryAfter: 60 });
+  /** @param {any} org */
+  const outcome = async (org) => {
+    const t = setup(model({ failId: 'it3', failWith: limit }));
+    let rejected = null;
+    try { await org(t.ectx, { name: 'M', items: items(30), depth: 2, mode: 'agent' }); } catch (e) { rejected = e; }
+    return { rejected, jobs: Object.values(t.map().jobs) };
+  };
+  const { rejected, jobs } = await outcome(organize);
+  assert.equal(rejected, limit);
+  assert.deepEqual(jobs.map((j) => [j.state, j.error]), [['failed', limit.message]]);
+  // planted fault: treating the limit like an overload finishes the run "done", everything under Unsorted
+  const f = await broken('src/core/engine/organize.js', [['|| isUsageLimit(e)) {', ') {'],
+    ["import PQueue from 'p-queue';", `import PQueue from '${import.meta.resolve('p-queue')}';`]]);
+  const bad = await outcome(f.organize);
+  assert.equal(bad.rejected, null);
+  assert.deepEqual(bad.jobs.map((j) => j.state), ['done']);
 });
 
 test('MED-2: the run is one organize job under the caller\'s id: started after the root, done after the last leaf', async () => {
