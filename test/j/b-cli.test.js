@@ -114,3 +114,30 @@ test('CLI: a failing batch exits 1 and lists every failed id (real engine, a mod
     assert.equal(Object.values(openStore(home).read(P).nodes).filter((/** @type {any} */ x) => x.hydration).length, 0);
   } finally { srv.close(); }
 });
+
+test('CLI: the stub path needs no key: organize sample-120, then hydrate --all → exit 0, every node hydrated', async () => {
+  const home = tempHome();
+  const cap = () => ({ out: '', write(/** @type {string} */ x) { this.out += x; return true; } });
+  const env = { ...process.env, ONTOLOGIZER_HOME: home, ONTOLOGIZER_ENGINE: 'stub', ONTOLOGIZER_STUB_SPEED: '1000' };
+  delete env.ANTHROPIC_API_KEY;
+  const run = async (/** @type {string[]} */ args) => {
+    const stdout = cap(); const stderr = cap();
+    const code = await main(args, { home, stdout, stderr, interactive: false, keyring: { get: () => null, set() {}, delete: () => false },
+      openBrowser: async () => {}, onSignal: () => () => {}, env });
+    return { code, stdout: stdout.out, stderr: stderr.out };
+  };
+  const items = new URL('./fixtures/items/sample-120.json', import.meta.url).pathname;
+  const org = await run(['organize', items, '--name', 's', '--home', home]);
+  assert.equal(org.code, 0, org.stdout + org.stderr);
+  const id = /: (\S+?)(?:\s|$)/.exec(/^Organised .*$/m.exec(org.stdout)?.[0] ?? '')?.[1];
+  assert.ok(id, org.stdout);
+  // planted fault: needKey: true under the stub stops here with "No Anthropic API key"
+  const h = await run(['hydrate', /** @type {string} */ (id), '--all', '--home', home]);
+  assert.equal(h.code, 0, h.stdout + h.stderr);
+  assert.doesNotMatch(h.stderr, /API key/);
+  const o = openStore(home).read(/** @type {string} */ (id));
+  const nodes = Object.values(o.nodes).filter((/** @type {any} */ x) => x.id !== o.root);
+  assert.ok(nodes.length > 120);
+  assert.ok(nodes.every((/** @type {any} */ x) => x.hydration?.model === 'stub'));
+  assert.match(h.stdout, new RegExp(`^Hydrated ${nodes.length} of ${nodes.length} nodes$`, 'm'));
+});

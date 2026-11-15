@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createFakeClient, createMemoryStore, lines } from '../c/fake.js';
 import { runCall } from '../../src/core/engine/call.js';
-import { makeEvent } from '../../src/core/events.js';
+import { makeEvent, foldAll, foldInto, emptyOntology } from '../../src/core/events.js';
 import {
   organize, checkInput, readTree, effectiveDepth, maxDeepest, sampleItems, ROOT_ID, UNSORTED_ID, BAD_TREE,
 } from '../../src/core/engine/organize.js';
@@ -396,11 +396,31 @@ test('11. scale: 2,000 items finish in under 20 s and are placed exactly once', 
 });
 
 // Waits on another epic (hydrate/export speed work), so the 10,000-item run is not asserted here yet.
-test.skip('11b. scale: 10,000 items', async () => {
+test('11b. scale: 10,000 items finish in under 60 s, are placed exactly once, and the map folds in under 200 ms', async () => {
   const items = genItems(10000);
   const t = setup(model());
+  // As the real store (src/core/store.js) does since the fold-speed epic: fold each event in place.
+  /** @type {any[]} */ const log = [];
+  const acc = emptyOntology();
+  t.store.append = (/** @type {string} */ _id, /** @type {any} */ e) => { log.push(e); foldInto(acc, e); };
+  t.store.read = () => acc;
+  t.store.list = () => log;
+  const t0 = Date.now();
   await organize(t.ectx, { name: 'Scale', items, depth: 3, mode: 'agent' });
+  const ran = Date.now() - t0;
+  assert.ok(ran < 60000, `run took ${ran} ms`);
   exactlyOnce(t.map(), items.map((i) => i.id));
+  // The page and every reader replay the log: one fold of all ~10k events must stay fast.
+  const f0 = performance.now();
+  const o = foldAll(log);
+  const folded = performance.now() - f0;
+  assert.equal(Object.keys(o.nodes).length, Object.keys(t.map().nodes).length);
+  assert.ok(folded < 200, `fold took ${folded.toFixed(0)} ms`);
+  // planted fault: a fold that copies the node table per node.added (the 1.8.0 fold) blows the budget
+  const slow = (/** @type {any[]} */ ev) => { let nodes = {}; for (const e of ev) if (e.t === 'node.added') nodes = { ...nodes, [e.node.id]: e.node }; return nodes; };
+  const s0 = performance.now();
+  slow(log);
+  assert.ok(performance.now() - s0 > folded, 'the quadratic fold is slower than the real one');
 });
 
 // ---------------------------------------------------------------------------------------------

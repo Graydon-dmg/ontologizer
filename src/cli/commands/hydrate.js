@@ -43,7 +43,7 @@ export default {
     out.write(`${batches.length} batches, about ${estimate(batches).calls} calls\n`);
     if (!batches.length) { out.write('Hydrated 0 of 0 nodes\n'); return; }
 
-    const engine = await engineFor({ deps, store, id, needKey: true });
+    const engine = await engineFor({ deps, store, id, needKey: deps.env.ONTOLOGIZER_ENGINE !== 'stub' });
     /** @type {Map<string, any>} jobId -> batch */ const byJob = new Map();
     /** @type {Map<string, any>} jobId -> its job.done or job.failed (may arrive before enqueue returns) */ const finals = new Map();
     /** @type {Set<string>} */ const reported = new Set();
