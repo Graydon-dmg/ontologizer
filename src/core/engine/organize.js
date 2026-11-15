@@ -3,9 +3,10 @@
 // Every item becomes exactly one leaf with its own id; an item the model could not place goes under
 // _root/unsorted, never dropped. Families are written only after placement, and only those with at
 // least one leaf below them, so a finished map never has an empty family.
+import { randomUUID } from 'node:crypto';
 import PQueue from 'p-queue';
 import { childId, norm } from './ids.js';
-import { isAuthError } from './call.js';
+import { isAuthError, jobErrorMessage } from './call.js';
 import { familiesPrompt, placementPrompt } from './prompts-organize.js';
 
 export const ROOT_ID = '_root';
@@ -22,6 +23,9 @@ const BATCH = 200;
 const RETRY_BATCH = 50;
 const CONCURRENCY = 3;
 const SMALL_LIST = 24;
+
+/** A call stopped by the run's own signal (a timeout or the server stopping): never retried. @param {any} e */
+const isAbort = (e) => e?.name === 'AbortError' || e?.name === 'APIUserAbortError';
 
 /** @typedef {{ id: string, label: string, text?: string }} Item */
 /** @typedef {{ name: string, items: Item[], depth: 2|3|4, mode: 'agent'|'human' }} OrganizeInput */
@@ -233,7 +237,8 @@ export function writeMap(emit, { n, items, families, tops, placed }) {
 
 /**
  * @param {any} ectx  the engine's run context (runCtx('organize', o)): emit, call, models, durable, resetClock
- * @param {any} input  { name, items, depth?, mode? }, validated again here
+ * @param {any} input  { name, items, depth?, mode?, jobId? }, validated again here. jobId: the run's job
+ *   id when the caller owns the run (the server's startRun), which then ends a failed run's job itself
  * @returns {Promise<{ items: number, families: number, unsorted: number }>}
  */
 export async function organize(ectx, input) {
@@ -246,7 +251,28 @@ export async function organize(ectx, input) {
 
   ectx.resetClock?.();
   begin(ectx.emit, { name, n, mode });
+  // The run is a job from its first write to its last: a run killed in between (a crash, a restart)
+  // is left started-but-not-done, which the server's restart check marks failed.
+  const owned = typeof input?.jobId === 'string' && input.jobId !== '';
+  const job = { id: owned ? input.jobId : `organize-${randomUUID().slice(0, 8)}`, kind: 'organize' };
+  ectx.emit('job.started', { job });
+  try {
+    const out = await passes(ectx, { name, items, n, depth, maxDeep });
+    ectx.emit('job.done', { job });
+    await ectx.durable?.();
+    return out;
+  } catch (e) {
+    // A server run's job is ended by its caller, under the same id (one entry); a CLI run ends its own.
+    if (!owned) ectx.emit('job.failed', { job: { ...job, error: jobErrorMessage(e) } });
+    throw e;
+  }
+}
 
+/**
+ * Pass 1 (the family tree), pass 2 (placement, then one retry), then the map's events.
+ * @param {any} ectx @param {{ name: string, items: Item[], n: number, depth: number, maxDeep: number }} o
+ */
+async function passes(ectx, { name, items, n, depth, maxDeep }) {
   // ---- Pass 1: the family tree (one retry with the problems listed).
   const sample = sampleItems(items).map((it) => ({ label: it.label, ...(it.text ? { text: it.text.slice(0, TEXT_CUT) } : {}) }));
   /** @type {ReturnType<typeof readTree> | null} */
@@ -297,9 +323,10 @@ export async function organize(ectx, input) {
         try {
           await place(batch, retry);
         } catch (e) {
-          // First pass: a failed batch's items get the retry. The retry's failures (and a rejected
-          // key, at any point) end the run.
-          if (retry || isAuthError(e)) { fatal ??= e; queue.clear(); }
+          // A rejected key or the run's own abort ends the run. Any other failure (an overload, the
+          // network) only costs that batch: its items get the retry, and a failed retry batch's items
+          // go under Unsorted, so what was placed already is kept.
+          if (isAuthError(e) || isAbort(e)) { fatal ??= e; queue.clear(); }
         }
       });
     }
@@ -311,6 +338,5 @@ export async function organize(ectx, input) {
   if (missed.length) await run(missed, RETRY_BATCH, true);
 
   const written = writeMap(ectx.emit, { n, items, families, tops: tree.tops, placed });
-  await ectx.durable?.();
   return { items: n, families: written, unsorted: n - placed.size };
 }
