@@ -1137,7 +1137,7 @@ export async function startService({
       if (store === 'down' || store === 'full' || !store) return storeFail(res, store);
       return organizeRoute({ req, res, body, tenant, principal: p, actor: p.actor, store,
         startRun: (/** @type {string} */ t, /** @type {string} */ draftId, /** @type {string} */ kind, /** @type {any} */ work, /** @type {any} */ opts) => startRun(t, draftId, kind, work, { actor: p.actor, ...opts }),
-        engineFor, durable, json, fail });
+        engineFor, durable, json, fail, buildTimeoutMs });
     }
     // /v1/t/:tenant/maps/check
     if (rest.length === 2 && rest[1] === 'check') {

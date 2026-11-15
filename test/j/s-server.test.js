@@ -67,13 +67,15 @@ test('hydrate is behind the daily limit (429); add_node, which calls no model, i
   } finally { await srv.close(); }
 });
 
-test('the organize route accepts a 3 MiB body (501 placeholder) and refuses 5 MiB with 413', async () => {
+test('the organize route accepts a 3 MiB list (202) and refuses 5 MiB with 413', async () => {
   const { srv } = await boot();
   try {
     const body = (/** @type {number} */ bytes) => JSON.stringify({ name: 'big', items: [{ id: 'a', label: 'A', text: 'x'.repeat(bytes) }] });
     // planted fault: the default 64 KiB cap refuses even a small big body
     assert.equal(await postStatus(srv.url, '/v1/t/default/maps', body(100 * 1024)), 413);
-    assert.equal(await postStatus(srv.url, ORG, body(3 * 1024 * 1024)), 501);
+    const many = JSON.stringify({ name: 'big', items: Array.from({ length: 6600 }, (_, i) => ({ id: 'i' + i, label: 'L', text: 'x'.repeat(480) })) });
+    assert.ok(many.length > 3 * 1024 * 1024);
+    assert.equal(await postStatus(srv.url, ORG, many), 202);
     assert.equal(await postStatus(srv.url, ORG, body(5 * 1024 * 1024)), 413);
     const empty = await req(srv.url, ORG, { method: 'POST', body: {} });
     assert.equal(empty.status, 400);
@@ -83,13 +85,13 @@ test('the organize route accepts a 3 MiB body (501 placeholder) and refuses 5 Mi
 });
 
 test('the organize route keeps build_map\'s queue cap: 429 with Retry-After when the tenant\'s queue is full', async () => {
-  const make = (/** @type {any} */ x) => ({ ...stubEngine(x), build: () => new Promise(() => {}) });
+  const make = (/** @type {any} */ x) => ({ ...stubEngine(x), build: () => new Promise(() => {}), organize: () => new Promise(() => {}) });
   const { srv } = await boot({ maxBuilds: 1, maxQueued: 1, makeEngine: async (/** @type {any} */ x) => make(x) });
   try {
     const ok = { name: 'x', items: [{ id: 'a', label: 'A' }] };
-    // planted fault: with the queue empty the request gets through to the placeholder
-    assert.equal((await req(srv.url, ORG, { method: 'POST', body: ok })).status, 501);
-    for (const c of ['a0', 'a1']) assert.equal((await req(srv.url, '/v1/t/default/maps', { method: 'POST', body: { brief: { context: c } } })).status, 202);
+    // planted fault: with the queue empty the request gets through (202) and takes the one running slot
+    assert.equal((await req(srv.url, ORG, { method: 'POST', body: ok })).status, 202);
+    for (const c of ['a0']) assert.equal((await req(srv.url, '/v1/t/default/maps', { method: 'POST', body: { brief: { context: c } } })).status, 202);
     const full = await req(srv.url, ORG, { method: 'POST', body: ok });
     assert.equal(full.status, 429);
     assert.equal(full.headers['retry-after'], '30');

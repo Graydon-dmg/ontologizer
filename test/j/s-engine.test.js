@@ -58,10 +58,10 @@ test('engine: a hydrate job needs no nodeId; other kinds still do', async () => 
   const job = store.read(id).jobs[jobId];
   assert.equal(job.state, 'failed'); // the placeholder throws until Epic B lands
   assert.deepEqual(job.nodeIds, ['a', 'b']);
-  await assert.rejects(engine.organize({}), /organize is not built yet/);
+  await assert.rejects(engine.organize({}), /organize: name must be 1 to 120 characters/);
 });
 
-test('stub engine: hydrate keeps nodeIds on its job events; organize reaches the placeholder', async () => {
+test('stub engine: hydrate keeps nodeIds on its job events; organize validates its input', async () => {
   const store = openStore(tempHome());
   const id = store.createDraft({ context: 'x' }, 'x');
   const stub = createStub({ store, id });
@@ -71,5 +71,5 @@ test('stub engine: hydrate keeps nodeIds on its job events; organize reaches the
   assert.equal(job.state, 'done');
   assert.deepEqual(job.nodeIds, ['a']);
   assert.ok(!('nodeId' in job));
-  await assert.rejects(stub.organize({}), /organize is not built yet/);
+  await assert.rejects(stub.organize({}), /organize: name must be 1 to 120 characters/);
 });
