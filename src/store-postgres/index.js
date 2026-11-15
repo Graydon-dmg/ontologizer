@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { foldAll, fold } from '../core/events.js';
+import { foldAll, foldInto } from '../core/events.js';
 import { RESERVED_NAMES, TENANT_RE, TRASH_DAYS, TRASH_ID_RE, trashStamp, trashRow, trashInfo, takenForRestore, storeError } from '../core/store.js';
 
 /** @typedef {import('../core/schema.js').Ontology} Ontology */
@@ -71,6 +71,13 @@ const SCHEMA = [
 ];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The largest numeric `at`, by loop: spreading 120k+ events into Math.max throws a RangeError. @param {OntoEvent[]} events */
+function lastAtOf(events) {
+  let max = -Infinity;
+  for (const x of events) max = Math.max(max, typeof x.at === 'number' ? x.at : 0);
+  return max;
+}
+
 /**
  * @param {{ url?: string, tenant?: string, root?: string, pool?: any, log?: (line: string) => void }} [opts]
  */
@@ -119,7 +126,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
   /** @param {OntoEvent[]} events @returns {Entry} */
   function makeEntry(events) {
     const created = events.find((x) => x.t === 'ontology.created');
-    const lastAt = events.length ? Math.max(...events.map((x) => (typeof x.at === 'number' ? x.at : 0))) : 0;
+    const lastAt = events.length ? lastAtOf(events) : 0;
     return { events, onto: foldAll(events), lastAt, startedAt: Date.now() - (created ? created.at : 0), subs: new Set() };
   }
 
@@ -376,7 +383,7 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       const row = rowOf(id);
       if (!row) throw new Error(`Unknown ontology "${id}"`);
       if (event.t === 'ontology.created') e.startedAt = Date.now() - event.at;
-      e.onto = fold(e.onto, event);
+      e.onto = foldInto(e.onto, event);
       if (typeof event.at === 'number') e.lastAt = Math.max(e.lastAt, event.at);
       const index = e.events.length;
       e.events.push(event);
@@ -393,7 +400,11 @@ export function openPostgresStore({ url, tenant = 'default', root, pool: givenPo
       for (const fn of [...e.subs]) fn(event, index);
     },
 
-    /** @param {string} id @returns {Ontology} */
+    /**
+     * The live map, not a copy: appends fold into it in place (foldInto), so a caller that holds it
+     * across an await sees later events appear. Callers only read it; never mutate it.
+     * @param {string} id @returns {Ontology}
+     */
     read(id) {
       assertWritable(); // a failed store serves nothing: memory may hold an event Postgres never stored
       return load(id).onto;
