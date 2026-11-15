@@ -1,5 +1,7 @@
 // @ts-check
-// Hydrate planning: validate a request, pick the nodes, group them into batches. Pure: no I/O.
+// The hydrate action (POST …/actions {type:'hydrate'}) and its planning: validate a request, pick the
+// nodes, group them into batches of siblings, reserve the daily limit for all of them, enqueue. The
+// planning functions are pure (the CLI uses them too).
 import { createHash } from 'node:crypto';
 
 /** @typedef {{ id: string, label: string, parent: string|null, depth: number, hydration?: any }} HNode */
@@ -85,3 +87,29 @@ export const dedupeKey = (parentId, nodeIds) => `hydrate:${parentId}:${idsHash(n
 
 /** @param {{ nodeIds: string[] }[]} batches */
 export const estimate = (batches) => ({ calls: batches.length, tokens: batches.reduce((s, b) => s + b.nodeIds.length, 0) * 700 });
+
+/**
+ * After map.js's MODEL_ACTIONS gate (one call already checked). All or nothing: when the batches would
+ * pass the daily limit, nothing starts (429). No source tools: hydrate never searches.
+ * @param {{ res: any, body: any, ctx: any, engine: any, store: any, id: string, who: any,
+ *           json: Function, ok: (reply: any) => any, bad: (error: string) => any }} c
+ */
+export async function hydrateAction(c) {
+  const { res, body, ctx, engine, store, id, who, json, ok, bad } = c;
+  const o = store.read(id);
+  const error = validateHydrate(o, body);
+  if (error) return bad(error);
+  const model = body.model ?? 'sonnet';
+  const { selected, skipped } = selectHydrate(o, { nodeIds: body.nodeIds, all: body.all === true, redo: body.redo === true });
+  const batches = planBatches(o, selected);
+  if (!batches.length) return json(res, 200, { ok: true, jobs: [], skipped, estimate: { calls: 0, tokens: 0 } });
+  const over = ctx?.limit ? ctx.limit(batches.length - 1, ctx.calls ? ctx.calls() : null) : null;
+  if (over) return json(res, 429, { ok: false, error: over.error }, { 'Retry-After': String(over.retryAfter) });
+  /** @type {{ batch: number, parentId: string, nodeIds: string[], jobId: string }[]} */ const jobs = [];
+  for (const b of batches) {
+    const r = await engine.enqueue({ kind: 'hydrate', nodeId: b.parentId, dedupeKey: dedupeKey(b.parentId, b.nodeIds), nodeIds: b.nodeIds, model },
+      { priority: 5, ...who });
+    jobs.push({ ...b, jobId: typeof r === 'string' ? r : (r?.jobId ?? r?.id) });
+  }
+  return ok({ ok: true, jobs, skipped, estimate: estimate(batches) });
+}

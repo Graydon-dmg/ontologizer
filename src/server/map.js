@@ -3,11 +3,14 @@
 // one-map server (index.js, at "/api/...") and the service router (service.js, under each map's base).
 import fs from 'node:fs';
 import { TYPES, json, plain, readBody as readJsonBody } from './http.js';
+import { hydrateAction } from './actions/hydrate.js';
+import { addNodeAction } from './actions/add-node.js';
+import { snapshotFor, parseInclude } from '../core/export/hydration.js';
 import { MAX_BODY as MAX_CHAT_BODY, TOO_LARGE, ChatError, readCappedBody, drainCapped, validateChat, storeAttachment, findAttachment, imageSize, relayAsk } from './chat.js';
 
 const PING_MS = 15000;
 /** The actions that call the model (the daily limits refuse them). */
-const MODEL_ACTIONS = new Set(['research', 'explain', 'sources', 'rosetta', 'fuse']);
+const MODEL_ACTIONS = new Set(['research', 'explain', 'sources', 'rosetta', 'fuse', 'hydrate']); // add_node calls no model
 /** At most this many nodes in one explain or sources call (nodeIds). */
 export const BATCH_MAX = 8;
 
@@ -36,9 +39,11 @@ function sleep(ms, c) {
  *   counts the calls a batch (explain or sources on nodeIds) already started in this request, `base`
  *   the tenant's calls() when the batch began.
  * - calls(): the tenant's model calls today.
+ * - busy(): whether this map's build or organise is queued or running (not jobs or chats);
+ * - saving(): whether a save of this map is in progress. Both are absent on the one-map server (false).
  * @typedef {{ valid?: (ev?: any) => boolean|Promise<boolean>, actor?: any, principal?: any, tools?: () => Promise<any>,
  *   canRead?: (mapId: string) => boolean|Promise<boolean>, sync?: () => Promise<void>,
- *   isPrivate?: (mapId: string) => boolean, limit?: (extra?: number, base?: number|null) => ({ error: string, retryAfter: number } | null), calls?: () => number }} RequestCtx
+ *   isPrivate?: (mapId: string) => boolean, limit?: (extra?: number, base?: number|null) => ({ error: string, retryAfter: number } | null), calls?: () => number, busy?: () => boolean, saving?: () => boolean }} RequestCtx
  */
 
 /**
@@ -191,6 +196,8 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
     const who = { ...(actor ? { actor } : {}), ...(ctx.principal ? { principal: ctx.principal } : {}) };
     /** @param {string} error */
     const bad = (error) => json(res, 400, { ok: false, error });
+    /** Append one event stamped with the store's clock and the actor. @param {string} t @param {Record<string, any>} fields */
+    const emit = (t, fields) => store.append(id, { t, at: store.now(id), ...fields, ...(who.actor ? { actor: who.actor } : {}) });
     /** @param {Record<string, any>} patch */
     const viewEvent = (patch) => {
       const ev = as({ t: 'view.changed', at: store.now(id), patch });
@@ -248,6 +255,10 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
         const jobId = typeof r === 'string' ? r : (r?.jobId ?? r?.id);
         return ok(jobId === undefined ? { ok: true } : { ok: true, jobId });
       }
+      case 'hydrate':
+        return hydrateAction({ req, res, body, ctx, engine, store, id, who, json, ok, bad, tools: ctx.tools, emit });
+      case 'add_node':
+        return addNodeAction({ req, res, body, ctx, engine, store, id, who, json, ok, bad, tools: ctx.tools, emit });
       case 'rosetta': {
         const persona = typeof body.persona === 'string' ? body.persona.trim() : '';
         if (!persona || persona.length > 120) return bad('persona must be a non-empty string of at most 120 characters');
@@ -575,7 +586,12 @@ export function createMapHandler({ store, engine, id, replay = null, openDraft =
       }
       return true;
     }
-    if (rawPath === '/api/snapshot') { json(res, 200, store.read(id)); return true; }
+    if (rawPath === '/api/snapshot') {
+      let include;
+      try { include = parseInclude(query.get('include') ?? undefined); } catch (err) { json(res, 400, { ok: false, error: String(/** @type {any} */ (err)?.message ?? err) }); return true; }
+      json(res, 200, snapshotFor(store.read(id), include));
+      return true;
+    }
     if (rawPath === '/api/events') {
       const from = Math.max(0, Number.parseInt(query.get('from') || '0', 10) || 0);
       sse(req, res, from, o.valid);

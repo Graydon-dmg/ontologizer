@@ -85,9 +85,10 @@ test('the OpenAPI document is well formed, covers every public op, and leaves ou
   // The jobs share POST .../actions: one operation whose body is oneOf their inputs, each with its fixed type.
   const actions = doc.paths['/v1/t/{tenant}/maps/{id}/actions'].post;
   assert.equal(actions.operationId, 'view_action');
-  assert.deepEqual(actions['x-ontologizer'].ops, ['view_action', 'research', 'explain', 'sources', 'fuse', 'rosetta']);
-  assert.equal(actions.requestBody.content['application/json'].schema.oneOf.length, 6);
+  assert.deepEqual(actions['x-ontologizer'].ops, ['view_action', 'research', 'explain', 'sources', 'fuse', 'rosetta', 'hydrate', 'add_node']);
+  assert.equal(actions.requestBody.content['application/json'].schema.oneOf.length, 8);
   assert.ok(actions.requestBody.content['application/json'].schema.oneOf.some((/** @type {any} */ s) => s.properties.type?.const === 'research' && s.required.includes('mode')));
+  assert.ok(doc.paths['/v1/t/{tenant}/maps/organize'].post.responses['202'], 'organize_map answers 202');
   assert.equal(actions['x-ontologizer'].callsModel, true);
   assert.ok(actions.description.includes(COST_NOTE));
   assert.ok(doc.paths['/v1/t/{tenant}/maps'].post.responses[202], 'a build answers 202');

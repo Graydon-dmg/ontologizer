@@ -5,7 +5,7 @@ import PQueue from 'p-queue';
 import { jobErrorMessage } from './call.js';
 
 /**
- * @typedef {{ kind: string, nodeId?: string, [k: string]: any }} Job
+ * @typedef {{ kind: string, nodeId?: string, nodeIds?: string[], dedupeKey?: string, [k: string]: any }} Job
  * @typedef {{ ok: true } | { ok: false, error: any }} JobOutcome
  */
 
@@ -28,14 +28,15 @@ export function createJobQueue({ emit, concurrency = 3 }) {
    * @returns {{ jobId: string, done: Promise<JobOutcome>, duplicate: boolean }}
    */
   function add(job, work, { priority = 0, actor = null } = {}) {
-    const key = `${job.dedupeKind ?? job.kind}:${job.nodeId ?? ''}`;
+    const key = job.dedupeKey ?? `${job.dedupeKind ?? job.kind}:${job.nodeId ?? ''}`;
     const existing = active.get(key);
     if (existing) return { ...existing, duplicate: true };
 
     const jobId = `${job.kind}-${stamp}-${++counter}`;
-    /** @type {{ id: string, kind: string, nodeId?: string }} */
+    /** @type {{ id: string, kind: string, nodeId?: string, nodeIds?: string[] }} */
     const ref = { id: jobId, kind: job.kind };
-    if (job.nodeId) ref.nodeId = job.nodeId;
+    if (typeof job.nodeId === 'string') ref.nodeId = job.nodeId;
+    if (Array.isArray(job.nodeIds)) ref.nodeIds = [...job.nodeIds]; // which nodes a hydrate batch covers
 
     /** @param {Record<string, any>} fields */
     const as = (fields) => (actor ? { ...fields, actor } : fields);

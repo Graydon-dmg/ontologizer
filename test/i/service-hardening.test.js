@@ -204,7 +204,7 @@ test('"tenants" is a reserved map name in every tenant', async () => {
   }
   // Planted fault: a store that allows the name is reported.
   const lax = { save: () => 'tenants', importEvents: () => 'tenants' };
-  assert.equal(reservedProblems(lax, 'x').length, 2);
+  assert.equal(reservedProblems(lax, 'x').length, 2 * RESERVED_NAMES.length);
   // And over HTTP.
   const { srv, secrets } = await boot({ home, tokens: [{ name: 'b', scopes: ['build'] }] });
   try {
