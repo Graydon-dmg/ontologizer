@@ -56,10 +56,16 @@ export function webUrl(url) {
   }
 }
 
-/** @param {any} list @returns {{ title: string, url: string }[]} */
+/** @param {any} list @returns {{ title: string, url: string, source?: string, ref?: string }[]} */
 const cleanSources = (list) => (Array.isArray(list) ? list : [])
   // A source ref (a configured source's item) is named by its source: "wiki · Choosing glue". Escaped like any title.
-  .map((x) => ({ title: oneLine(typeof x?.source === 'string' ? `${x.source} · ${x?.title || x?.ref || ''}` : x?.title), url: webUrl(x?.url) })).filter((x) => x.url);
+  // A web source needs an http(s) link. A source ref is kept without one (a private source's document
+  // often has none), so agents can still see which document a node came from; its url stays ''.
+  .map((x) => {
+    const ref = typeof x?.source === 'string' && typeof x?.ref === 'string' && x.ref ? { source: oneLine(x.source), ref: oneLine(x.ref) } : null;
+    return { title: oneLine(ref ? `${x.source} · ${x?.title || x?.ref || ''}` : x?.title), url: webUrl(x?.url), ...(ref ?? {}) };
+  })
+  .filter((x) => x.url || x.ref);
 
 /**
  * A copy of the map with every field the pack prints made safe once, up front, so no section can
@@ -293,16 +299,17 @@ function sectionLines(o, m) {
     const n = nodes[id];
     for (const s of [...(n.sources ?? []), ...(n.article?.sources ?? [])]) {
       const url = webUrl(s?.url); // http and https only; cleanMap already dropped the rest
-      if (!url) continue;
-      const k = urlKey(url);
-      const cur = src.get(k) ?? { title: oneLine(s.title) || url, url, cited: new Set() };
+      // A source document with no web link (a private source's) is listed by its source and ref.
+      if (!url && !(typeof s?.source === 'string' && s?.ref)) continue;
+      const k = url ? urlKey(url) : `ref:${s.source}:${s.ref}`;
+      const cur = src.get(k) ?? { title: oneLine(s.title) || url || `${s.source} · ${s.ref}`, url, cited: new Set() };
       cur.cited.add(id);
       src.set(k, cur);
     }
   }
   const sources = [...src.values()]
     .sort((a, b2) => b2.cited.size - a.cited.size || a.title.localeCompare(b2.title))
-    .map((s) => `- ${s.title}: ${s.url}`);
+    .map((s) => (s.url ? `- ${s.title}: ${s.url}` : `- ${s.title}`));
 
   // On a fresh map nothing is explained or sourced: one line says so instead of a line per category.
   const covered = m.ids.some((id) => nodes[id].article || hasSources(nodes[id]));
