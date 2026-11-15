@@ -111,8 +111,9 @@ function pidAlive(pid) {
   }
 }
 
-/** Names a map can never take: `tenants` is the folder that holds the other tenants' maps. */
-export const RESERVED_NAMES = ['tenants'];
+/** Names a map can never take: `tenants` is the folder that holds the other tenants' maps;
+ *  `check` and `organize` are routes beside the map ids. */
+export const RESERVED_NAMES = ['tenants', 'check', 'organize'];
 
 /** sessions.json keys for running servers (a map id never starts with ":"). */
 const SERVER_KEY = ':server:';
@@ -196,7 +197,8 @@ function assertName(name) {
     throw new Error(`Invalid name "${name}": use lowercase letters, digits and hyphens (kebab-case).`);
   }
   if (RESERVED_NAMES.includes(name)) {
-    throw new Error(`"${name}" is a reserved name (it holds service mode's tenants). Pick another name.`);
+    const why = name === 'tenants' ? 'it holds service mode\'s tenants' : 'a route uses it';
+    throw new Error(`"${name}" is a reserved name (${why}). Pick another name.`);
   }
 }
 
