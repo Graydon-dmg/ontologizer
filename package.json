@@ -62,6 +62,7 @@
     "check:g": "node scripts/test.js test/g",
     "check:h": "node scripts/test.js test/h",
     "check:i": "node scripts/build-embed.js && node scripts/test.js test/i",
+    "check:j": "node scripts/test.js test/j",
     "dev": "node scripts/build-embed.js && node scripts/dev-server.js"
   },
   "dependencies": {

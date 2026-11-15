@@ -1,9 +1,13 @@
 // @ts-check
 /** OntoEvent:
- *  { t: 'ontology.created', at, name, root, brief, categories: [] }   always the first event
+ *  { t: 'ontology.created', at, name, root, brief, categories: [], mode? }   always the first event
+ *    mode: 'agent'|'human' (organize_map sets it). Any other value, or none, adds no mode key.
  *  { t: 'category.added', at, category }
  *  { t: 'node.added', at, node }
  *  { t: 'node.updated', at, id, patch }            shallow merge into the node
+ *  { t: 'node.hydrated', at, nodeId, hydration: { job, examples, not_for, not_for_ids, model, at } }
+ *    Sets node.hydration (a copy). Ignored, never thrown on, when the node is unknown or the
+ *    hydration is malformed (examples / not_for_ids not string arrays, other fields not strings).
  *  { t: 'edge.added', at, edge }
  *  { t: 'view.changed', at, patch }                shallow merge into view (filter merges one level deeper)
  *  { t: 'lens.added', at, lens }                   lens.analogs may start empty
@@ -88,6 +92,7 @@ export function fold(o, e) {
         brief: e.brief ? { ...e.brief } : o.brief,
         categories: Array.isArray(e.categories) ? e.categories.map((c) => ({ ...c })) : o.categories,
         view: { ...o.view, focus: root },
+        ...(e.mode === 'agent' || e.mode === 'human' ? { mode: e.mode } : {}),
       };
     }
     case 'ontology.renamed':
@@ -109,6 +114,11 @@ export function fold(o, e) {
       const prev = o.nodes[e.id];
       if (!prev) return o;
       return { ...o, nodes: { ...o.nodes, [e.id]: { ...prev, ...(e.patch || {}) } } };
+    }
+    case 'node.hydrated': {
+      const h = hydration(e.hydration);
+      if (!h || typeof e.nodeId !== 'string' || !Object.hasOwn(o.nodes, e.nodeId)) return o;
+      return { ...o, nodes: { ...o.nodes, [e.nodeId]: { ...o.nodes[e.nodeId], hydration: h } } };
     }
     case 'edge.added': {
       const ed = { ...e.edge };
@@ -187,6 +197,23 @@ function copyNode(n) {
     ...n,
     sources: Array.isArray(n.sources) ? n.sources.map((/** @type {any} */ s) => ({ ...s })) : [],
     article: n.article ?? null,
+  };
+}
+
+/** @param {any} a */
+const strings = (a) => Array.isArray(a) && a.every((x) => typeof x === 'string');
+
+/**
+ * A copy of a well-formed hydration, or null.
+ * @param {any} h
+ * @returns {import('./schema.js').Hydration|null}
+ */
+function hydration(h) {
+  if (!h || typeof h !== 'object' || !strings(h.examples) || !strings(h.not_for_ids)) return null;
+  if (![h.job, h.not_for, h.model, h.at].every((x) => typeof x === 'string')) return null;
+  return {
+    job: h.job, examples: [...h.examples], not_for: h.not_for,
+    not_for_ids: [...h.not_for_ids], model: h.model, at: h.at,
   };
 }
 
