@@ -29,6 +29,7 @@ Ontologizer is an open-source command-line tool: give it a topic and Claude buil
 - **A live map of any topic**, drawn in your browser as Claude builds it, in 2D or 3D. In 3D, **Height** can lift each idea by learning order, coverage or connectedness.
 - **Ask the map**: ask questions in words or with an image, and get answers that cite the map's nodes, with web sources when the map runs out.
 - **Grow, fuse and re-explain**: research or explain any node, fuse two maps, or see a map through a field you already know (Rosetta).
+- **Agent maps**: hand it a list of items and it organises them into a map; then hydrate each node with a job, examples and look-alikes, so an agent can classify requests against it.
 
 ## Install
 
