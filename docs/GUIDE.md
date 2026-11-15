@@ -704,6 +704,46 @@ mcpServers: { ontologizer: { type: 'http', url: 'http://127.0.0.1:8787/v1/mcp', 
 // or, on this machine: { command: 'npx', args: ['-y', 'ontologizer', 'mcp'] }
 ```
 
+### Agent maps
+
+Agent maps are for when you already have a list (tools, categories, codes, products) and want an agent to classify requests against it. The flow, over MCP or the HTTP API:
+
+1. `organize_map` with a name and your items. It answers at once with `{ id, viewUrl, eventsUrl }`; the map grows in the background, about a minute per 1,000 items.
+2. `wait_for_map` with the id.
+3. `hydrate` with `all: true`. Each node gets a job (what it is for), three examples, and `not_for` (its nearest look-alikes and what separates them, with their ids in `not_for_ids`). Siblings are done together in batches of up to 40. Nodes already hydrated are skipped unless you pass `redo: true`. Then `wait_for_map` again: it waits for every batch.
+4. `export_map` with `include: ["hydration"]`, or `get_node` with the same `include`.
+
+To add one node later, `add_node` with a `parentId` and a `label`; open views show it at once. It never calls the model, so run `hydrate` with `nodeIds` on it afterwards.
+
+The same flow on the command line:
+
+```
+ontologizer organize items.json --name "Crypto categories"
+ontologizer hydrate <map> --all
+ontologizer add-node <map> --parent _root/finance --label Restaking
+ontologizer export <map> --format json --include hydration > map.json
+```
+
+`items.json` holds an array of items, or `{ "items": [...] }`. `organize` also takes `--depth` (2 to 4, default 3) and `--human`; `hydrate` takes `--nodes a,b` instead of `--all`, `--model sonnet|haiku` and `--redo`.
+
+**The item list.** Each item is `{ id, label, text? }`:
+
+- `id`: 1 to 120 characters, matching `^[A-Za-z0-9][A-Za-z0-9._:~-]{0,119}$`. No `/`, and it cannot start with `_`. Unique in the list.
+- `label`: 1 to 80 characters. `text`: optional, at most 500.
+
+Every item becomes exactly one leaf whose id is your id. The model makes the families (their ids look like `_root/<name>/...`). An item it could not place goes under a family called "Unsorted"; nothing is dropped, and an insight says how many.
+
+**Limits.**
+
+- Agent mode (the default): up to 10,000 items, or 4 MiB per HTTP request, whichever comes first. The page opens on the top two levels.
+- Over MCP, about 2,000 items, because an MCP request is smaller. For more, use the HTTP API or the CLI. Over the limit, split the list.
+- Human mode (`mode: "human"`, or `--human`): up to 500 items, all shown.
+- A page with more than about 3,000 nodes opens slowly, and shows the top two levels.
+
+**Cost.** Hydration counts in the normal usage counters and daily limits (see "Limits and usage"). If the batches would pass the limit, `hydrate` answers 429 and starts nothing. `organize_map` also calls the model and counts the same way.
+
+**Events and exports.** `/events` carries a `node.hydrated` event as each node is hydrated, so a client can follow the work live. Default exports do not include hydration: with no `include`, the JSON export, `get_node` and the snapshot are exactly what they were before, even for a hydrated map.
+
 ### The HTTP API
 
 `GET /v1/openapi.json` describes every route (OpenAPI 3.1, no token needed); the **API** link in the Server panel opens it. Besides the routes in section 10, agents and apps get cheap reads of a map:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9.0 (2026-11-15)
+
+- **Organise a list into a map.** Give it a list of items (tools, categories, codes, products) and it groups them into families and sub-families. Every item becomes exactly one leaf whose id is your own id, and an item it could not place goes under "Unsorted" and is never dropped. Use `organize_map` (MCP, HTTP, JS client) or `ontologizer organize <items> --name "..."`. It answers at once with the new map's id, and the map grows in the background.
+- **Hydrate nodes for agents.** `hydrate` writes three fields on a node for agents that classify requests against the map: a **job** (what the node is for), three **examples** of requests that belong to it, and **not_for** (its nearest look-alikes and what separates them, with their ids in **not_for_ids**). Siblings are done together in batches. Run it with `all: true` or a list of nodes, or `ontologizer hydrate <map> --all`. Nodes already done are skipped unless you ask to redo them.
+- **Add one node.** `add_node` (or `ontologizer add-node <map> --parent ... --label ...`) adds exactly one node under a parent you name, and open views show it at once. It never calls the model; run `hydrate` on it afterwards if agents will classify against it.
+- **Export with hydration.** Add `include=hydration` to the JSON export, `get_node` or the snapshot (`ontologizer export <map> --format json --include hydration`) and each hydrated node carries its fields. Without it, every output stays exactly as before, byte for byte.
+- **Faster opening of large maps.** Replaying a map's history no longer copies the whole node table for every event. A map of 10,000 nodes opens in well under a second instead of about 7 seconds.
+- **Agent reads keep private-source citations.** Reading a node, searching, or making the context pack no longer drops a source that has no web link, so a map built from a private source still shows its citations to an agent. Source references are kept as plain text, still escaped, and links that are not web links are still never passed on.
+
 ## 1.8.0 (2026-11-10)
 
 - **Height in 3D.** A new **Height** control in the 3D view lifts ideas by one measure at a time: **Learning order** (what you need first sits low, advanced ideas float higher, from the map's "requires" links and depth), **Coverage** (well-researched areas rise like hills, thin ones stay low: where to click Research), or **Connectedness** (hub ideas with many links rise). **Off** is the flat floor as before. Thin stems keep each idea's spot on the floor, the camera lowers so heights show, the legend says what height means, and the choice is remembered.
