@@ -9,3 +9,8 @@ Project-specific patterns for reviewers to also check. Append; never remove.
 - **Escaping must be idempotent when a value is cleaned twice** (once up front, again at output). A backslash escape run twice turns `\<` into `\\<`, which un-escapes it in markdown. Collapse any backslash run before the character to one.
 - **Markdown handed to agents: neutralise `<` AND `[`, not just inline links.** Newline-flattening stops block syntax, but a one-line `[x]: javascript:...` still defines a link reference that `[x]` elsewhere uses, and `![x]` loads an image. URLs also need `( ) [ ] < >` percent-encoded.
 - **Release pipelines with a build step:** build in its own job that runs only the build tool, hash the outputs, and have publish ship exactly those hashed files. The test job runs every dependency and must not be the source of published bytes.
+
+## 2026-11-15 (1.9.0)
+- **Fold lookups keyed by event data must be own-key** (`entry()` / `Object.hasOwn`), never `obj[key]`. A `lensId` or node id of `constructor` reaches a built-in, and since the event is already on disk the map can't open.
+- **`store.read()` is live since 1.9.0 (folds in place).** Tests and handlers must copy any value they compare after a write.
+- **Log jobs left queued/running by a dead process must not block new work.** Check that the job is live in this engine (`activeJobIds()`), not just its state in the log.
