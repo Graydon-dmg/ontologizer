@@ -116,7 +116,7 @@ function urlKey(url) {
  */
 
 /** An id as printed: as is when it is a plain slug path, else made safe like any value. @param {string} id */
-const shownId = (id) => (/^[A-Za-z0-9][\w.:/-]{0,299}$/.test(id) ? id : oneLine(id, 300));
+const shownId = (id) => (/^[A-Za-z0-9_][\w.:~/-]{0,299}$/.test(id) ? id : oneLine(id, 300));
 
 /** @param {Ontology} o */
 function buildModel(o) {

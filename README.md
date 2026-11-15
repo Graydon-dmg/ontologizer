@@ -109,6 +109,9 @@ No key or network yet? Run `ontologizer load demo --replay` to watch the bundled
 | `ontologizer explain <name> <node>` | Write an article for one node |
 | `ontologizer research <name> <node>` | Grow the map under one node |
 | `ontologizer export <map> --format <f>` | Export a map: an offline page, an embed, JSON, a context pack for an agent, or an Obsidian vault |
+| `ontologizer organize <items> --name <n>` | Organise a list of items into a map |
+| `ontologizer hydrate <map> --all` | Write agent-facing fields on a map's nodes |
+| `ontologizer add-node <map> --parent <id> --label <l>` | Add exactly one named node |
 | `ontologizer update` | Update ontologizer to the latest version |
 | `ontologizer key [action]` | Show, set or clear the Anthropic API key |
 | `ontologizer doctor` | Check that everything ontologizer needs is in place |

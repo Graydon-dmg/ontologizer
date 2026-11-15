@@ -65,7 +65,7 @@ test('stdio round trip: build_map, wait_for_map, get_outline; stdout is only JSO
   try {
     await c.connect(t);
     const { tools } = await c.listTools();
-    assert.equal(tools.length, 16);
+    assert.equal(tools.length, 19);
     await roundTrip(c);
   } finally { await c.close(); }
   assert.ok(raw().length > 0);
