@@ -36,11 +36,11 @@ function answer(params) {
     not_for_ids: [sib.find((s) => s !== id) ?? ''] })));
 }
 
-/** @param {{ limitCalls?: number, delayMs?: number }} [o] */
+/** @param {{ limitCalls?: number, delayMs?: number, extra?: any[] }} [o] */
 async function serve(o = {}) {
   const home = tempHome();
   const s = openStore(home);
-  s.importEvents(M, mapEvents());
+  s.importEvents(M, [...mapEvents(), ...(o.extra ?? [])]);
   s.flush?.();
   const fake = createFakeClient({ chunkMs: 0, respond: (p) => ({ delayMs: o.delayMs ?? 0, text: answer(p) }) });
   const usage = createUsage({ home, limitCalls: o.limitCalls ?? null });
@@ -185,4 +185,19 @@ test('a read token gets 403 from the real handler; a build token gets 202', asyn
     assert.equal((await act('r')).status, 403);
     assert.equal((await act('b')).status, 202);
   } finally { await srv.close(); }
+});
+
+test('after a crash: a job the log still shows as queued (the old server stopped) does not block hydrate, nor redo', async () => {
+  const dead = { id: 'hydrate-dead-1', kind: 'hydrate', nodeId: 'f1', nodeIds: ['f1a', 'f1b'] };
+  const s = await serve({ extra: [{ t: 'job.queued', at: 2, job: dead }, { t: 'job.started', at: 3, job: dead }] });
+  try {
+    assert.equal(s.map().jobs['hydrate-dead-1'].state, 'running');
+    // planted fault: trusting the log answers 200, both nodes "already running in hydrate-dead-1", forever
+    const r = await s.act({ nodeIds: ['f1a', 'f1b'], redo: true });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    assert.deepEqual(r.body.skipped, []);
+    assert.deepEqual(r.body.jobs.map((/** @type {any} */ j) => j.nodeIds), [['f1a', 'f1b']]);
+    await s.wait();
+    assert.ok(s.map().nodes.f1a.hydration && s.map().nodes.f1b.hydration);
+  } finally { await s.srv.close(); }
 });

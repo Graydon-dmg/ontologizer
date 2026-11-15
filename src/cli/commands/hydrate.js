@@ -8,7 +8,8 @@ import { resolveName } from '../resolve-name.js';
 import { engineFor, rethrowAuth } from '../serve.js';
 import { validateHydrate, selectHydrate, planBatches, estimate, dedupeKey } from '../../server/actions/hydrate.js';
 
-const JOB_TIMEOUT_MS = 30 * 60 * 1000;
+/** How long the CLI waits for every batch; tests shorten it with ONTOLOGIZER_HYDRATE_TIMEOUT_MS. */
+const timeoutMs = (/** @type {any} */ env) => Number(env?.ONTOLOGIZER_HYDRATE_TIMEOUT_MS) || 30 * 60 * 1000;
 
 export default {
   command: 'hydrate <map>',
@@ -34,7 +35,9 @@ export default {
     };
     const bad = validateHydrate(o, body);
     if (bad) throw new CliError(bad, 1);
-    const { selected, skipped } = selectHydrate(o, { nodeIds: body.nodeIds, all: body.all, redo: !!argv.redo });
+    // No server runs on this home (refused above) and this run's engine has started nothing yet, so a
+    // hydrate job the log shows as queued or running is stale: its process stopped. It skips nothing.
+    const { selected, skipped } = selectHydrate(o, { nodeIds: body.nodeIds, all: body.all, redo: !!argv.redo, live: new Set() });
     const batches = planBatches(o, selected);
     const out = deps.stdout;
     /** @type {Map<string, string[]>} */ const why = new Map();
@@ -63,19 +66,36 @@ export default {
       if (e.t === 'node.hydrated' && typeof e.nodeId === 'string') hydrated.add(e.nodeId);
       if ((e.t === 'job.done' || e.t === 'job.failed') && typeof e.job?.id === 'string') { finals.set(e.job.id, e); check(); }
     });
+    /**
+     * Ctrl-C or the timeout: this process stops, so its unfinished batches would stay "queued" or
+     * "running" in the log forever. Mark each one failed ("interrupted") first.
+     */
+    const abandon = () => {
+      for (const [jobId, b] of byJob) {
+        if (finals.has(jobId)) continue;
+        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: jobId, kind: 'hydrate', nodeId: b.parentId, nodeIds: b.nodeIds, error: 'interrupted' } });
+      }
+    };
     /** @type {any} */ let timer;
+    /** @type {() => void} */ let offSignal = () => {};
+    const stopped = new Promise((_, rej) => {
+      offSignal = deps.onSignal('SIGINT', () => rej(new CliError('Interrupted: the unfinished batches are marked failed. Run it again to finish them.', 130)));
+    });
+    stopped.catch(() => {});   // handled by the race below, even when Ctrl-C comes before it starts
     try {
       for (const b of batches) {
         const r = await engine.enqueue({ kind: 'hydrate', nodeId: b.parentId, dedupeKey: dedupeKey(b.parentId, b.nodeIds), nodeIds: b.nodeIds, model: body.model }, { priority: 5 });
         byJob.set(typeof r === 'string' ? r : (r?.jobId ?? r?.id), b);
       }
       check();
-      await Promise.race([all, new Promise((_, rej) => { timer = setTimeout(() => rej(new CliError('Timed out after 30 minutes.', 1)), JOB_TIMEOUT_MS); })]);
+      await Promise.race([all, stopped, new Promise((_, rej) => { timer = setTimeout(() => rej(new CliError(`Timed out after ${Math.round(timeoutMs(deps.env) / 60000)} minutes: the unfinished batches are marked failed.`, 1)), timeoutMs(deps.env)); })]);
     } catch (err) {
+      abandon();
       if (err instanceof CliError) throw err;
       rethrowAuth(err);
     } finally {
       clearTimeout(timer);
+      offSignal();
       off();
     }
 

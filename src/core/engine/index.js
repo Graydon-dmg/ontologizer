@@ -152,6 +152,13 @@ export function createEngine({ store, id, client = null, models = defaultModels(
     /** Resolves when no job is queued or running. */
     idle: () => queue.onIdle(),
 
+    /**
+     * The ids of this engine's jobs still queued or running. A job the log shows as queued or running
+     * but missing here never finishes (the process that ran it stopped): it is stale.
+     * @returns {Set<string>}
+     */
+    activeJobIds: () => queue.activeIds(),
+
     /** @type {(a: string, b: string, opts?: any) => Promise<string>} */
     fuse: (a, b, opts) => fuse(gctx('fuse', opts), a, b, opts),
     /** @type {(id: string, persona: string, opts?: any) => Promise<string>} */

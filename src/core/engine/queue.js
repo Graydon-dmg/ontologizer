@@ -60,5 +60,8 @@ export function createJobQueue({ emit, concurrency = 3 }) {
     return { jobId, done, duplicate: false };
   }
 
-  return { add, onIdle: () => queue.onIdle(), get size() { return queue.size + queue.pending; } };
+  /** The ids of the jobs still queued or running in this queue (a copy: read-only). */
+  const activeIds = () => new Set([...active.values()].map((a) => a.jobId));
+
+  return { add, activeIds, onIdle: () => queue.onIdle(), get size() { return queue.size + queue.pending; } };
 }

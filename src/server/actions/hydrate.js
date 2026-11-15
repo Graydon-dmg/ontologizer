@@ -24,10 +24,17 @@ export function validateHydrate(o, body) {
   return null;
 }
 
-/** @param {HMap} o @param {{ nodeIds?: string[], all?: boolean, redo?: boolean }} req */
-export function selectHydrate(o, { nodeIds, all, redo }) {
+/**
+ * @param {HMap} o
+ * @param {{ nodeIds?: string[], all?: boolean, redo?: boolean, live?: Set<string> }} req
+ *   live: the ids of the jobs the engine still has queued or running (engine.activeJobIds()). A job the
+ *   log shows as queued or running but not in live is stale (its process stopped) and skips nothing.
+ *   Absent (an engine without activeJobIds): the log alone decides.
+ */
+export function selectHydrate(o, { nodeIds, all, redo, live }) {
   const ids = all ? Object.keys(o.nodes).filter((id) => id !== o.root) : (nodeIds ?? []);
-  const jobs = Object.values(o.jobs ?? {}).filter((j) => j.kind === 'hydrate' && (j.state === 'queued' || j.state === 'running'));
+  const jobs = Object.values(o.jobs ?? {}).filter((j) => j.kind === 'hydrate' && (j.state === 'queued' || j.state === 'running')
+    && (!live || live.has(j.id)));
   /** @type {string[]} */ const selected = [];
   /** @type {{ nodeId: string, reason: string }[]} */ const skipped = [];
   for (const id of ids) {
@@ -100,7 +107,8 @@ export async function hydrateAction(c) {
   const error = validateHydrate(o, body);
   if (error) return bad(error);
   const model = body.model ?? 'sonnet';
-  const { selected, skipped } = selectHydrate(o, { nodeIds: body.nodeIds, all: body.all === true, redo: body.redo === true });
+  const live = typeof engine.activeJobIds === 'function' ? engine.activeJobIds() : undefined;
+  const { selected, skipped } = selectHydrate(o, { nodeIds: body.nodeIds, all: body.all === true, redo: body.redo === true, live });
   const batches = planBatches(o, selected);
   if (!batches.length) return json(res, 200, { ok: true, jobs: [], skipped, estimate: { calls: 0, tokens: 0 } });
   const over = ctx?.limit ? ctx.limit(batches.length - 1, ctx.calls ? ctx.calls() : null) : null;
