@@ -84,3 +84,33 @@ test('CLI: refuses with exit 1 while a server runs on the home', async () => {
   assert.match(r.stderr, /A server is running on this home/);
   assert.equal(Object.values(openStore(home).read(P).nodes).filter((/** @type {any} */ x) => x.hydration).length, 0);
 });
+
+test('CLI: a failing batch exits 1 and lists every failed id (real engine, a model server that refuses)', async () => {
+  const http = await import('node:http');
+  const srv = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'fake model refuses' } }));
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', () => r(undefined)));
+  const home = tempHome();
+  const store = openStore(home);
+  store.importEvents(P, fixtureEvents(P));
+  store.flush?.();
+  const cap = () => ({ out: '', write(/** @type {string} */ x) { this.out += x; return true; } });
+  const stdout = cap(); const stderr = cap();
+  const port = /** @type {any} */ (srv.address()).port;
+  const ids = [`${P}/tools`, `${P}/kits`];
+  try {
+    const code = await main(['hydrate', P, '--nodes', ids.join(',')], { home, stdout, stderr, interactive: false,
+      keyring: { get: () => null, set() {}, delete: () => false }, openBrowser: async () => {}, onSignal: () => () => {},
+      env: { ...process.env, ONTOLOGIZER_HOME: home, ONTOLOGIZER_ENGINE: 'real', ANTHROPIC_API_KEY: 'sk-ant-test-0000', ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` } });
+    assert.equal(code, 1, stdout.out + stderr.out);
+    assert.match(stdout.out, /^batch 1 \(plastic-modeling, 2 nodes\): (?!done).+$/m);
+    assert.match(stdout.out, /^Hydrated 0 of 2 nodes$/m);
+    assert.match(stderr.out, new RegExp(`Failed: ${ids.slice().sort().join(', ')}|Failed: ${ids.join(', ')}`));
+    assert.equal(Object.values(openStore(home).read(P).nodes).filter((/** @type {any} */ x) => x.hydration).length, 0);
+  } finally { srv.close(); }
+});
