@@ -11,7 +11,7 @@ export const organizeTimeout = (n, buildTimeoutMs = 0) => Math.max(buildTimeoutM
 
 /**
  * @param {{ req: any, res: any, body: any, tenant: string, principal: any, actor: any, store: any,
- *   startRun: (tenant: string, draftId: string, kind: string, work: (engine: any) => any, opts?: { timeoutMs?: number }) => void,
+ *   startRun: (tenant: string, draftId: string, kind: string, work: (engine: any, run: { jobId: string }) => any, opts?: { timeoutMs?: number }) => void,
  *   engineFor: (tenant: string, id: string) => Promise<any>, durable: (store: any) => Promise<void>,
  *   json: Function, fail: (res: any, status: number, error: string, headers?: Record<string, string>) => any,
  *   buildTimeoutMs?: number }} c
@@ -26,7 +26,8 @@ export async function organizeRoute(c) {
   const n = input.items.length;
   const id = store.createDraft({ subject: input.name, context: `Organised from ${n} supplied items`, scope: '', purpose: '', level: 'expert' }, undefined, { events: [] });
   try { await durable(store); } catch { return fail(res, 503, 'the store is not available'); }
-  startRun(tenant, id, 'organize', (engine) => engine.organize(input, { actor, principal }), { timeoutMs: organizeTimeout(n, c.buildTimeoutMs) });
+  // The run's job id is startRun's: organise starts that job, and a failure ends the same one.
+  startRun(tenant, id, 'organize', (engine, { jobId }) => engine.organize({ ...input, jobId }, { actor, principal }), { timeoutMs: organizeTimeout(n, c.buildTimeoutMs) });
   const base = `/v1/t/${tenant}/maps/${id}`;
   return json(res, 202, { id, viewUrl: `${base}/view`, eventsUrl: `${base}/events` });
 }

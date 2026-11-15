@@ -243,7 +243,7 @@ test('6. event order and leaf fields (agent mode)', async () => {
   assert.equal(t.map().view.filter.maxDepth, 2);
 
   // families: top-level category.added immediately followed by its node.added
-  const rest = ev.slice(3);
+  const rest = ev.slice(3).filter((e) => !e.t.startsWith('job.'));
   const firstLeaf = rest.findIndex((e) => e.t === 'node.added' && !e.node.id.startsWith(ROOT_ID));
   const famEvents = rest.slice(0, firstLeaf);
   assert.ok(famEvents.length > 0);
@@ -381,9 +381,11 @@ test('10. a 401 on a placement call rejects the run', async () => {
   const t = setup(model({ placeError: { status: 401 } }));
   await assert.rejects(organize(t.ectx, { name: 'Auth', items: SAMPLE_120, depth: 3, mode: 'agent' }), (/** @type {any} */ e) => e.status === 401);
   assert.equal(leafEvents(t.events()).length, 0);
-  // control: other errors on the first pass do not reject the run, they go to the retry (and then fail it)
+  // control: other errors do not reject the run: the items get the retry, then go under Unsorted
   const t2 = setup(model({ placeError: { status: 500 } }));
-  await assert.rejects(organize(t2.ectx, { name: 'Down', items: SAMPLE_120, depth: 3, mode: 'agent' }));
+  await organize(t2.ectx, { name: 'Down', items: SAMPLE_120, depth: 3, mode: 'agent' });
+  const m2 = t2.map();
+  assert.ok(SAMPLE_120.every((/** @type {any} */ it) => m2.nodes[it.id]?.parent === UNSORTED_ID), 'every item under Unsorted');
 });
 
 test('11. scale: 2,000 items finish in under 20 s and are placed exactly once', async () => {

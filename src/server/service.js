@@ -345,7 +345,9 @@ export async function startService({
   /**
    * Builds lost to a restart: a draft that has its ontology.created (written when the build was asked
    * for) but no node and no failure was waiting or starting when the server stopped. It is marked
-   * failed, so it shows in the jobs tray instead of vanishing. Runs once, when the tenant's store opens.
+   * failed, so it shows in the jobs tray instead of vanishing. An organise run writes its root first
+   * and the rest at the end, inside its own organize job: a draft whose organize job was started but
+   * never ended was killed mid-run, and that job is marked failed. Runs once, when the tenant's store opens.
    * @param {string} tenant @param {any} store
    */
   function markInterrupted(tenant, store) {
@@ -353,6 +355,12 @@ export async function startService({
       for (const row of store.list({ drafts: true })) {
         if (!row.draft || builds.has(`${tenant}/${row.id}`)) continue;
         const o = store.read(row.id);
+        const cut = Object.values(o.jobs).find((j) => j && j.kind === 'organize' && (j.state === 'queued' || j.state === 'running'));
+        if (cut) {
+          store.append(row.id, { t: 'job.failed', at: store.now(row.id), job: { id: cut.id, kind: 'organize', error: 'Interrupted by a restart' } });
+          log(`organize ${tenant}/${row.id} was interrupted by a restart: marked failed`);
+          continue;
+        }
         if (!o.root || Object.keys(o.nodes).length) continue;
         if (Object.values(o.jobs).some((j) => j && j.kind === 'build' && j.state === 'failed')) continue;
         store.append(row.id, { t: 'job.failed', at: store.now(row.id), job: { id: `build-interrupted-${++buildSeq}`, kind: 'build', error: 'Interrupted by a restart' } });
@@ -490,18 +498,24 @@ export async function startService({
     if (next) next();
   };
   let buildSeq = 0;
+  /** Organise bodies being read and parsed now, server-wide (each up to 4 MiB): at most ORGANIZE_READS. */
+  let organizeReads = 0;
+  const ORGANIZE_READS = 2;
   /**
    * Run one background piece of work on a draft (a build, an organise) with the builds' own machinery:
    * the slot limits, the abort signal and timeout, the failure job, wait_for_map's view of it.
    * @param {string} tenant @param {string} draftId @param {string} kind 'build' or 'organize'
-   * @param {(engine: any) => any} work called as buildSignal.run(signal, () => work(engine))
+   * @param {(engine: any, run: { jobId: string }) => any} work called as buildSignal.run(signal, () => work(engine, { jobId })).
+   *   jobId is the run's job id: work may start that job (organise does), and a failure ends it under the same id
    * @param {{ timeoutMs?: number, actor?: any }} [opts] timeoutMs defaults to the service's buildTimeoutMs;
    *   actor is stamped on the failure job
    */
   function startRun(tenant, draftId, kind, work, { timeoutMs = buildTimeoutMs, actor } = {}) {
     const id = draftId;
     const key = `${tenant}/${id}`;
-    const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined), kind };
+    // The run's job id, made now: work may start that job, and every way it ends uses the same id.
+    const jobId = `${kind}-${process.pid}-${++buildSeq}`;
+    const b = { state: /** @type {'queued'|'running'|'done'|'failed'} */ ('queued'), error: /** @type {string|undefined} */ (undefined), kind, jobId };
     builds.set(key, b);
     (async () => {
       await slot(tenant);
@@ -526,7 +540,7 @@ export async function startService({
           }, Math.max(1, timeoutMs));
           timer.unref?.();
         });
-        const run = buildSignal.run(ctl.signal, () => work(engine));
+        const run = buildSignal.run(ctl.signal, () => work(engine, { jobId }));
         Promise.resolve(run).catch(() => {}); // after a timeout its rejection is expected, never unhandled
         await Promise.race([run, timedOut]);
         b.state = 'done';
@@ -536,7 +550,7 @@ export async function startService({
         log(`${kind} ${key} failed: ${b.error}`);
         const store = storeFor(tenant, true);
         // The page's jobs tray shows the failure.
-        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `${kind}-${process.pid}-${++buildSeq}`, kind, error: b.error }, ...(actor ? { actor } : {}) }); } catch { /* gone */ }
+        try { store.append(id, { t: 'job.failed', at: store.now(id), job: { id: jobId, kind, error: b.error }, ...(actor ? { actor } : {}) }); } catch { /* gone */ }
         // A timed-out engine is dropped: whatever it still does is no longer this map's build. A chat
         // answer being written on the map is left to finish first (its calls never had the build's signal).
         if (expired) {
@@ -584,7 +598,7 @@ export async function startService({
       try {
         const store = storeFor(tenant, true);
         const kind = b.kind ?? 'build';
-        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: `${kind}-${process.pid}-${++buildSeq}`, kind, error } });
+        store.append(id, { t: 'job.failed', at: store.now(id), job: { id: b.jobId, kind, error } });
       } catch { /* gone */ }
     }
     // Only maps this process has an engine for (its own jobs): a map merely open for reading may have
@@ -1127,12 +1141,25 @@ export async function startService({
       if (method !== 'POST') return fail(res, 405, 'method not allowed');
       if (!await can(p, 'build', { tenant })) return fail(res, 403, needs('build'));
       if (overLimit()) return;
-      const body = await readBody(req, res, 4 * 1024 * 1024);
-      if (!body) return;
-      if (closing) return fail(res, 503, 'the server is stopping');
-      if (running >= Math.max(1, maxBuilds) && waiting(tenant) >= maxQueued) {
-        return fail(res, 429, `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`, { 'Retry-After': '30' });
+      // Refused before the body is read: a 4 MiB list is never buffered (or parsed) for a request that
+      // cannot run. The unread body is drained without being kept, and the connection is closed.
+      /** @param {number} code @param {string} error @param {Record<string, string>} headers */
+      const refuseUnread = (code, error, headers) => { req.resume(); return fail(res, code, error, { ...headers, Connection: 'close' }); };
+      const queueFull = () => running >= Math.max(1, maxBuilds) && waiting(tenant) >= maxQueued;
+      const QUEUE_FULL = `${maxQueued} builds are already waiting for this tenant: try again when one finishes.`;
+      if (closing) return refuseUnread(503, 'the server is stopping', {});
+      if (queueFull()) return refuseUnread(429, QUEUE_FULL, { 'Retry-After': '30' });
+      // At most ORGANIZE_READS lists are read and parsed at once, server-wide (each up to 4 MiB).
+      if (organizeReads >= ORGANIZE_READS) {
+        return refuseUnread(429, `${ORGANIZE_READS} lists are being read already: try again in a few seconds.`, { 'Retry-After': '5' });
       }
+      organizeReads++;
+      let body;
+      try { body = await readBody(req, res, 4 * 1024 * 1024); } finally { organizeReads--; }
+      if (!body) return;
+      // Checked again: the server may have begun stopping, or the queue filled, while the body arrived.
+      if (closing) return fail(res, 503, 'the server is stopping');
+      if (queueFull()) return fail(res, 429, QUEUE_FULL, { 'Retry-After': '30' });
       const store = await readyStore(tenant, true);
       if (store === 'down' || store === 'full' || !store) return storeFail(res, store);
       return organizeRoute({ req, res, body, tenant, principal: p, actor: p.actor, store,
