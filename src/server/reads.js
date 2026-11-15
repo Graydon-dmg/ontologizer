@@ -44,9 +44,27 @@ export function outlineText(o, id) {
  * The get_node route's answer: the chat's get_node over the agent copy, with the "not explained"
  * text written for an agent: how much of the map is only one line, and the next step. Explaining
  * stays a deliberate call (it costs credits); this read never starts one.
- * @param {any} o a folded map @param {string} nodeId @returns {{ result: any, error?: boolean }}
+ * With include 'hydration', a hydrated node's hydration comes last, escaped like every other text
+ * field (it is model-written and goes straight to agents).
+ * @param {any} o a folded map @param {string} nodeId @param {{ include?: string[] }} [opts]
+ * @returns {{ result: any, error?: boolean }}
  */
-export function nodeForAgent(o, nodeId) {
+export function nodeForAgent(o, nodeId, { include = [] } = {}) {
+  const r = baseNode(o, nodeId);
+  if (r.error || !include.includes('hydration')) return r;
+  const id = r.result.id;
+  const h = typeof id === 'string' && Object.hasOwn(o.nodes, id) ? o.nodes[id].hydration : undefined;
+  if (!h) return r;
+  const line = (/** @type {any} */ x) => oneLine(String(x ?? ''));
+  const list = (/** @type {any} */ a) => (Array.isArray(a) ? a.map(line) : []);
+  return { ...r, result: { ...r.result, hydration: {
+    job: line(h.job), examples: list(h.examples), not_for: line(h.not_for), not_for_ids: list(h.not_for_ids),
+    model: line(h.model), at: line(h.at),
+  } } };
+}
+
+/** get_node as 1.8.0 answers it. @param {any} o @param {string} nodeId @returns {{ result: any, error?: boolean }} */
+function baseNode(o, nodeId) {
   const safe = agentMap(o);
   const r = runTool('get_node', { id: nodeId }, safe, buildIndex(safe), null);
   if (r.error || typeof r.result.article !== 'string') return r;

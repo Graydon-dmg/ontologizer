@@ -1,6 +1,6 @@
 // @ts-check
 // `include` on the reads (export_map, get_node, get_snapshot): which extra node fields to carry.
-// Epic S puts the final parseInclude here; Epic D fills in withHydration and snapshotFor.
+// Without include=hydration every output is byte-identical to 1.8.0, even for a hydrated map.
 
 /** The values `include` knows. */
 const KNOWN = ['hydration'];
@@ -34,8 +34,38 @@ function bad(x) {
   return Object.assign(new Error(`unknown include "${typeof x === 'string' ? x.slice(0, 60) : typeof x}"`), { status: 400 });
 }
 
-/** Add each node's hydration to an export object (D). @param {any} o @param {string[]} [include] */
-export function withHydration(o, include) { void include; return o; }
+/**
+ * A copy of o whose nodes carry no `hydration` key: a new top level and `nodes`, every node with
+ * hydration copied without it (its other keys in order), everything else shared. o itself when no
+ * node has hydration (no copy, byte-identical). Never mutates o: the fold result is live.
+ * @param {any} o @returns {any}
+ */
+export function stripHydration(o) {
+  const nodes = o && o.nodes;
+  if (!nodes || typeof nodes !== 'object') return o;
+  let any = false;
+  for (const k in nodes) if (Object.hasOwn(nodes, k) && hasHydration(nodes[k])) { any = true; break; }
+  if (!any) return o;
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (const [k, n] of Object.entries(nodes)) {
+    let v = n;
+    if (hasHydration(n)) { const { hydration, ...rest } = n; void hydration; v = rest; }
+    // a literal keeps `__proto__` an own key, as the fold does
+    Object.defineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
+  }
+  return { ...o, nodes: out };
+}
 
-/** A folded map for get_snapshot, with the requested extras (D); today the raw map. @param {any} o @param {string[]} [include] */
-export function snapshotFor(o, include) { void include; return o; }
+/** @param {any} n */
+const hasHydration = (n) => Boolean(n) && typeof n === 'object' && Object.hasOwn(n, 'hydration');
+
+/** The JSON export's map: hydration kept only when include has 'hydration'. @param {any} o @param {string[]} [include] */
+export function withHydration(o, include = []) {
+  return include.includes('hydration') ? o : stripHydration(o);
+}
+
+/** The snapshot: the same rule as the JSON export. @param {any} o @param {string[]} [include] */
+export function snapshotFor(o, include = []) {
+  return include.includes('hydration') ? o : stripHydration(o);
+}

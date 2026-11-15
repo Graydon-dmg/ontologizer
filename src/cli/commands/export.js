@@ -5,6 +5,7 @@ import { CliError } from '../deps.js';
 import { resolveName } from '../resolve-name.js';
 import { foldAll } from '../../core/events.js';
 import { exportMap, obsidianVault, FORMATS, FOLDER_FORMATS } from '../../core/export/index.js';
+import { parseInclude } from '../../core/export/hydration.js';
 import { categoryColor } from '../../../web/shared/tokens.js';
 
 const BUNDLES = new URL('../../../web/dist/', import.meta.url);
@@ -97,7 +98,8 @@ export default {
     .option('out', { type: 'string', describe: 'File to write (html, embed: default <map>.html / <map>.embed.html here; json, context: default stdout). obsidian: the folder to write the map\'s folder into (default: here)' })
     .option('force', { type: 'boolean', default: false, describe: 'obsidian only: write into the map\'s folder even though it exists (its other files are kept)' })
     .option('live-url', { type: 'string', describe: 'html and embed only: an "Open live" link to this address' })
-    .option('include-chat', { type: 'boolean', default: false, describe: 'json only: keep the map\'s chat (left out by default)' }),
+    .option('include-chat', { type: 'boolean', default: false, describe: 'json only: keep the map\'s chat (left out by default)' })
+    .option('include', { type: 'string', describe: 'json only: extra node fields, a comma list (hydration)' }),
   handler: async (/** @type {any} */ argv) => {
     const deps = argv.deps;
     const format = /** @type {'html'|'embed'|'json'|'context'|'obsidian'} */ (argv.format);
@@ -109,6 +111,10 @@ export default {
     if (format === 'context' && !(Number.isInteger(budget) && budget >= 100)) throw new CliError('--budget must be a whole number of tokens, at least 100.', 1);
     const includeChat = Boolean(argv.includeChat);
     if (includeChat && format !== 'json') throw new CliError('--include-chat only applies to --format json.', 1);
+    /** @type {string[]} */
+    let include = [];
+    try { include = parseInclude(argv.include); } catch (err) { throw new CliError(/** @type {Error} */ (err).message, 1); }
+    if (include.length && format !== 'json') throw new CliError('ontologizer: include works only with format json', 1);
     const liveUrl = argv.liveUrl ?? null;
     if (liveUrl !== null) {
       if (!page) throw new CliError('--live-url only applies to --format html or embed.', 1);
@@ -125,7 +131,7 @@ export default {
     const bundle = page ? readBundle(threeD) : undefined;
     let text;
     try {
-      text = exportMap(ontology, { format, bundle, budget, liveUrl, includeChat });
+      text = exportMap(ontology, { format, bundle, budget, liveUrl, includeChat, include });
     } catch (err) {
       throw new CliError(/** @type {Error} */ (err).message, 1);
     }
