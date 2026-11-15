@@ -8,6 +8,7 @@ import { openStore } from '../../core/store.js';
 import { engineFor } from '../serve.js';
 import { runningServer } from '../served.js';
 import { checkInput } from '../../core/engine/organize.js';
+import { jobErrorMessage } from '../../core/engine/call.js';
 
 export default {
   command: 'organize <items>',
@@ -48,7 +49,7 @@ export default {
     try {
       r = await engine.organize(input, {});
     } catch (err) {
-      throw new CliError(`${/** @type {Error} */ (err).message} (draft kept: ${id})`);
+      throw new CliError(`${jobErrorMessage(err)} (draft kept: ${id})`);
     } finally {
       off();
       store.flush(id);
