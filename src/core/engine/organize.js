@@ -26,6 +26,8 @@ const SMALL_LIST = 24;
 
 /** A call stopped by the run's own signal (a timeout or the server stopping): never retried. @param {any} e */
 const isAbort = (e) => e?.name === 'AbortError' || e?.name === 'APIUserAbortError';
+/** The tenant's daily limit was reached (the server's UsageLimitError): every later call fails too. @param {any} e */
+const isUsageLimit = (e) => e?.code === 'USAGE_LIMIT';
 
 /** @typedef {{ id: string, label: string, text?: string }} Item */
 /** @typedef {{ name: string, items: Item[], depth: 2|3|4, mode: 'agent'|'human' }} OrganizeInput */
@@ -323,10 +325,10 @@ async function passes(ectx, { name, items, n, depth, maxDeep }) {
         try {
           await place(batch, retry);
         } catch (e) {
-          // A rejected key or the run's own abort ends the run. Any other failure (an overload, the
+          // A rejected key, the daily limit or the run's own abort ends the run. Any other failure (an overload, the
           // network) only costs that batch: its items get the retry, and a failed retry batch's items
           // go under Unsorted, so what was placed already is kept.
-          if (isAuthError(e) || isAbort(e)) { fatal ??= e; queue.clear(); }
+          if (isAuthError(e) || isAbort(e) || isUsageLimit(e)) { fatal ??= e; queue.clear(); }
         }
       });
     }
